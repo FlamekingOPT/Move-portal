@@ -1,0 +1,68 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-09-27-move-portal.md
+
+Spec: docs/superpowers/specs/2026-09-27-move-portal-design.md (read). Worktree C:/Users/Jack/wt/move-portal, branch feat/move-portal from 57debac.
+
+## Pre-flight scan
+Evidence: on 2026-09-27 controller assembled every code block from the plan per its insertion instructions into a scratch tree; `node --test` = 49/49 pass; move_data/fake_data API match; preview UI driven end-to-end (print, load, ship, receive, catch-up, dashboard) with no console errors.
+
+| Pair / task | Produces vs consumes | Finding |
+|---|---|---|
+| T1–T4 (move_core.js) | T1 file w/ 3 section markers + return; T2–T4 fill markers + extend return | consistent; assembled file passes 19 core tests |
+| T1/T6/T8 core ↔ data/fake | palletCode, PALLET/LOAD consumed | match |
+| T5 tpl ↔ T8 pdf() | labelsXml(labels,{codeMode,header,fromName,toName}), loadSheetXml(model) | match |
+| T6 data ↔ fake_data ↔ T8–T11 | identical API (39 fns) | API MATCH verified |
+| T7 tx ↔ fake_tx ↔ T9/T10 | findByToken(tok,type), createTransferOrder, committedShortfalls, fulfillTransferOrder, receiveTransferOrder | match |
+| T8 ↔ T9–T11 | helpers + act(); marker line for inserts | match; T10 inserts after act('load_approve'), T11 after act('catchup_reject') |
+| T12 ui ↔ T8–T11 | action names, response shapes | driven in preview, all screens worked |
+| T0, T13–T15 | NetSuite/manual | controller-run (Chrome/sandbox), not subagent |
+| each task self-consistency | tests vs code | all pass when assembled |
+| Global: test command | plan uses `node --test "move_portal/test/*.test.js"` | bare dir fails on Windows — already fixed in plan |
+
+Ruling: Batch tasks by file group instead of one dispatch per task — A=T1–T4 (move_core + core tests), B=T5, C=T6+T7, D=T8, E=T9, F=T10, G=T11, H=T12 (steps 1–4 + 6; step 5 preview is controller-run) — plan code is complete and pre-verified, so per-task dispatch only multiplies overhead — cost if wrong: coarser review granularity.
+Ruling: Implementers on haiku (transcription of complete, pre-tested code), reviewers on sonnet, final review on opus — cost if wrong: extra fix rounds.
+Ruling: Task 0 (Chrome sandbox setup) run by controller in parallel with code batches; Tasks 13–15 are controller/Jack tasks after the code merges — cost if wrong: none (no shared files).
+Ruling: Work on branch feat/move-portal in a worktree outside Google Drive (Drive-hosted .git is flaky under heavy git use) — cost if wrong: none; merge at the end via finishing-a-development-branch.
+
+## Progress
+Task A (T1–T4): implemented commits 5070281..3dc573e (19/19); review dispatched
+Task A (T1–T4): complete (commits 57debac..3dc573e, review clean)
+Task A: minor (deferred): redundant '-' escape in catchupNumber regex char class (move_core.js:189); report line counts inaccurate (cosmetic)
+Ruling: Merge planned batches B (T5) and C (T6+T7) into one dispatch B=T5–T7 — all three are verbatim transcription into separate new files with their own tests; batch A proved the haiku+verbatim approach clean — cost if wrong: one larger review.
+Task B (T5–T7): implemented 935f81d..1924dbc (26/26); review dispatched. Task 0 step 1: sandbox Tippecanoe location created id 42 (Flame King, Warehouse, Indiana East, inventory available); sandbox Riverside = 35
+Task B (T5–T7): complete (commits 3dc573e..1924dbc, review clean after ruling)
+Task B: parked — Important (plan-mandated) unguarded search.lookupFields(location,'subsidiary') in move_tx.locationSubsidiary would throw on non-OneWorld — Ruling: code stands; account IS OneWorld (sandbox Location + Transfer Order forms both carry a Subsidiary field, value "Flame King"), so the column is valid — cost if wrong: Approve & Ship throws until wrapped in try/catch (caught in Task 14 sandbox test).
+Task B: minor (deferred): setLines error text says "transfer order" even when setting IF/receipt lines (move_tx.js); configsByItem sort comparator never returns 0 (move_data.js:157)
+Task 0 step 2 (in progress): TO8719 id 2587371 (YSN201 x1, Riverside→Tippecanoe, saved directly as Pending Fulfillment ⇒ no TO approval routing; toStatus 'B' OK). Before: Riverside YSN201 on hand 181,919 / committed 25,750 / avail 156,169; Tippecanoe none. IF53831 id 2587372 saved Shipped → Riverside on hand 181,918.
+Task 0 step 2 DONE: after IF Shipped → Riverside on hand 181,918 / avail 156,168 / "in transit" 1 (native in-transit shown on source row; Tippecanoe "on order" 1). IR14492 id 2587373 → Tippecanoe on hand 1; TO status Received. Native in-transit (not the "In-Transit …" location records). Receipt form links one IF ("Item Fulfillment" field) — fine for 1 TO = 1 IF. Script logs: ue_if_filled_status stamped TO line Pick Status = Filled (benign); ue_if_packages logged normal create; ue_portal_link stamped picker-portal link on IF (benign); no RSM/SPS/Item-Substitute errors.
+Task 8: implemented 4fdaacf (33/33); review dispatched. Task 0 step 3 DONE: sandbox Warehouse Portal Manager (2537) already had TO Full, IF Full, Fulfill Orders Full, SO Edit; added Receive Order Full.
+Task 8: complete (commits 1924dbc..4fdaacf, review clean after ruling)
+Task 8: parked — Important (plan-mandated) count-then-create idempotency in createPalletsForJob/cfg_commit_chunk is not safe against truly concurrent requests for the same job/batch — Ruling: code stands for v1; one office person prints (spec D5), job ids are per-click, the UI disables the button while printing, and req_print is manager-only; the realistic failure is a duplicate label that is harmless (only scanned pallets count, spec D8) and voidable — cost if wrong: occasional duplicate labels to void.
+Task 8: minor (deferred): isManager()/onRequest not covered by node tests (verified in Task 13 sandbox smoke); unused L constant until Task 9.
+Task 9: implemented fd9ab63 (39/39); review dispatched
+Task 0 steps 4–6 DONE (sandbox): record types settings 742 / config 743 / load 744 / pallet 745 / scan 746 / label_req 747 (all No Permissions Required for Internal Roles, no name field, show ID); all 32 fields created with exact custrecord_mv* ids (verified by id list after each save); Move Settings row id 1 with {locFrom:'35', locTo:'42', target 2026-11-15, start 2026-10-01 (placeholder — Jack to confirm first move day), roster = Riverside picker names, labelCode both, toStatus B}.
+Task 0: COMPLETE (sandbox). Tip: nlapiSetFieldValue/Text works on NetSuite UI forms, but List/Record field forms only save via a real mouse click on Save (JS .click() on submitter did not submit).
+Task 9: review approved with Important (plan-mandated) concurrent double-approve race + 2 minors.
+Ruling: fix the race now — spec §9 "Concurrency guard" requires flip-to-working-state then RE-READ and refuse if another request got there first; plan code only flips. Fix = write a random claim token with the SHIPPING flip, re-read, abort if claim differs; same pattern to be carried into Task 10 receiveLoad — cost if wrong: a few extra lines.
+Ruling: also fix minors now (cheap, same function): tranids display lookup after SHIPPED must not throw; 'No pallets' path reverts to READY like the shortage path.
+Task 9: fix round 1/5 (3 addressed, 0 open — claim guard, safe tranids, No-pallets revert; commits fd9ab63..053d0c9)
+Task 9: complete (commits 4fdaacf..053d0c9, review clean)
+Task 10: implemented c984667 (48/48) incl. claim-guard ruling; review dispatched
+Task 10: review approved with Important (plan-mandated) recv_undo lacks in-flight guard + minors.
+Ruling: fix recv_undo now — refuse when the pallet's load is receiving_tx, or when the pallet id is in the load's pendingRecv.ids (pinned for a receipt in progress/retry); matches spec §9.2 intent that only scanned pallets are received — cost if wrong: a worker must wait for approval to finish before undoing.
+Task 10: minor (deferred): crash between createLoad and pallet patch in catchup_approve can orphan a stray catch-up Load record (no transaction impact); claim-token block duplicated in shipLoad/receiveLoad.
+Task 10: fix round 1/5 (1 addressed, 0 open — recv_undo in-flight guard; commits c984667..1e44236)
+Task 10: complete (commits 053d0c9..1e44236, review clean)
+Ruling: Batch T11 (dashboard action) + T12 (move_ui.js steps 1–4, 6) into one dispatch — different files, both verbatim; T12 step 5 (local preview) is controller-run — cost if wrong: one larger review.
+Task C (T11+T12): implemented cb5adc4..1b11e8a (52/52, move_ui identical to verified assembly); review dispatched
+Task 12 step 5 (controller): local preview on branch code — print 3, load/dup/edit/ready, approve & ship, inbound scan + loaded-without-scan, approve receipt (1 missing), catch-up, dashboard — all worked at 375px, no console errors, no horizontal scroll. preview_server.js kept untracked (not committed).
+Task C (T11+T12): complete (commits 1e44236..1b11e8a, review clean)
+Task C: minor (deferred): dashboard k() helper and barChart() interpolate big/sub/day/n without esc() — not exploitable today (numeric/ISO/pre-escaped), fix for consistency
+Ruling: New requirement from Jack 2026-09-28 — barcode payload = PLT<id>⇥SKU⇥pcs (every line for mixed), tab-separated; lookups use only the leading PLT<id>; brief task-13a-brief.md (Task 12b) — cost if wrong: longer Code128 (harder long-range reads), switchable later via labelCode=qr.
+Task 12b: complete (commits 1b11e8a..12c14e4, review clean) — barcode payload PLT<id>⇥SKU⇥pcs; scan inputs keep Tab
+Label tester (master, outside plan): b3586db payload, 8a4b096 embedded-preview print warning. Jack confirmed printing works from a real Chrome tab (the chat file preview blocks window.print).
+Final review (opus, 57debac..12c14e4): no Critical, auth clean; Important I1 orphaned-TO retry deadlock/stale lines, I2 claim guard not CAS (two managers), I3 nothing-to-receive → ERROR strands load (+ catch-up repeat), I4 failed catch-up strands pallet / catch-up loads leak into To ship + sendback; I5 Code128 with full payload unscannable on mixed pallets (Jack decision). Minors M1–M8 listed in review.
+Ruling: ONE fix dispatch for I1–I4 + fold-ins (shared claim helper w/ pre-create re-check, STALE_MS 10 min, orphan catch-up load) + M2 message; I5 → ask Jack; M1,M3–M8 deferred (see review) — cost if wrong: minor UX gaps until follow-up.
+Ruling (Jack decision 2026-09-28, resolves I5): QR code only on all pallet labels — set Move Settings labelCode='qr' (sandbox + prod); Code128 path kept but unused; tester default QR-only (master 3f..). Settings record update pending sandbox re-login.
+Final fix wave: complete (commits 12c14e4..c710724, 62/62; re-review all findings addressed, no new breakage)
+Code build (Tasks 1–12 + 12b + final wave): COMPLETE. Next: Task 13 sandbox deploy (needs Jack's sandbox login), then Task 14 functional pass; merge via finishing-a-development-branch after sandbox sign-off.
+Paused 2026-09-28 by Jack; handoff written to master CLAUDE.md (commit above).

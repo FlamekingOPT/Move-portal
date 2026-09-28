@@ -88,7 +88,7 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
     <div class="card">
       <h3>Print settings</h3>
       <div class="row">
-        <div><label>Code on label</label><select id="mode"><option value="both">Both (barcode + QR)</option><option value="c128">Barcode only (Code128)</option><option value="qr">QR only</option></select></div>
+        <div><label>Code on label</label><select id="mode"><option value="qr" selected>QR only (standard)</option><option value="both">Both (barcode + QR)</option><option value="c128">Barcode only (Code128)</option></select></div>
         <div><label>How many labels</label><input id="count" type="number" min="1" max="100" value="3"></div>
         <div><label>First test code</label><input id="start" type="number" min="90000" value="90001"></div>
       </div>
@@ -128,6 +128,7 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
         <li>Set the scanner to <b>keyboard / keystroke output</b> (on Zebra devices this is the DataWedge app; Honeywell/Chainway/Urovo have a "Scan settings" screen). It must not be set to "intent/broadcast".</li>
         <li>Turn on an <b>Enter suffix</b> (sometimes called "send ENTER key" or "suffix CR").</li>
         <li>Open this page on the device (or on a PC with the scanner connected), go to Scan test, and scan. Each scan should appear as one line in the log with a green result.</li>
+        <li>The barcode holds <b>code ⇥ SKU ⇥ pieces</b> (⇥ = Tab). Scanned into Excel or Google Sheets, each field lands in its own column and Enter moves to the next row. Click a cell and scan a label to check.</li>
         <li>Try from different distances and angles, in a dim trailer, and on a wrinkled label. Try the barcode and the QR separately, covering the other with your hand.</li>
       </ol>
       <p class="muted">What to report back: scanner model, whether it reads the barcode, the QR or both, the max distance that works, and whether any scan came through wrong or split into two lines.</p>
@@ -183,6 +184,9 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
     const q = qrcode(0, 'M'); q.addData(code); q.make();
     return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
   }
+  // Barcode payload: label code, then SKU and pieces for every line, TAB-separated,
+  // so a scanner in keyboard mode fills one spreadsheet column per field.
+  function payloadFor(code) { return [code].concat(...lines.map(l => [l.sku, String(l.pcs)])).join('	'); }
   function skuSize(sku) { const n = String(sku || '').length; return n <= 7 ? 48 : n <= 10 ? 38 : n <= 13 ? 30 : 24; }
   const today = () => new Date().toISOString().slice(0, 10);
 
@@ -195,8 +199,9 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
       : '<div class="l-sku" style="font-size:40pt">MIXED</div><table class="l-mixed" style="width:100%;margin-top:4pt">' +
         lines.map(l => '<tr><td>' + esc(l.sku) + '</td><td style="text-align:right">' + esc(l.pcs) + ' pcs</td></tr>').join('') +
         '<tr><td style="font-weight:400">Total</td><td style="text-align:right;font-weight:400">' + pieces + ' pcs</td></tr></table>';
-    const codes = (mode !== 'qr' ? '<div class="l-c128">' + c128Svg(code) + '</div><div class="l-text">' + esc(code) + '</div>' : '') +
-      (mode !== 'c128' ? '<div class="l-qr">' + qrSvg(code) + '</div>' : '') + (mode === 'qr' ? '<div class="l-text">' + esc(code) + '</div>' : '');
+    const payload = payloadFor(code);
+    const codes = (mode !== 'qr' ? '<div class="l-c128">' + c128Svg(payload) + '</div><div class="l-text">' + esc(code) + '</div>' : '') +
+      (mode !== 'c128' ? '<div class="l-qr">' + qrSvg(payload) + '</div>' : '') + (mode === 'qr' ? '<div class="l-text">' + esc(code) + '</div>' : '');
     return '<div class="label' + (mode === 'qr' ? ' qr-only' : '') + '"><div class="l-top"><span>MOVE</span><span>RIVERSIDE &gt; TIPPECANOE</span></div>' + mid +
       '<div class="l-codes">' + codes + '</div><div class="l-foot"><span>printed ' + today() + ' · ' + esc($('by').value) + ' · TEST</span><b>' +
       ($('edited').checked ? 'EDITED' : '') + '</b></div></div>';
@@ -255,12 +260,16 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
     } catch (e) {}
   }
   function classify(raw) {
-    const s = raw.trim().toUpperCase();
+    const fields = raw.trim().toUpperCase().split(/[	,|]/).map(x => x.trim());
+    const s = fields[0];
     const m = /^PLT(\d+)$/.exec(s);
     const printed = store.get('mvt_printed', {});
-    if (!m) return { kind: 'bad', big: '❌ Not a move label', sm: 'Read "' + s + '". A product barcode, or the scanner added extra characters.' };
-    if (printed[s]) return { kind: 'ok', big: '✅ ' + s, sm: printed[s] };
-    return { kind: 'warn', big: '🟡 ' + s, sm: 'Valid label format, but not printed from this tester on this PC.' };
+    const pairs = [];
+    for (let i = 1; i + 1 < fields.length; i += 2) pairs.push(fields[i] + ' ×' + fields[i + 1]);
+    const read = fields.length > 1 ? 'Barcode carried: ' + pairs.join(', ') + (fields.length % 2 === 0 ? ' (odd field count!)' : '') : 'Barcode carried the code only (no SKU/qty).';
+    if (!m) return { kind: 'bad', big: '❌ Not a move label', sm: 'Read "' + raw.replace(/	/g, '⇥') + '". A product barcode, or the scanner added extra characters.' };
+    if (printed[s]) return { kind: 'ok', big: '✅ ' + s, sm: read };
+    return { kind: 'warn', big: '🟡 ' + s, sm: 'Not printed from this tester on this PC. ' + read };
   }
   function renderScans() {
     const good = scans.filter(x => x.kind === 'ok').length;
@@ -269,7 +278,7 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
     $('sOk').textContent = good;
     $('sBad').textContent = scans.length - good;
     $('sGap').textContent = gaps.length ? (gaps.reduce((a, b) => a + b, 0) / gaps.length).toFixed(1) : '–';
-    $('log').innerHTML = scans.slice().reverse().map(x => '<tr><td>' + esc(x.time) + '</td><td>' + esc(x.raw) + '</td><td>' +
+    $('log').innerHTML = scans.slice().reverse().map(x => '<tr><td>' + esc(x.time) + '</td><td>' + esc(x.raw).replace(/	/g, ' ⇥ ') + '</td><td>' +
       ({ ok: '✅', warn: '🟡', bad: '❌' }[x.kind]) + ' ' + esc(x.big.replace(/^\S+\s/, '')) + '</td><td>' + (x.gap == null ? '' : x.gap.toFixed(1) + 's') + '</td></tr>').join('');
   }
   function submit(raw) {
@@ -284,6 +293,8 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
   }
   let idle = null;
   $('scan').addEventListener('keydown', e => {
+    // The barcode's TAB separators arrive as Tab key presses; keep them in the box instead of jumping out.
+    if (e.key === 'Tab') { e.preventDefault(); $('scan').value += '	'; if ($('noEnter').checked) $('scan').dispatchEvent(new Event('input')); return; }
     if (e.key === 'Enter') { e.preventDefault(); clearTimeout(idle); const v = $('scan').value; $('scan').value = ''; submit(v); }
   });
   $('scan').addEventListener('input', () => {
@@ -297,6 +308,14 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{t
   renderLines();
   renderPreview();
   renderScans();
+  // Inside an embedded preview (e.g. a chat app's file viewer) the browser blocks the print dialog.
+  let embedded = false;
+  try { embedded = window.self !== window.top; } catch (e) { embedded = true; }
+  if (embedded) {
+    document.querySelector('main').insertAdjacentHTML('afterbegin', '<div class="card" style="border:2px solid #dc2626;color:#dc2626;font-weight:700">' +
+      '⚠ This page is open inside a preview window, which blocks printing. Open the file directly in Chrome: ' +
+      'G:\\My Drive\\Netsuite OPT\\move_portal\\label_tester.html (double-click it, or drag it into a Chrome tab).</div>');
+  }
   if (!window.JsBarcode || !window.qrcode) {
     $('preview').insertAdjacentHTML('beforebegin', '<p style="color:#dc2626;font-weight:700">⚠ Barcode libraries did not load (no internet?). Connect to the internet and reload.</p>');
   }
