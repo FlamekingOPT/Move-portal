@@ -127,3 +127,110 @@ test('plan subtracts already-labeled stock and lists SKUs with no config', () =>
     assert.equal(r.labeledPallets, 3);
     assert.equal(r.dayLabel, '2026-10-14');
 });
+
+// ── Task 9 ──
+function openLoad(ctx) { return ctx.run('load_create', { door: '4', carrier: 'Estes', trailer: '53', seal: '9' }, false).load; }
+function loadAndReady(ctx, n, job) {
+    const ps = printLabels(ctx, n, job || 'Jship');
+    const L = openLoad(ctx);
+    ps.forEach(p => ctx.run('scan_load', { loadId: L.id, raw: p.code }, false));
+    ctx.run('load_ready', { loadId: L.id }, false);
+    return { ps, L };
+}
+const txCount = (ctx, type) => ctx.tx._t.calls.filter(c => c.type === type).length;
+
+test('load scanning: ok, dup, unknown, void, other open load, move here', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 3);
+    const L1 = openLoad(ctx), L2 = openLoad(ctx);
+    assert.deepEqual([L1.number, L2.number, L1.door], ['MV-001', 'MV-002', '4']);
+    let r = ctx.run('scan_load', { loadId: L1.id, raw: ps[0].code }, false);
+    assert.deepEqual([r.result, r.tone, r.view.totals.pallets, r.view.totals.pieces, r.pallet.status], ['ok', 'ok', 1, 120, 'loaded']);
+    assert.equal(ctx.run('scan_load', { loadId: L1.id, raw: ps[0].code }, false).result, 'dup');
+    assert.equal(ctx.run('scan_load', { loadId: L1.id, raw: '0714528803' }, false).result, 'unknown');
+    ctx.run('pallet_void', { palletId: ps[2].id, reason: 'Damaged' }, false);
+    assert.equal(ctx.run('scan_load', { loadId: L1.id, raw: ps[2].code }, false).result, 'void');
+    ctx.run('scan_load', { loadId: L2.id, raw: ps[1].code }, false);
+    r = ctx.run('scan_load', { loadId: L1.id, raw: ps[1].code }, false);
+    assert.deepEqual([r.result, r.otherNumber], ['other_load', 'MV-002']);
+    r = ctx.run('load_move_here', { loadId: L1.id, palletId: ps[1].id }, false);
+    assert.equal(r.view.totals.pallets, 2);
+    assert.equal(ctx.run('load_get', { loadId: L2.id }, false).totals.pallets, 0);
+    assert.equal(ctx.data.db.scans.length, 6);
+    assert.equal(ctx.run('load_list', {}, false).loads.length, 2);
+});
+
+test('edit and remove only while loading; ready closes scanning', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 2);
+    const L = openLoad(ctx);
+    assert.throws(() => ctx.run('load_ready', { loadId: L.id }, false), /at least one/);
+    ctx.run('scan_load', { loadId: L.id, raw: ps[0].code }, false);
+    const e = ctx.run('pallet_edit', { loadId: L.id, palletId: ps[0].id, lines: [{ item: '11', pcs: 100 }] }, false);
+    assert.deepEqual([e.pallet.pieces, e.pallet.edited, e.pallet.summary, e.view.totals.pieces], [100, true, 'YSN201 · A · 100', 100]);
+    assert.throws(() => ctx.run('pallet_edit', { loadId: L.id, palletId: ps[0].id, lines: [{ item: '12', pcs: 1 }] }, false), /only change piece counts/);
+    ctx.run('pallet_remove', { loadId: L.id, palletId: ps[0].id }, false);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'labeled');
+    ctx.run('scan_load', { loadId: L.id, raw: ps[1].code }, false);
+    ctx.run('load_ready', { loadId: L.id }, false);
+    assert.throws(() => ctx.run('scan_load', { loadId: L.id, raw: ps[0].code }, false), /closed for scanning/);
+    assert.throws(() => ctx.run('pallet_remove', { loadId: L.id, palletId: ps[1].id }, false), /open load/);
+    assert.throws(() => ctx.run('load_sendback', { loadId: L.id }, false), /Managers only/);
+    ctx.run('load_sendback', { loadId: L.id });
+    assert.equal(ctx.data.getLoad(L.id).status, 'loading');
+});
+
+test('approve & ship creates one TO and one IF and ships the pallets', () => {
+    const ctx = setup();
+    const { ps, L } = loadAndReady(ctx, 2);
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }, false), /Managers only/);
+    const list = ctx.run('ship_list');
+    assert.deepEqual(list.loads[0].rows, [{ item: '11', sku: 'YSN201', qty: 240, avail: 1000, ok: true }]);
+    const r = ctx.run('load_approve', { loadId: L.id });
+    assert.equal(r.number, 'MV-001');
+    assert.deepEqual(ctx.tx._t.calls.map(c => c.type), ['TrnfrOrd', 'ItemShip']);
+    assert.deepEqual(ctx.tx._t.calls[0].lines, { '11': 240 });
+    assert.deepEqual([ctx.tx._t.calls[0].fromLoc, ctx.tx._t.calls[0].toLoc], ['35', '99']);
+    assert.match(ctx.tx._t.memos[0].memo, /\[mv:\d+:to\]/);
+    const Ld = ctx.data.getLoad(L.id);
+    assert.deepEqual([Ld.status, Ld.data.approvedBy, Ld.data.phase], ['shipped', 'Miguel', '']);
+    ps.forEach(p => { const x = ctx.data.getPallet(p.id); assert.deepEqual([x.status, x.shippedDay], ['shipped', '2026-10-14']); });
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /not ready to ship/);
+    assert.equal(ctx.run('ship_list').loads.length, 0);
+    assert.equal(ctx.run('ship_list').recent[0].number, 'MV-001');
+});
+
+test('stock shortage blocks approval and leaves the load ready', () => {
+    const ctx = setup();
+    const { L } = loadAndReady(ctx, 2);
+    ctx.data.db.stock['35']['11'].avail = 100;
+    assert.equal(ctx.run('ship_list').loads[0].rows[0].ok, false);
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /YSN201 needs 240, available 100/);
+    assert.equal(ctx.data.getLoad(L.id).status, 'ready');
+    assert.equal(ctx.tx._t.calls.length, 0);
+});
+
+test('an IF failure is retried without a second TO; a crash after the IF saved does not duplicate it', () => {
+    const ctx = setup();
+    const { L } = loadAndReady(ctx, 1);
+    ctx.tx._t.failNext = 'if';
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /IF save failed/);
+    let Ld = ctx.data.getLoad(L.id);
+    assert.deepEqual([Ld.status, Ld.data.error, txCount(ctx, 'TrnfrOrd')], ['error', 'IF save failed', 1]);
+    assert.equal(ctx.run('ship_list').loads[0].canSendBack, false);
+    ctx.tx._t.failNext = 'if_after';
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /crashed after save/);
+    ctx.run('load_approve', { loadId: L.id });
+    assert.deepEqual([txCount(ctx, 'TrnfrOrd'), txCount(ctx, 'ItemShip'), ctx.data.getLoad(L.id).status], [1, 1, 'shipped']);
+});
+
+test('committed shortfall on the TO stops before the IF', () => {
+    const ctx = setup();
+    const { L } = loadAndReady(ctx, 1);
+    ctx.tx._t.shortfalls = [{ item: '11', need: 120, committed: 60 }];
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /YSN201 reserved 60 of 120/);
+    assert.equal(txCount(ctx, 'ItemShip'), 0);
+    ctx.tx._t.shortfalls = [];
+    ctx.run('load_approve', { loadId: L.id });
+    assert.equal(txCount(ctx, 'ItemShip'), 1);
+});

@@ -300,6 +300,180 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
 
     // ── (Tasks 9–11 add more act(...) blocks here) ──
 
+    // ── loading (outbound) ───────────────────────────────────────────────
+    const OUT_OPEN = [L.LOADING, L.READY, L.SHIPPING, L.ERROR];
+
+    function loadView(loadId) {
+        const Ld = mustLoad(loadId);
+        const pallets = data.palletsByLoad(Ld.id, [P.LOADED, P.SHIPPED, P.RECEIVED, P.MISSING]);
+        const items = {};
+        pallets.forEach(p => p.lines.forEach(l => { items[l.item] = 1; }));
+        return { load: pubLoad(Ld, countsFromPallets(pallets)), pallets: pallets.slice().reverse().map(p => pubPallet(p)),
+            totals: { pallets: pallets.length, pieces: pallets.reduce((a, p) => a + p.pieces, 0), skus: Object.keys(items).length } };
+    }
+
+    act('load_list', false, () => {
+        const loads = data.loadsByStatus(OUT_OPEN, 50).filter(l => (l.data || {}).phase !== 'recv');
+        const counts = data.palletCountsByLoad(loads.map(l => l.id));
+        return { loads: loads.map(l => pubLoad(l, counts[l.id])) };
+    });
+
+    act('load_create', false, (a, c) => {
+        const clean = v => String(v || '').trim().slice(0, 40);
+        const id = data.createLoad({ number: core.nextLoadNumber(data.allLoadNumbers()), status: L.LOADING,
+            data: { door: clean(a.door), carrier: clean(a.carrier), trailer: clean(a.trailer), seal: clean(a.seal), createdBy: c.actor, createdAt: c.now.stamp } });
+        // Two docks opening a load at the same moment can get the same number; the newer one renumbers.
+        const Ld = data.getLoad(id);
+        if (data.loadsByNumber(Ld.number).some(x => Number(x.id) < Number(id))) data.updateLoad(Ld, { number: core.nextLoadNumber(data.allLoadNumbers()) });
+        return { load: pubLoad(data.getLoad(id)) };
+    });
+
+    act('load_get', false, (a) => loadView(a.loadId));
+
+    act('scan_load', false, (a, c) => {
+        const Ld = mustLoad(a.loadId);
+        if (Ld.status !== L.LOADING) throw userErr(Ld.number + ' is closed for scanning (' + Ld.status + ')');
+        const sc = core.parseScan(a.raw);
+        const p = sc.palletId ? data.getPallet(sc.palletId) : null;
+        const loads = {};
+        if (p && p.loadId) { const o = p.loadId === Ld.id ? Ld : data.getLoad(p.loadId); if (o) loads[o.id] = o; }
+        const rule = core.loadScanRule(p, Ld.id, loads);
+        if (rule.set) data.updatePallet(p, { status: rule.set.status, load: rule.set.loadId, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
+        data.logScan({ pallet: p ? p.id : '', load: Ld.id, result: rule.result, data: { raw: sc.raw, mode: 'load', actor: c.actor, at: c.now.stamp } });
+        const fresh = p ? data.getPallet(p.id) : null;
+        return { result: rule.result, tone: core.toneFor(rule.result), raw: sc.raw, pallet: fresh ? pubPallet(fresh) : null,
+            loadNumber: Ld.number, otherNumber: rule.otherNumber || '', view: loadView(Ld.id) };
+    });
+
+    act('load_move_here', false, (a, c) => {
+        const Ld = mustLoad(a.loadId), p = mustPallet(a.palletId);
+        if (Ld.status !== L.LOADING) throw userErr(Ld.number + ' is closed for scanning');
+        const other = p.loadId ? data.getLoad(p.loadId) : null;
+        if (p.status !== P.LOADED || !other || other.status !== L.LOADING) throw userErr(p.code + ' can no longer be moved');
+        data.updatePallet(p, { load: Ld.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor, movedFrom: other.number } });
+        return { pallet: pubPallet(data.getPallet(p.id)), view: loadView(Ld.id) };
+    });
+
+    function editablePallet(a) {
+        const Ld = mustLoad(a.loadId), p = mustPallet(a.palletId);
+        if (Ld.status !== L.LOADING || p.status !== P.LOADED || p.loadId !== Ld.id) throw userErr(p.code + ' can only be changed while it is on an open load');
+        return { Ld: Ld, p: p };
+    }
+
+    act('pallet_edit', false, (a, c) => {
+        const o = editablePallet(a);
+        const byItem = {};
+        o.p.lines.forEach(l => { byItem[String(l.item)] = l; });
+        const next = (Array.isArray(a.lines) ? a.lines : []).map(l => byItem[String(l.item)] ? Object.assign({}, byItem[String(l.item)], { pcs: l.pcs }) : null);
+        if (next.length !== o.p.lines.length || next.some(l => !l)) throw userErr('Edit can only change piece counts');
+        const err = core.validateLines(next);
+        if (err) throw userErr(err);
+        const lines = next.map(l => Object.assign({}, l, { pcs: Math.floor(Number(l.pcs)) }));
+        data.updatePallet(o.p, { lines: lines, summary: core.summarize(lines), pieces: core.totalPieces(lines), edited: true,
+            data: { editedAt: c.now.stamp, editedBy: c.actor } });
+        return { pallet: pubPallet(data.getPallet(o.p.id)), view: loadView(o.Ld.id) };
+    });
+
+    act('pallet_remove', false, (a, c) => {
+        const o = editablePallet(a);
+        data.updatePallet(o.p, { status: P.LABELED, load: '', data: { removedAt: c.now.stamp, removedBy: c.actor } });
+        return { view: loadView(o.Ld.id) };
+    });
+
+    act('load_ready', false, (a, c) => {
+        const Ld = mustLoad(a.loadId);
+        if (Ld.status !== L.LOADING) throw userErr(Ld.number + ' is not open');
+        if (!data.palletsByLoad(Ld.id, [P.LOADED]).length) throw userErr('Scan at least one pallet first');
+        data.updateLoad(Ld, { status: L.READY, data: { readyBy: c.actor, readyAt: c.now.stamp } });
+        return {};
+    });
+
+    act('load_sendback', true, (a) => {
+        const Ld = mustLoad(a.loadId);
+        if ([L.READY, L.ERROR].indexOf(Ld.status) === -1 || Ld.to) throw userErr(Ld.number + ' can no longer be sent back');
+        data.updateLoad(Ld, { status: L.LOADING, data: { error: '', phase: '' } });
+        return {};
+    });
+
+    act('ship_list', true, (a, c) => {
+        const loads = data.loadsByStatus([L.READY, L.SHIPPING, L.ERROR], 50).filter(l => (l.data || {}).phase !== 'recv');
+        const per = loads.map(Ld => ({ Ld: Ld, pallets: data.palletsByLoad(Ld.id, [P.LOADED]) }));
+        const skuOf = {};
+        per.forEach(o => o.pallets.forEach(p => p.lines.forEach(l => { skuOf[l.item] = l.sku; })));
+        const stock = Object.keys(skuOf).length ? data.locationStock(c.S.locFrom, Object.keys(skuOf)) : {};
+        const out = per.map(o => {
+            const agg = o.Ld.to && o.Ld.data.lines ? o.Ld.data.lines : core.aggregate(o.pallets);
+            const rows = Object.keys(agg).map(item => {
+                const avail = stock[item] ? stock[item].avail : 0;
+                // Once the TO exists its own lines are already committed, so availability no longer applies.
+                return { item: item, sku: skuOf[item] || item, qty: agg[item], avail: avail, ok: !!o.Ld.to || avail >= agg[item] };
+            });
+            return Object.assign(pubLoad(o.Ld, countsFromPallets(o.pallets)), { rows: rows,
+                canSendBack: !o.Ld.to && [L.READY, L.ERROR].indexOf(o.Ld.status) !== -1 });
+        });
+        const recent = data.loadsByStatus([L.SHIPPED, L.RECEIVING, L.RECV_READY, L.RECEIVED, L.RECEIVED_SHORT], 10);
+        const t = data.tranids([].concat.apply([], recent.map(l => [l.to, l.if])).filter(Boolean));
+        const rc = data.palletCountsByLoad(recent.map(l => l.id));
+        return { loads: out, recent: recent.map(l => Object.assign(pubLoad(l, rc[l.id]), { toNumber: t[l.to] || '', ifNumber: t[l.if] || '' })) };
+    });
+
+    // Resumable: each finished step (TO, IF) is saved on the load, and memo tokens
+    // find a transaction that was saved just before a crash.
+    function shipLoad(Ld, c) {
+        if ([L.READY, L.ERROR, L.SHIPPING].indexOf(Ld.status) === -1 || Ld.data.phase === 'recv') throw userErr(Ld.number + ' is ' + Ld.status + ', not ready to ship');
+        if (Ld.status === L.SHIPPING && !stale(Ld)) throw userErr(Ld.number + ' is already being shipped. Wait a minute and refresh.');
+        data.updateLoad(Ld, { status: L.SHIPPING, data: { workingAt: Date.now(), error: '', phase: 'ship' } });
+        Ld = data.getLoad(Ld.id);
+        try {
+            const skuOf = {};
+            data.palletsByLoad(Ld.id, [P.LOADED, P.SHIPPED]).forEach(p => p.lines.forEach(l => { skuOf[l.item] = l.sku; }));
+            const name = k => skuOf[k] || k;
+            let lines = Ld.data.lines;
+            if (!Ld.to) {
+                const loaded = data.palletsByLoad(Ld.id, [P.LOADED]);
+                if (!loaded.length) throw userErr('No pallets on ' + Ld.number);
+                lines = core.aggregate(loaded);
+                const stock = data.locationStock(c.S.locFrom, Object.keys(lines));
+                const avail = {};
+                Object.keys(stock).forEach(k => { avail[k] = stock[k].avail; });
+                const short = core.shortages(lines, avail);
+                if (short.length) {
+                    data.updateLoad(Ld, { status: L.READY, data: { workingAt: 0, phase: '' } });
+                    throw userErr('Not enough available at ' + c.S.fromName + ': ' +
+                        short.map(s => name(s.item) + ' needs ' + s.need + ', available ' + s.avail).join('; ') + '. Remove a pallet or check the count.');
+                }
+                const tok = core.txToken(Ld.id, 'to');
+                const toId = tx.findByToken(tok, 'TrnfrOrd') || tx.createTransferOrder({ fromLoc: c.S.locFrom, toLoc: c.S.locTo,
+                    orderStatus: c.S.toStatus, memo: 'Move ' + Ld.number + ' ' + tok, lines: lines });
+                data.updateLoad(Ld, { to: toId, data: { lines: lines } });
+                Ld = data.getLoad(Ld.id);
+            }
+            if (!Ld.if) {
+                const tok = core.txToken(Ld.id, 'if');
+                let ifId = tx.findByToken(tok, 'ItemShip');
+                if (!ifId) {
+                    const sf = tx.committedShortfalls(Ld.to, lines);
+                    if (sf.length) throw userErr('The transfer order was created but NetSuite reserved less than the load: ' +
+                        sf.map(s => name(s.item) + ' reserved ' + s.committed + ' of ' + s.need).join('; ') +
+                        '. Free that stock (or fix the transfer order in NetSuite) and press Retry.');
+                    ifId = tx.fulfillTransferOrder(Ld.to, lines, 'Move ' + Ld.number + ' ' + tok);
+                }
+                data.updateLoad(Ld, { if: ifId });
+                Ld = data.getLoad(Ld.id);
+            }
+            data.palletsByLoad(Ld.id, [P.LOADED]).forEach(p => data.updatePallet(p, { status: P.SHIPPED, shippedDay: c.now.dayIso, data: { shippedAt: c.now.stamp } }));
+            data.updateLoad(Ld, { status: L.SHIPPED, data: { approvedBy: c.actor, approvedAt: c.now.stamp, workingAt: 0, phase: '' } });
+            const t = data.tranids([Ld.to, Ld.if]);
+            return { number: Ld.number, toNumber: t[Ld.to] || '', ifNumber: t[Ld.if] || '' };
+        } catch (e) {
+            const cur = data.getLoad(Ld.id);
+            if (cur && cur.status === L.SHIPPING) data.updateLoad(cur, { status: L.ERROR, data: { error: e.message, workingAt: 0 } });
+            throw e;
+        }
+    }
+
+    act('load_approve', true, (a, c) => shipLoad(mustLoad(a.loadId), c));
+
     // ── entry points ─────────────────────────────────────────────────────
     function runAction(action, a, mgr) {
         const def = A[action];
