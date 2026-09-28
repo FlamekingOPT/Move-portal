@@ -165,3 +165,63 @@ test('buildConfigImport works without a header row', () => {
     assert.equal(r.configs.length, 1);
     assert.equal(r.errors.length, 0);
 });
+
+// ── Task 4 ──
+test('calendar helpers skip Sundays and skip dates', () => {
+    assert.equal(core.isoAddDays('2026-10-01', -1), '2026-09-30');
+    assert.equal(core.isoAddDays('2026-12-31', 1), '2027-01-01');
+    assert.deepEqual(core.moveDays('2026-10-01', '2026-10-07', []), ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-05', '2026-10-06', '2026-10-07']);
+    assert.deepEqual(core.moveDays('2026-10-01', '2026-10-07', ['2026-10-05']), ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-06', '2026-10-07']);
+    assert.deepEqual(core.moveDays('2026-10-08', '2026-10-07', []), []);
+    assert.equal(core.moveDays('2026-10-01', '2026-11-15', []).length, 39);
+    assert.equal(core.nthMoveDayFrom('2026-10-03', 1, []), '2026-10-03');
+    assert.equal(core.nthMoveDayFrom('2026-10-04', 1, []), '2026-10-05');
+    assert.equal(core.nthMoveDayFrom('2026-10-03', 2, []), '2026-10-05');
+});
+
+test('parseNsStamp reads NetSuite date-time text', () => {
+    assert.deepEqual(core.parseNsStamp('10/14/2026 2:14:05 pm'), { dayIso: '2026-10-14', hour: 14 });
+    assert.deepEqual(core.parseNsStamp('1/2/2026 12:05 am'), { dayIso: '2026-01-02', hour: 0 });
+    assert.deepEqual(core.parseNsStamp('1/2/2026 12:05 pm'), { dayIso: '2026-01-02', hour: 12 });
+    assert.equal(core.parseNsStamp('nope'), null);
+});
+
+test('estimateRemaining rounds pallets up and lists items with no config', () => {
+    assert.deepEqual(core.estimateRemaining({ '11': 1200, '12': 610, '13': 5, '14': 0 }, { '11': 120, '12': 60 }),
+        { pallets: 21, byItem: { '11': 10, '12': 11 }, unknownItems: ['13'] });
+});
+
+test('trackerMetrics mid-move, today not finished', () => {
+    const moved = {};
+    ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-12', '2026-10-13']
+        .forEach(d => { moved[d] = 200; });
+    const m = core.trackerMetrics({ todayIso: '2026-10-14', targetIso: '2026-11-15', startIso: '2026-10-01', skipDates: [], remaining: 5250, movedByDay: moved, todayDone: false });
+    assert.deepEqual(m, { moved: 2200, remaining: 5250, total: 7450, movedToday: 0, daysLeft: 28, neededPerDay: 188,
+        avg7: 200, avgAll: 200, projectedFinish: '2026-11-13', onTrack: true });
+});
+
+test('trackerMetrics after today is done, and edge cases', () => {
+    const moved = { '2026-10-07': 200, '2026-10-08': 200, '2026-10-09': 200, '2026-10-10': 200, '2026-10-12': 200, '2026-10-13': 200, '2026-10-14': 150 };
+    const m = core.trackerMetrics({ todayIso: '2026-10-14', targetIso: '2026-11-15', startIso: '2026-10-07', skipDates: [], remaining: 100, movedByDay: moved, todayDone: true });
+    assert.equal(m.daysLeft, 27);
+    assert.equal(m.avg7, 192.9);
+    assert.equal(m.movedToday, 150);
+    assert.equal(m.projectedFinish, '2026-10-15');
+    const done = core.trackerMetrics({ todayIso: '2026-11-20', targetIso: '2026-11-15', startIso: '2026-10-01', skipDates: [], remaining: 5, movedByDay: {}, todayDone: false });
+    assert.equal(done.daysLeft, 0);
+    assert.equal(done.neededPerDay, Infinity);
+    assert.equal(done.projectedFinish, null);
+    assert.equal(done.onTrack, false);
+    const none = core.trackerMetrics({ todayIso: '2026-10-14', targetIso: '2026-11-15', startIso: '2026-10-01', skipDates: [], remaining: 0, movedByDay: {}, todayDone: false });
+    assert.equal(none.projectedFinish, '2026-10-14');
+    assert.equal(none.neededPerDay, 0);
+});
+
+test('suggestPlan splits by pallets left and never exceeds them', () => {
+    const rows = [{ item: '11', palletsLeft: 10 }, { item: '12', palletsLeft: 30 }];
+    assert.deepEqual(core.suggestPlan(rows, 8), { '11': 2, '12': 6 });
+    assert.deepEqual(core.suggestPlan(rows, 5), { '11': 1, '12': 4 });
+    assert.deepEqual(core.suggestPlan(rows, 100), { '11': 10, '12': 30 });
+    assert.deepEqual(core.suggestPlan(rows, 0), { '11': 0, '12': 0 });
+    assert.deepEqual(core.suggestPlan([], 5), {});
+});

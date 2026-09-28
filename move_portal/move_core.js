@@ -223,11 +223,101 @@ define([], function () {
         return out;
     }
 
-    // ── (Task 4) calendar, tracker, plan ─────────────────────────────────
+    // ── calendar (ISO YYYY-MM-DD strings, computed in UTC to avoid DST) ──
+    const DAY_MS = 86400000;
+    function pad2(n) { return String(n).padStart(2, '0'); }
+    function isoToUtc(iso) { const p = String(iso).split('-').map(Number); return Date.UTC(p[0], p[1] - 1, p[2]); }
+    function utcToIso(t) { return new Date(t).toISOString().slice(0, 10); }
+    function isoAddDays(iso, n) { return utcToIso(isoToUtc(iso) + n * DAY_MS); }
+    function isMoveDay(iso, skipSet) { return new Date(isoToUtc(iso)).getUTCDay() !== 0 && !skipSet[iso]; }
+    function skipSetOf(skip) { const s = {}; (skip || []).forEach(d => { s[d] = true; }); return s; }
+
+    function moveDays(fromIso, toIso, skip) {
+        const out = [], sk = skipSetOf(skip);
+        for (let t = isoToUtc(fromIso), end = isoToUtc(toIso); t <= end; t += DAY_MS) {
+            const iso = utcToIso(t);
+            if (isMoveDay(iso, sk)) out.push(iso);
+        }
+        return out;
+    }
+
+    function nthMoveDayFrom(fromIso, n, skip) {
+        const sk = skipSetOf(skip);
+        let iso = fromIso, count = 0;
+        for (let guard = 0; guard < 5000; guard++) {
+            if (isMoveDay(iso, sk)) { count++; if (count >= n) return iso; }
+            iso = isoAddDays(iso, 1);
+        }
+        return null;
+    }
+
+    // NetSuite DATETIMETZ text in M/D/YYYY format, e.g. "10/14/2026 2:14:05 pm"
+    function parseNsStamp(s) {
+        const m = /(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*([ap]m)?/i.exec(String(s || ''));
+        if (!m) return null;
+        let h = Number(m[4]);
+        if (m[6]) { const pm = /pm/i.test(m[6]); if (pm && h < 12) h += 12; if (!pm && h === 12) h = 0; }
+        return { dayIso: m[3] + '-' + pad2(m[1]) + '-' + pad2(m[2]), hour: h };
+    }
+
+    // ── tracker ───────────────────────────────────────────────────────────
+    function estimateRemaining(onHand, defPcs) {
+        const byItem = {}, unknownItems = [];
+        let pallets = 0;
+        Object.keys(onHand || {}).forEach(k => {
+            const q = Number(onHand[k]) || 0;
+            if (q <= 0) return;
+            const pcs = Number(defPcs && defPcs[k]) || 0;
+            if (!pcs) { unknownItems.push(k); return; }
+            byItem[k] = Math.ceil(q / pcs);
+            pallets += byItem[k];
+        });
+        return { pallets, byItem, unknownItems };
+    }
+
+    function trackerMetrics(o) {
+        const skip = o.skipDates || [];
+        const moved = o.movedByDay || {};
+        const movedTotal = Object.keys(moved).reduce((a, k) => a + (Number(moved[k]) || 0), 0);
+        const fromIso = o.todayDone ? nthMoveDayFrom(isoAddDays(o.todayIso, 1), 1, skip) : o.todayIso;
+        const daysLeft = fromIso > o.targetIso ? 0 : moveDays(fromIso, o.targetIso, skip).length;
+        const done = moveDays(o.startIso, o.todayIso, skip).filter(d => d < o.todayIso || o.todayDone);
+        const sumOf = ds => ds.reduce((a, d) => a + (Number(moved[d]) || 0), 0);
+        const last7 = done.slice(-7);
+        const avg7 = last7.length ? sumOf(last7) / last7.length : 0;
+        const avgAll = done.length ? sumOf(done) / done.length : 0;
+        const remaining = Math.max(0, Number(o.remaining) || 0);
+        const needed = daysLeft ? Math.ceil(remaining / daysLeft) : (remaining > 0 ? Infinity : 0);
+        let projected = null;
+        if (remaining === 0) projected = o.todayIso;
+        else if (avg7 > 0) projected = nthMoveDayFrom(fromIso, Math.ceil(remaining / avg7), skip);
+        return {
+            moved: movedTotal, remaining, total: movedTotal + remaining, movedToday: Number(moved[o.todayIso]) || 0,
+            daysLeft, neededPerDay: needed, avg7: Math.round(avg7 * 10) / 10, avgAll: Math.round(avgAll * 10) / 10,
+            projectedFinish: projected, onTrack: !!projected && projected <= o.targetIso
+        };
+    }
+
+    // Split `total` labels across SKUs in proportion to pallets left (largest remainder).
+    function suggestPlan(rows, total) {
+        const out = {};
+        const sum = rows.reduce((a, r) => a + r.palletsLeft, 0);
+        const want = Math.min(Math.max(0, Math.floor(Number(total) || 0)), sum);
+        if (!want) { rows.forEach(r => { out[r.item] = 0; }); return out; }
+        const parts = rows.map(r => {
+            const raw = want * r.palletsLeft / sum;
+            return { item: r.item, base: Math.floor(raw), frac: raw - Math.floor(raw), cap: r.palletsLeft };
+        });
+        let left = want - parts.reduce((a, p) => a + p.base, 0);
+        parts.slice().sort((a, b) => b.frac - a.frac).forEach(p => { if (left > 0 && p.base < p.cap) { p.base++; left--; } });
+        parts.forEach(p => { out[p.item] = Math.min(p.base, p.cap); });
+        return out;
+    }
 
     return {
         PALLET, LOAD, palletCode, parseScan, totalPieces, summarize, headline,
         isEdited, validateLines, pcsMap, defaultPcs, loadScanRule, receiveScanRule, toneFor,
-        aggregate, shortages, nextLoadNumber, catchupNumber, txToken, parseCsv, buildConfigImport
+        aggregate, shortages, nextLoadNumber, catchupNumber, txToken, parseCsv, buildConfigImport,
+        isoAddDays, moveDays, nthMoveDayFrom, parseNsStamp, estimateRemaining, trackerMetrics, suggestPlan
     };
 });
