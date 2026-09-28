@@ -17,6 +17,15 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
 - **SDD ledger, with every ruling:** `docs/sdd-ledger/progress.md`, plus the task briefs and reports. The review diffs were left out (the history covers them).
 
+## 🧭 SANDBOX DEPLOY DONE (2026-09-28, Task 13 steps 1–4)
+- **Move Settings row 1:** `labelCode` = `qr`, `start` = **2026-09-30** (first move day, per Jack).
+- **File Cabinet** `SuiteScripts/MovePortal` = folder **331983**: move_core **2055084**, move_data **2055085**, move_label_template **2055086**, move_tx **2055087**, move_ui **2055088**, sl_move_portal **2055089**.
+- **Script** `customscript_move_portal` = id **893** (Suitelet, API 2.1). **Deployment** `customdeploy_move_portal` = id **2771**: Testing (owner-only), Execute As Current Role, audience Administrator, log Debug.
+- **URL:** `https://8211645-sb1.app.netsuite.com/app/site/hosting/scriptlet.nl?script=893&deploy=1`
+- **Verified:** the page loads in manager view with no console errors (so `clientMain.toString()` works under GraalJS). `item_lookup` YSN201 returns on-hand 181,918 at Riverside. `dashboard` works (42 move days left).
+- **⏭ Next:** Jack prints 1–2 **Custom** labels from "Print a SKU" to the 4×6 printer and scans one. That checks the BFO PDF, the QR code and the page size. No configs are loaded (0 rows), so Custom is the only option.
+- **Upload gotcha:** the File Cabinet and Deployment Save buttons ignore automation clicks about half the time. `document.querySelector('#btn_multibutton_submitter').click()` works. Fix the Folder with `nlapiSetFieldValue('folder', <id>)`, because it defaults to the last-used folder.
+
 ## 🧭 READ FIRST — HANDOFF (2026-09-28, latest): DESIGN CHANGED, NEXT = IMPLEMENTATION PLAN
 **New design (spec written; no code changed yet):**
 - The office creates **1 transfer order per SKU** by hand.
