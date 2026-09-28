@@ -117,3 +117,51 @@ test('load numbers, catch-up numbers and transaction tokens', () => {
     assert.equal(core.txToken('17', 'to'), '[mv:17:to]');
     assert.equal(core.txToken(17, 'r2'), '[mv:17:r2]');
 });
+
+// ── Task 3 ──
+test('parseCsv handles quotes, CRLF and blank lines', () => {
+    const rows = core.parseCsv('SKU,Config,Pcs,Default\r\n"YSN,201",A,120,Y\r\n\r\nYSN301, B ,"60",\n"say ""hi""",C,1,N');
+    assert.deepEqual(rows, [
+        ['SKU', 'Config', 'Pcs', 'Default'],
+        ['YSN,201', 'A', '120', 'Y'],
+        ['YSN301', 'B', '60', ''],
+        ['say "hi"', 'C', '1', 'N']
+    ]);
+    assert.deepEqual(core.parseCsv(''), []);
+});
+
+test('buildConfigImport validates rows and resolves one default per SKU', () => {
+    const skus = { YSN201: '11', YSN301: '12', YSN401: '13' };
+    const rows = [
+        ['SKU', 'Config', 'Pcs per pallet', 'Default'],
+        ['ysn201', 'a', '120', 'Y'],
+        ['YSN201', 'B', '60', 'N'],
+        ['YSN301', 'A', '60', ''],
+        ['NOPE', 'A', '5', 'Y'],
+        ['YSN301', 'B', '0', 'N'],
+        ['YSN201', 'A', '100', 'N'],
+        ['YSN401', 'A', '10', 'Y'],
+        ['YSN401', 'B', '20', 'yes'],
+        ['', 'A', '1', 'Y']
+    ];
+    const r = core.buildConfigImport(rows, skus);
+    assert.deepEqual(r.unknownSkus, ['NOPE']);
+    assert.deepEqual(r.configs, [
+        { item: '11', sku: 'YSN201', code: 'A', pcs: 120, isDefault: true },
+        { item: '11', sku: 'YSN201', code: 'B', pcs: 60, isDefault: false },
+        { item: '12', sku: 'YSN301', code: 'A', pcs: 60, isDefault: true },
+        { item: '13', sku: 'YSN401', code: 'A', pcs: 10, isDefault: true },
+        { item: '13', sku: 'YSN401', code: 'B', pcs: 20, isDefault: false }
+    ]);
+    assert.deepEqual(r.errors.map(e => e.row), [6, 7, 10, 0]);
+    assert.match(r.errors[0].msg, /YSN301 B: pieces must be a whole number/);
+    assert.match(r.errors[1].msg, /YSN201 A: duplicate config/);
+    assert.match(r.errors[2].msg, /Missing SKU/);
+    assert.match(r.errors[3].msg, /YSN401: more than one default, using A/);
+});
+
+test('buildConfigImport works without a header row', () => {
+    const r = core.buildConfigImport([['YSN201', 'A', '120', 'Y']], { YSN201: '11' });
+    assert.equal(r.configs.length, 1);
+    assert.equal(r.errors.length, 0);
+});

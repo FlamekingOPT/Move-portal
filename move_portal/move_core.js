@@ -173,13 +173,61 @@ define([], function () {
 
     function txToken(loadId, kind) { return '[mv:' + loadId + ':' + kind + ']'; }
 
-    // ── (Task 3) CSV config import ────────────────────────────────────────
+    // ── CSV config import ─────────────────────────────────────────────────
+    function parseCsv(text) {
+        const s = String(text || '').replace(/\r\n?/g, '\n');
+        const rows = [];
+        let row = [], f = '', q = false;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (q) {
+                if (c === '"') { if (s[i + 1] === '"') { f += '"'; i++; } else q = false; }
+                else f += c;
+            } else if (c === '"') q = true;
+            else if (c === ',') { row.push(f); f = ''; }
+            else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+            else f += c;
+        }
+        if (f !== '' || row.length) { row.push(f); rows.push(row); }
+        return rows.map(r => r.map(x => x.trim())).filter(r => r.some(x => x !== ''));
+    }
+
+    function buildConfigImport(rows, skuToItem) {
+        const out = { configs: [], errors: [], unknownSkus: [] };
+        const start = rows.length && /sku/i.test(rows[0][0] || '') ? 1 : 0;
+        const bySku = {}, order = [];
+        for (let i = start; i < rows.length; i++) {
+            const r = rows[i], rn = i + 1;
+            const sku = String(r[0] || '').toUpperCase();
+            if (!sku) { out.errors.push({ row: rn, msg: 'Missing SKU' }); continue; }
+            const item = skuToItem[sku];
+            if (!item) { if (out.unknownSkus.indexOf(sku) === -1) out.unknownSkus.push(sku); continue; }
+            const code = String(r[1] || '').toUpperCase();
+            if (!code) { out.errors.push({ row: rn, msg: sku + ': missing config code' }); continue; }
+            const pcs = Number(r[2]);
+            if (!(pcs > 0) || Math.floor(pcs) !== pcs) { out.errors.push({ row: rn, msg: sku + ' ' + code + ': pieces must be a whole number above 0' }); continue; }
+            if (!bySku[sku]) { bySku[sku] = []; order.push(sku); }
+            if (bySku[sku].some(x => x.code === code)) { out.errors.push({ row: rn, msg: sku + ' ' + code + ': duplicate config' }); continue; }
+            bySku[sku].push({ item: String(item), sku, code, pcs, isDefault: /^(y|yes|true|1)$/i.test(String(r[3] || '')) });
+        }
+        order.forEach(sku => {
+            const list = bySku[sku];
+            const defs = list.filter(x => x.isDefault);
+            if (defs.length > 1) {
+                out.errors.push({ row: 0, msg: sku + ': more than one default, using ' + defs[0].code });
+                list.forEach(x => { x.isDefault = x === defs[0]; });
+            }
+            if (!defs.length) list[0].isDefault = true;
+            list.forEach(x => out.configs.push(x));
+        });
+        return out;
+    }
 
     // ── (Task 4) calendar, tracker, plan ─────────────────────────────────
 
     return {
         PALLET, LOAD, palletCode, parseScan, totalPieces, summarize, headline,
         isEdited, validateLines, pcsMap, defaultPcs, loadScanRule, receiveScanRule, toneFor,
-        aggregate, shortages, nextLoadNumber, catchupNumber, txToken
+        aggregate, shortages, nextLoadNumber, catchupNumber, txToken, parseCsv, buildConfigImport
     };
 });
