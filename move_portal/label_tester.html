@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move Label Tester</title>
+<!-- Standalone test tool: prints 4x6 move labels with real Code128 + QR and tests scanner reads.
+     Test codes only (PLT9xxxx). Real labels come from the Move Portal in NetSuite. -->
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+:root{--bg:#f1f5f9;--ink:#1f2937;--muted:#6b7280;--line:#e5e7eb;--blue:#2563eb;--green:#16a34a;--amber:#d97706;--red:#dc2626;--navy:#1e293b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
+header{background:var(--navy);color:#fff;padding:12px 16px}
+header h1{margin:0;font-size:17px}header p{margin:3px 0 0;color:#cbd5e1;font-size:13px}
+nav{display:flex;background:#fff;border-bottom:1px solid var(--line)}
+nav button{flex:1;border:0;background:#fff;padding:14px;font-weight:700;font-size:14px;color:var(--muted);border-bottom:3px solid transparent;cursor:pointer}
+nav button.on{color:var(--ink);border-color:var(--blue)}
+main{padding:14px;max-width:1100px;margin:0 auto}
+.view{display:none}.view.on{display:block}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.card h3{margin:0 0 8px;font-size:15px}
+label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:10px 0 4px}
+input,select{padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;width:100%}
+.row{display:flex;gap:10px;flex-wrap:wrap}.row>div{flex:1;min-width:120px}
+.line{display:grid;grid-template-columns:2fr 1fr 1fr 40px;gap:8px;align-items:end;margin-bottom:6px}
+.line button{height:42px}
+.btn{border:0;border-radius:10px;padding:12px 16px;font-weight:700;font-size:15px;cursor:pointer}
+.pri{background:var(--blue);color:#fff}.go{background:var(--green);color:#fff}.gh{background:#fff;border:1px solid var(--line)}
+.muted{color:var(--muted);font-size:13px}
+.chk{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px;color:var(--ink);font-weight:600}.chk input{width:auto}
+#preview{display:flex;flex-wrap:wrap;gap:14px}
+.pv{transform:scale(.62);transform-origin:top left;width:calc(4in * .62);height:calc(6in * .62)}
+/* ── the 4x6 label ── */
+.label{width:4in;height:6in;background:#fff;color:#000;padding:.15in;font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;border:1px solid #999;overflow:hidden}
+.l-top{display:flex;justify-content:space-between;font-weight:800;font-size:12pt;border-bottom:2pt solid #000;padding-bottom:4pt}
+.l-sku{font-weight:900;line-height:1;margin-top:8pt;white-space:nowrap}
+.l-cfg{font-size:18pt;font-weight:700;margin-top:2pt}
+.l-pcs{font-size:36pt;font-weight:900;margin-top:4pt}
+.l-desc{font-size:11pt;margin-top:4pt}
+.l-mixed td{font-size:16pt;font-weight:700;border-bottom:.5pt solid #999;padding:2pt 0}
+.l-codes{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:6pt}
+.l-c128 svg{width:3.5in;height:.9in;display:block}
+.l-text{font:700 14pt Courier New,monospace}
+.l-qr svg{width:1.1in;height:1.1in;display:block}.qr-only .l-qr svg{width:1.5in;height:1.5in}
+.l-foot{display:flex;justify-content:space-between;border-top:.5pt solid #000;margin-top:6pt;padding-top:3pt;font-size:9pt}.l-foot b{font-size:12pt}
+.hdr{align-items:center;justify-content:center;text-align:center;border-style:dashed}
+.ruler{position:relative;padding:0}
+.ruler .tick{position:absolute;left:0;height:0;border-top:1px solid #000;width:.4in;font-size:8pt}
+.ruler .tickx{position:absolute;top:0;width:0;border-left:1px solid #000;height:.4in;font-size:8pt}
+/* ── scan test ── */
+.scanbox{display:flex;gap:8px;align-items:center;background:#fff;border:3px dashed #94a3b8;border-radius:12px;padding:12px}
+.scanbox input{border:0;font-size:22px;outline:none}
+.flash{border-radius:14px;padding:18px;margin:12px 0;color:#fff}
+.flash .big{font-size:26px;font-weight:800}.flash .sm{font-size:15px;margin-top:4px}
+.f-green{background:var(--green)}.f-amber{background:var(--amber)}.f-red{background:var(--red)}
+.stats{display:flex;gap:10px;margin:10px 0}.stats div{flex:1;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}.stats b{display:block;font-size:22px}
+table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{text-align:left;padding:7px;border-bottom:1px solid var(--line)}
+@media print{
+  @page{size:4in 6in;margin:0}
+  body{background:#fff}
+  header,nav,main>*:not(#printArea),.noprint{display:none!important}
+  main{padding:0;max-width:none}
+  #printArea{display:block!important}
+  #printArea .label{border:0;page-break-after:always;break-after:page}
+  #printArea .label:last-child{page-break-after:auto;break-after:auto}
+}
+#printArea{display:none}
+</style>
+</head>
+<body>
+<header><h1>Move Label Tester</h1><p>Test 4×6 labels and scanner reads before the Move Portal is live. Codes printed here are test codes (PLT9xxxx), not real pallets.</p></header>
+<nav><button class="on" data-v="make">🏷 Make labels</button><button data-v="scan">📷 Scan test</button><button data-v="help">❓ Printer &amp; scanner setup</button></nav>
+<main>
+  <!-- MAKE -->
+  <section class="view on" id="v-make">
+    <div class="card">
+      <h3>Pallet contents</h3>
+      <div id="lines"></div>
+      <button class="btn gh" id="addLine">+ Mixed pallet (add another SKU)</button>
+      <div class="row">
+        <div><label>Description (single-SKU labels)</label><input id="desc" value="20# LP Cylinders w/OPD"></div>
+        <div><label>Printed by</label><input id="by" value="Office"></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="edited"> Mark EDITED (short pallet)</label>
+    </div>
+    <div class="card">
+      <h3>Print settings</h3>
+      <div class="row">
+        <div><label>Code on label</label><select id="mode"><option value="both">Both (barcode + QR)</option><option value="c128">Barcode only (Code128)</option><option value="qr">QR only</option></select></div>
+        <div><label>How many labels</label><input id="count" type="number" min="1" max="100" value="3"></div>
+        <div><label>First test code</label><input id="start" type="number" min="90000" value="90001"></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="header" checked> Batch header card first</label>
+      <div class="row noprint" style="margin-top:14px">
+        <div><button class="btn pri" id="doPrint" style="width:100%">🖨 Print labels</button></div>
+        <div><button class="btn gh" id="doRuler" style="width:100%">📏 Print size-check label</button></div>
+      </div>
+      <p class="muted">In the print dialog, pick the label printer, paper <b>4 × 6 in</b>, margins <b>None</b>, scale <b>100%</b> (or "Actual size"), and turn off headers and footers.</p>
+    </div>
+    <div class="card"><h3>Preview</h3><div id="preview"></div></div>
+  </section>
+
+  <!-- SCAN -->
+  <section class="view" id="v-scan">
+    <div class="card">
+      <div class="scanbox"><span style="font-size:26px">📷</span><input id="scan" placeholder="Scan a label here…" autocomplete="off" autocapitalize="characters"></div>
+      <label class="chk"><input type="checkbox" id="noEnter"> My scanner does not send Enter (submit automatically after a short pause)</label>
+      <div id="result"></div>
+      <div class="stats"><div><b id="sTotal">0</b>scans</div><div><b id="sOk">0</b>good</div><div><b id="sBad">0</b>problems</div><div><b id="sGap">–</b>avg sec between</div></div>
+      <button class="btn gh" id="clearLog">Clear log</button>
+    </div>
+    <div class="card"><h3>Scan log</h3><table><thead><tr><th>Time</th><th>Read</th><th>Result</th><th>Gap</th></tr></thead><tbody id="log"></tbody></table></div>
+  </section>
+
+  <!-- HELP -->
+  <section class="view" id="v-help">
+    <div class="card"><h3>Printer (office PC)</h3>
+      <ol>
+        <li>Load 4×6 thermal labels. Run the printer's own calibration so it finds the label gap.</li>
+        <li>Print the <b>size-check label</b>. The 1-inch marks should measure exactly 1 inch and the border should sit on the label edges. If it's shrunk, set scale to 100% / Actual size in the print dialog, or set the paper size to 4×6 in the printer driver.</li>
+        <li>Print 3 test labels and scan them in the Scan test tab.</li>
+      </ol>
+    </div>
+    <div class="card"><h3>Android scanner</h3>
+      <ol>
+        <li>Set the scanner to <b>keyboard / keystroke output</b> (on Zebra devices this is the DataWedge app; Honeywell/Chainway/Urovo have a "Scan settings" screen). It must not be set to "intent/broadcast".</li>
+        <li>Turn on an <b>Enter suffix</b> (sometimes called "send ENTER key" or "suffix CR").</li>
+        <li>Open this page on the device (or on a PC with the scanner connected), go to Scan test, and scan. Each scan should appear as one line in the log with a green result.</li>
+        <li>Try from different distances and angles, in a dim trailer, and on a wrinkled label. Try the barcode and the QR separately, covering the other with your hand.</li>
+      </ol>
+      <p class="muted">What to report back: scanner model, whether it reads the barcode, the QR or both, the max distance that works, and whether any scan came through wrong or split into two lines.</p>
+    </div>
+  </section>
+
+  <div id="printArea"></div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // localStorage when the browser allows it; an in-memory copy always (so blocked storage still works for this session)
+  const mem = {};
+  const store = { get(k, d) { if (k in mem) return JSON.parse(mem[k]); try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+                  set(k, v) { mem[k] = JSON.stringify(v); try { localStorage.setItem(k, mem[k]); } catch (e) {} } };
+
+  // tabs
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + b.dataset.v));
+    if (b.dataset.v === 'scan') setTimeout(() => $('scan').focus(), 50);
+  });
+
+  // ── lines editor ──
+  let lines = [{ sku: 'YSN201', cfg: 'A', pcs: 120 }];
+  function renderLines() {
+    $('lines').innerHTML = lines.map((l, i) =>
+      '<div class="line"><div><label>SKU' + (lines.length > 1 ? ' ' + (i + 1) : '') + '</label><input data-f="sku" data-i="' + i + '" value="' + esc(l.sku) + '"></div>' +
+      '<div><label>Config</label><input data-f="cfg" data-i="' + i + '" value="' + esc(l.cfg) + '" placeholder="A / blank"></div>' +
+      '<div><label>Pieces</label><input data-f="pcs" data-i="' + i + '" type="number" min="1" value="' + esc(l.pcs) + '"></div>' +
+      '<div>' + (lines.length > 1 ? '<button class="btn gh" data-rm="' + i + '">✕</button>' : '') + '</div></div>').join('');
+    $('lines').querySelectorAll('input').forEach(inp => inp.oninput = () => {
+      const l = lines[+inp.dataset.i];
+      l[inp.dataset.f] = inp.dataset.f === 'pcs' ? Number(inp.value) : inp.value.trim().toUpperCase();
+      renderPreview();
+    });
+    $('lines').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { lines.splice(+b.dataset.rm, 1); renderLines(); renderPreview(); });
+  }
+  $('addLine').onclick = () => { if (lines.length >= 5) return alert('Max 5 SKUs on a mixed pallet'); lines.push({ sku: '', cfg: '', pcs: 1 }); renderLines(); renderPreview(); };
+
+  // ── barcode rendering ──
+  function c128Svg(code) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    if (window.JsBarcode) JsBarcode(svg, code, { format: 'CODE128', displayValue: false, margin: 10, height: 90, width: 3 });
+    svg.setAttribute('preserveAspectRatio', 'none');
+    return svg.outerHTML;
+  }
+  function qrSvg(code) {
+    if (!window.qrcode) return '<div class="muted">QR library not loaded</div>';
+    const q = qrcode(0, 'M'); q.addData(code); q.make();
+    return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+  }
+  function skuSize(sku) { const n = String(sku || '').length; return n <= 7 ? 48 : n <= 10 ? 38 : n <= 13 ? 30 : 24; }
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  function labelHtml(code, mode) {
+    const single = lines.length === 1, s = lines[0] || {};
+    const pieces = lines.reduce((a, l) => a + (Number(l.pcs) || 0), 0);
+    const mid = single
+      ? '<div class="l-sku" style="font-size:' + skuSize(s.sku) + 'pt">' + esc(s.sku) + '</div><div class="l-cfg">' + (s.cfg ? 'Config ' + esc(s.cfg) : 'Custom') + '</div>' +
+        '<div class="l-pcs">' + esc(s.pcs) + ' pcs</div><div class="l-desc">' + esc($('desc').value) + '</div>'
+      : '<div class="l-sku" style="font-size:40pt">MIXED</div><table class="l-mixed" style="width:100%;margin-top:4pt">' +
+        lines.map(l => '<tr><td>' + esc(l.sku) + '</td><td style="text-align:right">' + esc(l.pcs) + ' pcs</td></tr>').join('') +
+        '<tr><td style="font-weight:400">Total</td><td style="text-align:right;font-weight:400">' + pieces + ' pcs</td></tr></table>';
+    const codes = (mode !== 'qr' ? '<div class="l-c128">' + c128Svg(code) + '</div><div class="l-text">' + esc(code) + '</div>' : '') +
+      (mode !== 'c128' ? '<div class="l-qr">' + qrSvg(code) + '</div>' : '') + (mode === 'qr' ? '<div class="l-text">' + esc(code) + '</div>' : '');
+    return '<div class="label' + (mode === 'qr' ? ' qr-only' : '') + '"><div class="l-top"><span>MOVE</span><span>RIVERSIDE &gt; TIPPECANOE</span></div>' + mid +
+      '<div class="l-codes">' + codes + '</div><div class="l-foot"><span>printed ' + today() + ' · ' + esc($('by').value) + ' · TEST</span><b>' +
+      ($('edited').checked ? 'EDITED' : '') + '</b></div></div>';
+  }
+  function headerHtml(first, last, n) {
+    const single = lines.length === 1, s = lines[0] || {};
+    const title = single ? s.sku : 'MIXED';
+    const sub = single ? (s.cfg ? 'Config ' + s.cfg : 'Custom') + ' · ' + s.pcs + ' pcs' : lines.map(l => l.sku + ' ×' + l.pcs).join(', ');
+    return '<div class="label hdr"><div style="font-size:14pt">BATCH HEADER · TEST</div><div style="font-size:' + skuSize(title) + 'pt;font-weight:900;margin-top:8pt">' + esc(title) + '</div>' +
+      '<div style="font-size:18pt;font-weight:700">' + esc(sub) + '</div><div style="font-size:32pt;font-weight:900;margin-top:14pt">' + n + ' labels</div>' +
+      '<div style="font-size:11pt;margin-top:8pt">' + esc(first) + ' - ' + esc(last) + '</div></div>';
+  }
+  function rulerHtml() {
+    let t = '';
+    for (let i = 1; i < 6; i++) t += '<div class="tick" style="top:' + i + 'in">' + i + ' in</div>';
+    for (let i = 1; i < 4; i++) t += '<div class="tickx" style="left:' + i + 'in"><span style="margin-left:2px">' + i + ' in</span></div>';
+    return '<div class="label ruler" style="border:2px solid #000">' + t +
+      '<div style="margin:auto;text-align:center;font-size:14pt;font-weight:700">SIZE CHECK<br>Each mark = 1 inch<br>Border = label edge<br>4 × 6 in</div></div>';
+  }
+  function codesFor() {
+    const n = Math.max(1, Math.min(100, Math.floor(Number($('count').value) || 1)));
+    const start = Math.max(90000, Math.floor(Number($('start').value) || 90001));
+    return Array.from({ length: n }, (_, i) => 'PLT' + (start + i));
+  }
+  function renderPreview() {
+    const mode = $('mode').value, codes = codesFor();
+    const pages = ($('header').checked ? [headerHtml(codes[0], codes[codes.length - 1], codes.length)] : []).concat(codes.slice(0, 3).map(c => labelHtml(c, mode)));
+    $('preview').innerHTML = pages.map(p => '<div class="pv">' + p + '</div>').join('') + (codes.length > 3 ? '<div class="muted">+ ' + (codes.length - 3) + ' more labels (not shown)</div>' : '');
+  }
+  ['desc', 'by', 'edited', 'mode', 'count', 'start', 'header'].forEach(id => { $(id).oninput = $(id).onchange = renderPreview; });
+
+  function printPages(pages) {
+    $('printArea').innerHTML = pages.join('');
+    setTimeout(() => window.print(), 100);
+  }
+  $('doPrint').onclick = () => {
+    if (lines.some(l => !l.sku || !(Number(l.pcs) > 0))) return alert('Every line needs a SKU and pieces above 0');
+    const mode = $('mode').value, codes = codesFor();
+    const printed = store.get('mvt_printed', {});
+    codes.forEach(c => { printed[c] = lines.length === 1 ? lines[0].sku + ' · ' + (lines[0].cfg || 'custom') + ' · ' + lines[0].pcs : 'MIXED · ' + lines.map(l => l.sku + ' ×' + l.pcs).join(', '); });
+    store.set('mvt_printed', printed);
+    printPages(($('header').checked ? [headerHtml(codes[0], codes[codes.length - 1], codes.length)] : []).concat(codes.map(c => labelHtml(c, mode))));
+    $('start').value = Math.floor(Number($('start').value)) + codes.length;   // next batch gets new codes
+  };
+  $('doRuler').onclick = () => printPages([rulerHtml()]);
+
+  // ── scan test ──
+  let scans = store.get('mvt_scans', []);
+  let actx = null;
+  function tone(kind) {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      const seq = kind === 'ok' ? [[880, .08], [1320, .1]] : kind === 'warn' ? [[660, .09], [0, .05], [660, .09]] : [[180, .35]];
+      let t = actx.currentTime;
+      seq.forEach(([f, d]) => { if (f) { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.type = kind === 'bad' ? 'square' : 'sine'; g.gain.value = .15; o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d); } t += d; });
+    } catch (e) {}
+  }
+  function classify(raw) {
+    const s = raw.trim().toUpperCase();
+    const m = /^PLT(\d+)$/.exec(s);
+    const printed = store.get('mvt_printed', {});
+    if (!m) return { kind: 'bad', big: '❌ Not a move label', sm: 'Read "' + s + '". A product barcode, or the scanner added extra characters.' };
+    if (printed[s]) return { kind: 'ok', big: '✅ ' + s, sm: printed[s] };
+    return { kind: 'warn', big: '🟡 ' + s, sm: 'Valid label format, but not printed from this tester on this PC.' };
+  }
+  function renderScans() {
+    const good = scans.filter(x => x.kind === 'ok').length;
+    const gaps = scans.map(x => x.gap).filter(g => g != null);
+    $('sTotal').textContent = scans.length;
+    $('sOk').textContent = good;
+    $('sBad').textContent = scans.length - good;
+    $('sGap').textContent = gaps.length ? (gaps.reduce((a, b) => a + b, 0) / gaps.length).toFixed(1) : '–';
+    $('log').innerHTML = scans.slice().reverse().map(x => '<tr><td>' + esc(x.time) + '</td><td>' + esc(x.raw) + '</td><td>' +
+      ({ ok: '✅', warn: '🟡', bad: '❌' }[x.kind]) + ' ' + esc(x.big.replace(/^\S+\s/, '')) + '</td><td>' + (x.gap == null ? '' : x.gap.toFixed(1) + 's') + '</td></tr>').join('');
+  }
+  function submit(raw) {
+    if (!raw.trim()) return;
+    const c = classify(raw);
+    const now = Date.now(), last = scans.length ? scans[scans.length - 1].at : null;
+    scans.push({ raw: raw, kind: c.kind, big: c.big, time: new Date(now).toLocaleTimeString(), at: now, gap: last && now - last < 120000 ? (now - last) / 1000 : null });
+    store.set('mvt_scans', scans.slice(-500));
+    tone(c.kind);
+    $('result').innerHTML = '<div class="flash f-' + ({ ok: 'green', warn: 'amber', bad: 'red' }[c.kind]) + '"><div class="big">' + esc(c.big) + '</div><div class="sm">' + esc(c.sm) + '</div></div>';
+    renderScans();
+  }
+  let idle = null;
+  $('scan').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); clearTimeout(idle); const v = $('scan').value; $('scan').value = ''; submit(v); }
+  });
+  $('scan').addEventListener('input', () => {
+    if (!$('noEnter').checked) return;
+    clearTimeout(idle);
+    idle = setTimeout(() => { const v = $('scan').value; $('scan').value = ''; submit(v); }, 200);
+  });
+  document.addEventListener('click', () => { if ($('v-scan').classList.contains('on') && document.activeElement.tagName !== 'INPUT') $('scan').focus(); });
+  $('clearLog').onclick = () => { scans = []; store.set('mvt_scans', scans); $('result').innerHTML = ''; renderScans(); };
+
+  renderLines();
+  renderPreview();
+  renderScans();
+  if (!window.JsBarcode || !window.qrcode) {
+    $('preview').insertAdjacentHTML('beforebegin', '<p style="color:#dc2626;font-weight:700">⚠ Barcode libraries did not load (no internet?). Connect to the internet and reload.</p>');
+  }
+})();
+</script>
+</body>
+</html>
