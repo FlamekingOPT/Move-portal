@@ -15,11 +15,12 @@ define([], function () {
     function skuSize(sku) { const n = String(sku || '').length; return n <= 7 ? 48 : n <= 10 ? 38 : n <= 13 ? 30 : 24; }
     function cfgText(l) { return l.cfg ? 'Config ' + l.cfg : 'Custom'; }
 
-    function codeBlock(code, mode) {
+    function codeBlock(code, payload, mode) {
         const text = '<p align="center" style="font-family:Courier;font-size:14pt;font-weight:bold">' + esc(code) + '</p>';
-        const c128 = '<barcode codetype="code128" showtext="false" value="' + esc(code) + '" width="3.5in" height="0.9in"/>';
+        const val = esc(payload).replace(/\t/g, '&#9;');
+        const c128 = '<barcode codetype="code128" showtext="false" value="' + val + '" width="3.5in" height="0.9in"/>';
         const qrSize = mode === 'qr' ? '1.5in' : '1.1in';
-        const qr = '<barcode codetype="qrcode" value="' + esc(code) + '" width="' + qrSize + '" height="' + qrSize + '"/>';
+        const qr = '<barcode codetype="qrcode" value="' + val + '" width="' + qrSize + '" height="' + qrSize + '"/>';
         let rows = '';
         if (mode !== 'qr') rows += '<tr><td align="center">' + c128 + '</td></tr><tr><td align="center">' + text + '</td></tr>';
         if (mode !== 'c128') rows += '<tr><td align="center" style="padding-top:4pt">' + qr + '</td></tr>';
@@ -48,7 +49,7 @@ define([], function () {
         const foot = '<table width="100%" style="border-top:0.5pt solid #000;margin-top:6pt"><tr>' +
             '<td style="font-size:9pt">printed ' + esc(l.printedDay) + (l.by ? ' · ' + esc(l.by) : '') + '</td>' +
             '<td align="right" style="font-size:12pt;font-weight:bold">' + (l.edited ? 'EDITED' : '') + '</td></tr></table>';
-        return top + mid + codeBlock(l.code, o.codeMode || 'both') + foot;
+        return top + mid + codeBlock(l.code, [l.code].concat(...l.lines.map(x => [x.sku, x.pcs])).join('\t'), o.codeMode || 'both') + foot;
     }
 
     function headerPage(first, last, n) {

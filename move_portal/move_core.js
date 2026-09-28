@@ -23,9 +23,15 @@ define([], function () {
 
     function parseScan(raw) {
         const s = String(raw == null ? '' : raw).trim().toUpperCase();
-        const m = /^PLT(\d+)$/.exec(s);
+        const m = /^PLT(\d+)(?:[\t,|]|$)/.exec(s);
         const id = m ? Number(m[1]) : 0;
         return { raw: s, palletId: id > 0 ? id : null };
+    }
+
+    // What the barcode encodes: label code, then SKU and pieces for each line, TAB-separated,
+    // so a keyboard-mode scanner fills one spreadsheet column per field.
+    function barcodePayload(code, lines) {
+        return [String(code)].concat(...(lines || []).map(l => [String(l.sku), String(l.pcs)])).join('\t');
     }
 
     function totalPieces(lines) {
@@ -315,7 +321,7 @@ define([], function () {
     }
 
     return {
-        PALLET, LOAD, palletCode, parseScan, totalPieces, summarize, headline,
+        PALLET, LOAD, palletCode, parseScan, barcodePayload, totalPieces, summarize, headline,
         isEdited, validateLines, pcsMap, defaultPcs, loadScanRule, receiveScanRule, toneFor,
         aggregate, shortages, nextLoadNumber, catchupNumber, txToken, parseCsv, buildConfigImport,
         isoAddDays, moveDays, nthMoveDayFrom, parseNsStamp, estimateRemaining, trackerMetrics, suggestPlan

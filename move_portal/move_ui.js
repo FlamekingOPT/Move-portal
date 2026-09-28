@@ -186,6 +186,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 refocusScan();
             }
             i.onkeydown = e => {
+                if (e.key === 'Tab') { e.preventDefault(); i.value += '\t'; return; }
                 if (e.key !== 'Enter') return;
                 e.preventDefault();
                 const v = i.value.trim();
@@ -346,6 +347,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const i = $('ptcode');
             i.focus();
             i.onkeydown = async e => {
+                if (e.key === 'Tab') { e.preventDefault(); i.value += '\t'; return; }
                 if (e.key !== 'Enter') return;
                 e.preventDefault();
                 const r = await api('pallet_get', { code: i.value });
@@ -454,7 +456,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'locked_load': return flash('red', '❌ On ' + esc(r.otherNumber) + ', awaiting approval', line, 'That load is closed for scanning. Check with the supervisor.');
                 case 'void': return flash('red', '❌ Label cancelled', line, "Don't load it. Request a new label for this pallet.");
                 case 'shipped': return flash('red', '❌ Already shipped', esc(p.code + (r.otherNumber ? ' · on ' + r.otherNumber : '')), 'This pallet already left. Check with the supervisor.');
-                default: return flash('red', '❌ Unknown label', esc('"' + r.raw + '"'), 'Not a move label. Maybe a product barcode?');
+                default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), 'Not a move label. Maybe a product barcode?');
             }
         }
         async function doLoadScan(v) {
@@ -751,7 +753,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'arrived_unshipped': return flash('orange', '🟠 Loaded without scan', line, 'It was never on a shipped load, so NetSuite still counts it at ' + esc(B.fromName) + '. Flagged for a manager catch-up.');
                 case 'dup_catchup': return flash('amber', '🟡 Already flagged for catch-up', line);
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Set it aside and call the supervisor.');
-                default: return flash('red', '❌ Unknown label', esc('"' + r.raw + '"'), 'Not a move label.');
+                default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), 'Not a move label.');
             }
         }
         async function doRecvScan(v) {

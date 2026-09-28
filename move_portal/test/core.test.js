@@ -225,3 +225,19 @@ test('suggestPlan splits by pallets left and never exceeds them', () => {
     assert.deepEqual(core.suggestPlan(rows, 0), { '11': 0, '12': 0 });
     assert.deepEqual(core.suggestPlan([], 5), {});
 });
+
+// ── Task 12b ──
+test('parseScan reads the pallet id from a tab/comma/pipe payload', () => {
+    assert.deepEqual(core.parseScan('PLT48213\tYSN201\t120'), { raw: 'PLT48213\tYSN201\t120', palletId: 48213 });
+    assert.equal(core.parseScan('plt48213,ysn201,120').palletId, 48213);
+    assert.equal(core.parseScan('PLT48213|YSN201|120').palletId, 48213);
+    assert.equal(core.parseScan(' PLT7\tX\t1 ').palletId, 7);
+    assert.equal(core.parseScan('PLT48213X\tYSN201').palletId, null);
+    assert.equal(core.parseScan('YSN201\tPLT48213').palletId, null);
+});
+
+test('barcodePayload lists code then SKU and pieces per line, tab-separated', () => {
+    assert.equal(core.barcodePayload('PLT1', [{ sku: 'YSN201', pcs: 120 }]), 'PLT1\tYSN201\t120');
+    assert.equal(core.barcodePayload('PLT2', [{ sku: 'YSN330', pcs: 24 }, { sku: 'YSN10LB', pcs: 40 }]), 'PLT2\tYSN330\t24\tYSN10LB\t40');
+    assert.equal(core.barcodePayload('PLT3', []), 'PLT3');
+});

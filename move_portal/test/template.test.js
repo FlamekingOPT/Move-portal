@@ -36,7 +36,6 @@ test('code mode controls which barcodes print', () => {
     const qr = tpl.labelsXml(one, Object.assign({}, O, { codeMode: 'qr' }));
     assert.equal(count(qr, 'codetype="code128"'), 0);
     assert.match(qr, /width="1.5in"/);
-    assert.match(both, /value="PLT9"/);
 });
 
 test('single, custom, mixed and edited labels', () => {
@@ -67,4 +66,14 @@ test('load sheet lists totals, pallets and signature lines', () => {
     assert.match(x, /Pallets \(1\)/);
     assert.match(x, /Driver signature/);
     assert.match(x, /size="Letter"/);
+});
+
+// ── Task 12b ──
+test('barcode value carries code, SKU and pieces with tabs as XML char refs', () => {
+    const x = tpl.labelsXml([lab('PLT9', A)], O);
+    assert.equal(count(x, 'value="PLT9&#9;YSN201&#9;120"'), 2);
+    assert.match(x, />PLT9<\/p>/);
+    const mixed = tpl.labelsXml([lab('PLT10', A.concat(B))], O);
+    assert.match(mixed, /value="PLT10&#9;YSN201&#9;120&#9;YSN301&#9;60"/);
+    assert.equal(x.indexOf('\t'), -1);
 });
