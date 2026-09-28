@@ -8,6 +8,8 @@ function makeFakeTx() {
         t.calls.push(Object.assign({ type, id }, extra));
         return id;
     }
+    // kind + '_after' (e.g. 'to_after', 'if_after', 'r_after') simulates a crash right after the
+    // save landed: the call/memo is already recorded, so a retry's findByToken can adopt it.
     function maybeFail(kind, fn) {
         if (t.failNext === kind) { t.failNext = null; throw new Error(kind.toUpperCase() + ' save failed'); }
         const id = fn();

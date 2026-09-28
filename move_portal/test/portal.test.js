@@ -97,6 +97,13 @@ test('void only unloaded labels; relabel prints a new one and voids the old', ()
     assert.equal(ctx.data.getPallet(fresh.id).data.printCount, 2);
 });
 
+test('relabeling an already-relabeled label is refused', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 1);
+    const r = ctx.run('pallet_relabel', { palletId: ps[0].id, lines: [LINE201] });
+    assert.throws(() => ctx.run('pallet_relabel', { palletId: ps[0].id, lines: [LINE201] }), new RegExp('was already relabeled as ' + r.code));
+});
+
 test('config import: preview flags problems; chunked commit is retry-safe; activate; cleanup', () => {
     const ctx = setup();
     const pv = ctx.run('cfg_preview', { csv: 'SKU,Config,Pcs per pallet,Default\nYSN201,A,120,Y\nYSN201,B,60,N\nYSN301,A,60,\nNOPE,A,5,Y\nYSN301,B,0,N' });
@@ -235,6 +242,21 @@ test('committed shortfall on the TO stops before the IF', () => {
     assert.equal(txCount(ctx, 'ItemShip'), 1);
 });
 
+test('an orphaned TO from a crash is adopted without re-checking stock, and blocks sendback', () => {
+    const ctx = setup();
+    const { L } = loadAndReady(ctx, 1);
+    ctx.data.db.stock['35']['11'].avail = 120;   // exactly the load qty
+    ctx.tx._t.failNext = 'to_after';
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /crashed after save/);
+    assert.equal(ctx.data.getLoad(L.id).to, '');
+    assert.equal(txCount(ctx, 'TrnfrOrd'), 1);
+    assert.throws(() => ctx.run('load_sendback', { loadId: L.id }), /already has a transfer order/);
+    ctx.data.db.stock['35']['11'].avail = 0;     // the orphan's own commitment already used it up
+    const r = ctx.run('load_approve', { loadId: L.id });
+    assert.equal(r.number, 'MV-001');
+    assert.deepEqual([txCount(ctx, 'TrnfrOrd'), txCount(ctx, 'ItemShip')], [1, 1]);
+});
+
 test('approve & ship refuses when another request claimed the load first', () => {
     const ctx = setup();
     const { ps, L } = loadAndReady(ctx, 1);
@@ -252,6 +274,24 @@ test('approve & ship refuses when another request claimed the load first', () =>
     ctx.data.updateLoad(ctx.data.getLoad(L.id), { status: 'ready' });
     ctx.run('load_approve', { loadId: L.id });
     assert.equal(txCount(ctx, 'TrnfrOrd'), 1);
+});
+
+test('a claim stolen right before the TO create is caught, not just at the initial flip', () => {
+    const ctx = setup();
+    const { L } = loadAndReady(ctx, 1);
+    const origGetLoad = ctx.data.getLoad;
+    let shippingReads = 0;
+    ctx.data.getLoad = function (id) {
+        const r = origGetLoad.call(this, id);
+        if (r && String(r.id) === String(L.id) && r.status === 'shipping') {
+            shippingReads++;
+            if (shippingReads === 2) return Object.assign({}, r, { data: Object.assign({}, r.data, { claim: 'someone-else' }) });
+        }
+        return r;
+    };
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /already being shipped by someone else/);
+    assert.equal(txCount(ctx, 'TrnfrOrd'), 0);
+    ctx.data.getLoad = origGetLoad;
 });
 
 // ── Task 10 ──
@@ -291,6 +331,18 @@ test('receiving: missing pallets stay in transit; a late arrival gets a second r
     assert.deepEqual(ctx.data.getLoad(L.id).receipts.length, 2);
     assert.equal(ctx.data.getLoad(L.id).status, 'received');
     assert.equal(ctx.data.getPallet(ps[1].id).damaged, true);
+});
+
+test('recv_approve on a load with nothing left to receive fails without flipping it to error', () => {
+    const ctx = setup();
+    const { ps, L } = shippedLoad(ctx, 3);
+    ctx.run('scan_recv', { loadId: L.id, raw: ps[0].code }, false);
+    ctx.run('scan_recv', { loadId: L.id, raw: ps[1].code }, false);
+    ctx.run('recv_ready', { loadId: L.id }, false);
+    ctx.run('recv_approve', { loadId: L.id });
+    assert.equal(ctx.data.getLoad(L.id).status, 'received_short');
+    assert.throws(() => ctx.run('recv_approve', { loadId: L.id }), /Nothing scanned in/);
+    assert.equal(ctx.data.getLoad(L.id).status, 'received_short');
 });
 
 test('undo returns a scanned pallet; recv_ready needs a scan', () => {
@@ -348,6 +400,48 @@ test('a pallet loaded without an outbound scan is caught up with its own TO, IF 
     assert.deepEqual([p.status, p.catchup, !!p.receipt], ['received', true, true]);
     assert.deepEqual([txCount(ctx, 'TrnfrOrd'), txCount(ctx, 'ItemShip'), txCount(ctx, 'ItemRcpt')], [2, 2, 1]);
     assert.equal(ctx.run('catchup_list').pallets.length, 0);
+});
+
+test('catchup_approve on an already-finished catch-up is a no-op', () => {
+    const ctx = setup();
+    const { L } = shippedLoad(ctx, 1);
+    const stray = printLabels(ctx, 1, 'Jstray')[0];
+    ctx.run('scan_recv', { loadId: L.id, raw: stray.code }, false);
+    ctx.run('catchup_approve', { palletId: stray.id });
+    const before = txCount(ctx, 'ItemRcpt');
+    const r = ctx.run('catchup_approve', { palletId: stray.id });
+    assert.equal(r.receiptNumber, '');
+    assert.equal(txCount(ctx, 'ItemRcpt'), before);
+});
+
+test('a catch-up that fails to ship stays retryable and never leaks into outbound screens', () => {
+    const ctx = setup();
+    const { L } = shippedLoad(ctx, 1);
+    const stray = printLabels(ctx, 1, 'Jstray')[0];
+    ctx.run('scan_recv', { loadId: L.id, raw: stray.code }, false);
+    ctx.data.db.stock['35']['11'].avail = 0;
+    assert.throws(() => ctx.run('catchup_approve', { palletId: stray.id }), /Not enough available/);
+    const clId = ctx.data.getPallet(stray.id).loadId;
+    const list = ctx.run('catchup_list');
+    const retryRow = list.pallets.find(x => x.retry);
+    assert.ok(retryRow);
+    assert.equal(retryRow.ok, true);
+    assert.equal(ctx.run('ship_list').loads.some(l => l.id === clId), false);
+    assert.throws(() => ctx.run('load_sendback', { loadId: clId }), /Catch-up loads/);
+});
+
+test('after restoring stock, a retried catch-up succeeds and does not create a second catch-up load', () => {
+    const ctx = setup();
+    const { L } = shippedLoad(ctx, 1);
+    const stray = printLabels(ctx, 1, 'Jstray')[0];
+    ctx.run('scan_recv', { loadId: L.id, raw: stray.code }, false);
+    ctx.data.db.stock['35']['11'].avail = 0;
+    assert.throws(() => ctx.run('catchup_approve', { palletId: stray.id }), /Not enough available/);
+    ctx.data.db.stock['35']['11'].avail = 1000;
+    const done = ctx.run('catchup_approve', { palletId: stray.id });
+    assert.equal(done.number, 'MV-001-C1');
+    const catchupLoads = Object.values(ctx.data.db.loads).filter(l => l.data.catchupFor);
+    assert.equal(catchupLoads.length, 1);
 });
 
 test('catch-up is blocked when NetSuite has the stock reserved; reject returns the label', () => {

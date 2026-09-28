@@ -15,7 +15,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
     const MANAGER_ROLE_SCRIPT_IDS = ['customrole_warehouse_manager', 'customrole1009', 'customrole2522', 'customrole_warehouse_portal_manager'];
     const PRINT_CHUNK_MAX = 80;
     const CFG_CHUNK_MAX = 100;
-    const STALE_MS = 2 * 60 * 1000;
+    const STALE_MS = 10 * 60 * 1000;   // above the Suitelet time limit, so a Retry can't take over a still-running request
 
     // ── shared helpers ───────────────────────────────────────────────────
     function userErr(msg) { const e = new Error(msg); e.user = true; return e; }
@@ -65,6 +65,23 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
     function mustLoad(id) { const Ld = data.getLoad(id); if (!Ld) throw userErr('Load not found'); return Ld; }
     function mustPallet(id) { const p = data.getPallet(id); if (!p) throw userErr('Label not found'); return p; }
     function stale(Ld) { return Date.now() - (Number(Ld.data.workingAt) || 0) > STALE_MS; }
+
+    // Flips the load to a working status under a fresh claim token, then re-reads it to confirm
+    // no other request's write interleaved. Returns the fresh load and the claim to re-check later.
+    function claimLoad(Ld, status, phase) {
+        const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
+        data.updateLoad(Ld, { status: status, data: { workingAt: Date.now(), error: '', phase: phase, claim: claim } });
+        const fresh = data.getLoad(Ld.id);
+        if (fresh.data.claim !== claim) throw userErr(Ld.number + ' is already being ' + (phase === 'ship' ? 'shipped' : 'received') + ' by someone else. Refresh in a minute.');
+        return { Ld: fresh, claim: claim };
+    }
+
+    // Re-checked right before each transaction create, so a claim stolen mid-processing (not just
+    // at the initial flip) still stops the create instead of racing another request's own create.
+    function assertClaim(loadId, claim, number, phase) {
+        const fresh = data.getLoad(loadId);
+        if (!fresh || fresh.data.claim !== claim) throw userErr(number + ' is already being ' + (phase === 'ship' ? 'shipped' : 'received') + ' by someone else. Refresh in a minute.');
+    }
 
     // Client lines are only trusted for item, cfg and pcs; SKU and description come from NetSuite.
     function normalizeLines(lines, S) {
@@ -261,6 +278,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
 
     act('pallet_relabel', true, (a, c) => {
         const p = mustPallet(a.palletId);
+        if (p.status === P.VOID && p.data.replacedBy) throw userErr(p.code + ' was already relabeled as ' + core.palletCode(p.data.replacedBy));
         const job = 'RL' + p.id;
         let np = data.palletsByJob(job)[0];
         if (!np) {
@@ -313,7 +331,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
     }
 
     act('load_list', false, () => {
-        const loads = data.loadsByStatus(OUT_OPEN, 50).filter(l => (l.data || {}).phase !== 'recv');
+        const loads = data.loadsByStatus(OUT_OPEN, 50).filter(l => (l.data || {}).phase !== 'recv' && !(l.data || {}).catchupFor);
         const counts = data.palletCountsByLoad(loads.map(l => l.id));
         return { loads: loads.map(l => pubLoad(l, counts[l.id])) };
     });
@@ -390,13 +408,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
 
     act('load_sendback', true, (a) => {
         const Ld = mustLoad(a.loadId);
+        if (Ld.data.catchupFor) throw userErr('Catch-up loads are handled on the Catch-ups screen');
         if ([L.READY, L.ERROR].indexOf(Ld.status) === -1 || Ld.to) throw userErr(Ld.number + ' can no longer be sent back');
+        if (tx.findByToken(core.txToken(Ld.id, 'to'), 'TrnfrOrd')) throw userErr(Ld.number + ' already has a transfer order in NetSuite; press Retry instead');
         data.updateLoad(Ld, { status: L.LOADING, data: { error: '', phase: '' } });
         return {};
     });
 
     act('ship_list', true, (a, c) => {
-        const loads = data.loadsByStatus([L.READY, L.SHIPPING, L.ERROR], 50).filter(l => (l.data || {}).phase !== 'recv');
+        const loads = data.loadsByStatus([L.READY, L.SHIPPING, L.ERROR], 50).filter(l => (l.data || {}).phase !== 'recv' && !(l.data || {}).catchupFor);
         const per = loads.map(Ld => ({ Ld: Ld, pallets: data.palletsByLoad(Ld.id, [P.LOADED]) }));
         const skuOf = {};
         per.forEach(o => o.pallets.forEach(p => p.lines.forEach(l => { skuOf[l.item] = l.sku; })));
@@ -422,10 +442,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
     function shipLoad(Ld, c) {
         if ([L.READY, L.ERROR, L.SHIPPING].indexOf(Ld.status) === -1 || Ld.data.phase === 'recv') throw userErr(Ld.number + ' is ' + Ld.status + ', not ready to ship');
         if (Ld.status === L.SHIPPING && !stale(Ld)) throw userErr(Ld.number + ' is already being shipped. Wait a minute and refresh.');
-        const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
-        data.updateLoad(Ld, { status: L.SHIPPING, data: { workingAt: Date.now(), error: '', phase: 'ship', claim: claim } });
-        Ld = data.getLoad(Ld.id);
-        if (Ld.data.claim !== claim) throw userErr(Ld.number + ' is already being shipped by someone else. Refresh in a minute.');
+        const claimed = claimLoad(Ld, L.SHIPPING, 'ship');
+        Ld = claimed.Ld;
+        const claim = claimed.claim;
         try {
             const skuOf = {};
             data.palletsByLoad(Ld.id, [P.LOADED, P.SHIPPED]).forEach(p => p.lines.forEach(l => { skuOf[l.item] = l.sku; }));
@@ -437,19 +456,26 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
                     data.updateLoad(Ld, { status: L.READY, data: { workingAt: 0, phase: '' } });
                     throw userErr('No pallets on ' + Ld.number);
                 }
-                lines = core.aggregate(loaded);
-                const stock = data.locationStock(c.S.locFrom, Object.keys(lines));
-                const avail = {};
-                Object.keys(stock).forEach(k => { avail[k] = stock[k].avail; });
-                const short = core.shortages(lines, avail);
-                if (short.length) {
-                    data.updateLoad(Ld, { status: L.READY, data: { workingAt: 0, phase: '' } });
-                    throw userErr('Not enough available at ' + c.S.fromName + ': ' +
-                        short.map(s => name(s.item) + ' needs ' + s.need + ', available ' + s.avail).join('; ') + '. Remove a pallet or check the count.');
-                }
                 const tok = core.txToken(Ld.id, 'to');
-                const toId = tx.findByToken(tok, 'TrnfrOrd') || tx.createTransferOrder({ fromLoc: c.S.locFrom, toLoc: c.S.locTo,
-                    orderStatus: c.S.toStatus, memo: 'Move ' + Ld.number + ' ' + tok, lines: lines });
+                // An orphan TO from a prior crash already committed the stock, so the check
+                // below would wrongly see it as unavailable — adopt it and skip the check.
+                const orphan = tx.findByToken(tok, 'TrnfrOrd');
+                lines = core.aggregate(loaded);
+                let toId = orphan;
+                if (!toId) {
+                    const stock = data.locationStock(c.S.locFrom, Object.keys(lines));
+                    const avail = {};
+                    Object.keys(stock).forEach(k => { avail[k] = stock[k].avail; });
+                    const short = core.shortages(lines, avail);
+                    if (short.length) {
+                        data.updateLoad(Ld, { status: L.READY, data: { workingAt: 0, phase: '' } });
+                        throw userErr('Not enough available at ' + c.S.fromName + ': ' +
+                            short.map(s => name(s.item) + ' needs ' + s.need + ', available ' + s.avail).join('; ') + '. Remove a pallet or check the count.');
+                    }
+                    assertClaim(Ld.id, claim, Ld.number, 'ship');
+                    toId = tx.createTransferOrder({ fromLoc: c.S.locFrom, toLoc: c.S.locTo,
+                        orderStatus: c.S.toStatus, memo: 'Move ' + Ld.number + ' ' + tok, lines: lines });
+                }
                 data.updateLoad(Ld, { to: toId, data: { lines: lines } });
                 Ld = data.getLoad(Ld.id);
             }
@@ -461,6 +487,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
                     if (sf.length) throw userErr('The transfer order was created but NetSuite reserved less than the load: ' +
                         sf.map(s => name(s.item) + ' reserved ' + s.committed + ' of ' + s.need).join('; ') +
                         '. Free that stock (or fix the transfer order in NetSuite) and press Retry.');
+                    assertClaim(Ld.id, claim, Ld.number, 'ship');
                     ifId = tx.fulfillTransferOrder(Ld.to, lines, 'Move ' + Ld.number + ' ' + tok);
                 }
                 data.updateLoad(Ld, { if: ifId });
@@ -592,15 +619,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
             throw userErr(Ld.number + ' is not ready to receive (' + Ld.status + ')');
         }
         if (Ld.status === L.RECEIVING_TX && !stale(Ld)) throw userErr(Ld.number + ' is already being received. Wait a minute and refresh.');
-        const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
-        data.updateLoad(Ld, { status: L.RECEIVING_TX, data: { workingAt: Date.now(), error: '', phase: 'recv', claim: claim } });
-        Ld = data.getLoad(Ld.id);
-        if (Ld.data.claim !== claim) throw userErr(Ld.number + ' is already being received by someone else. Refresh in a minute.');
+        // Check BEFORE claiming the load: a nothing-to-receive load must not flip to error status.
+        if (!Ld.data.pendingRecv) {
+            const unposted = data.palletsByLoad(Ld.id, [P.RECEIVED]).filter(p => !p.receipt);
+            if (!unposted.length) throw userErr('Nothing scanned in on ' + Ld.number + ' to receive');
+        }
+        const claimed = claimLoad(Ld, L.RECEIVING_TX, 'recv');
+        Ld = claimed.Ld;
+        const claim = claimed.claim;
         try {
             let pend = Ld.data.pendingRecv;
             if (!pend) {
                 const ids = data.palletsByLoad(Ld.id, [P.RECEIVED]).filter(p => !p.receipt).map(p => p.id);
-                if (!ids.length) throw userErr('Nothing scanned in on ' + Ld.number + ' to receive');
                 pend = { seq: (Number(Ld.data.recvSeq) || 0) + 1, ids: ids };
                 data.updateLoad(Ld, { data: { pendingRecv: pend, recvSeq: pend.seq } });
                 Ld = data.getLoad(Ld.id);
@@ -608,7 +638,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
             const pallets = data.palletsByIds(pend.ids);
             const lines = core.aggregate(pallets);
             const tok = core.txToken(Ld.id, 'r' + pend.seq);
-            const rid = tx.findByToken(tok, 'ItemRcpt') || tx.receiveTransferOrder(Ld.to, lines, 'Move ' + Ld.number + ' receipt ' + pend.seq + ' ' + tok);
+            let rid = tx.findByToken(tok, 'ItemRcpt');
+            if (!rid) {
+                assertClaim(Ld.id, claim, Ld.number, 'recv');
+                rid = tx.receiveTransferOrder(Ld.to, lines, 'Move ' + Ld.number + ' receipt ' + pend.seq + ' ' + tok);
+            }
             if (Ld.receipts.indexOf(String(rid)) === -1) data.updateLoad(Ld, { receipts: Ld.receipts.concat([String(rid)]) });
             Ld = data.getLoad(Ld.id);
             pallets.forEach(p => { if (!p.receipt) data.updatePallet(p, { receipt: String(rid) }); });
@@ -630,16 +664,25 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
     // ── catch-ups (pallet arrived without an outbound scan) ──────────────
     act('catchup_list', true, (a, c) => {
         const ps = data.palletsByStatus([P.ARRIVED_UNSHIPPED]);
+        // Pallets already sent through catch-up once but stuck on a load that hasn't finished
+        // receiving (usually because its ship/receive attempt errored) — surfaced so the office
+        // can retry them instead of the pallet silently vanishing from every screen.
+        const retryPs = data.findPalletsWhere({ catchup: true }).filter(p => p.data.catchupLoad);
+        const retryLoads = {};
+        data.getLoads(retryPs.map(p => p.data.catchupLoad)).forEach(l => { retryLoads[l.id] = l; });
+        const retries = retryPs.filter(p => { const cl = retryLoads[p.data.catchupLoad]; return cl && cl.status !== L.RECEIVED; });
         const items = {};
         ps.forEach(p => p.lines.forEach(l => { items[l.item] = 1; }));
         const stock = Object.keys(items).length ? data.locationStock(c.S.locFrom, Object.keys(items)) : {};
         const num = {};
         data.getLoads(ps.map(p => p.arrivedOn).filter(Boolean)).forEach(l => { num[l.id] = l.number; });
-        return { pallets: ps.map(p => {
+        const waiting = ps.map(p => {
             const short = p.lines.filter(l => (stock[l.item] ? stock[l.item].avail : 0) < l.pcs)
                 .map(l => l.sku + ' (' + (stock[l.item] ? stock[l.item].avail : 0) + ' available)');
             return pubPallet(p, { arrivedOnNumber: num[p.arrivedOn] || '', arrivedAt: p.data.arrivedAt || '', ok: !short.length, short: short.join(', ') });
-        }) };
+        });
+        const retryOut = retries.map(p => pubPallet(p, { retry: true, ok: true, error: (retryLoads[p.data.catchupLoad].data || {}).error || '' }));
+        return { pallets: waiting.concat(retryOut) };
     });
 
     act('catchup_approve', true, (a, c) => {
@@ -647,12 +690,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
         let cl = p.data.catchupLoad ? data.getLoad(p.data.catchupLoad) : null;
         if (!cl) {
             if (p.status !== P.ARRIVED_UNSHIPPED) throw userErr(p.code + ' is not waiting for a catch-up');
-            const parent = p.arrivedOn ? data.getLoad(p.arrivedOn) : null;
-            const id = data.createLoad({ number: core.catchupNumber(parent ? parent.number : 'MV-000', data.allLoadNumbers()), status: L.READY,
-                data: { catchupFor: parent ? parent.id : '', createdBy: c.actor, createdAt: c.now.stamp, readyBy: c.actor, readyAt: c.now.stamp } });
-            data.updatePallet(p, { status: P.LOADED, load: id, catchup: true, data: { catchupLoad: id } });
-            cl = data.getLoad(id);
+            // A prior attempt may have created the load but crashed before it could be saved back
+            // onto this pallet — reuse it instead of creating a second, orphaned catch-up load.
+            const existing = data.loadsByStatus([L.READY, L.ERROR, L.SHIPPING], 50).find(l => (l.data || {}).catchupPallet === String(p.id));
+            if (existing) {
+                cl = existing;
+            } else {
+                const parent = p.arrivedOn ? data.getLoad(p.arrivedOn) : null;
+                const id = data.createLoad({ number: core.catchupNumber(parent ? parent.number : 'MV-000', data.allLoadNumbers()), status: L.READY,
+                    data: { catchupFor: parent ? parent.id : '', catchupPallet: String(p.id), createdBy: c.actor, createdAt: c.now.stamp, readyBy: c.actor, readyAt: c.now.stamp } });
+                cl = data.getLoad(id);
+            }
+            data.updatePallet(p, { status: P.LOADED, load: cl.id, catchup: true, data: { catchupLoad: cl.id } });
         }
+        if (cl.status === L.RECEIVED) return { number: cl.number, receiptNumber: '' };
         if ([L.READY, L.ERROR, L.SHIPPING].indexOf(cl.status) !== -1 && cl.data.phase !== 'recv') shipLoad(cl, c);
         cl = data.getLoad(cl.id);
         p = data.getPallet(p.id);
