@@ -69,60 +69,22 @@ Managers  → │ Outbound: To ship · Open loads    Inbound: To receive · Catc
 
 ## 4. Data model (NetSuite setup)
 
-All custom records use **Access Type = No Permission Required** (like Picker Status), so FLOOR users can create and edit them under their own role. Field ids below are final; watch the leading-underscore Change-ID gotcha when creating them.
+All custom records use **Access Type = No Permission Required** (like Picker Status) and **Include Name Field = OFF**. Only fields that searches filter or group on are real fields. Everything else lives in one Long Text JSON field per record, which keeps NetSuite setup to about 30 fields. **All timestamps are text:** the display stamp comes from `N/format` DATETIMETZ in America/Los_Angeles, and "day" fields are `YYYY-MM-DD`. That avoids date-field parsing and timezone bugs.
 
-### `customrecord_mv_settings` (one row)
-| Field | Type | Use |
+| Record | Real fields (type) | JSON field holds |
 |---|---|---|
-| `custrecord_mvs_target_date` | Date | Nov 15 |
-| `custrecord_mvs_start_date` | Date | first move day (tracker) |
-| `custrecord_mvs_skip_dates` | Long Text | holidays, one date per line |
-| `custrecord_mvs_label_code` | Free-Form Text | `both` · `c128` · `qr` |
-| `custrecord_mvs_roster` | Long Text | "I am ___" names, one per line |
-| `custrecord_mvs_max_print` | Integer | max labels per print job (default 250) |
-| `custrecord_mvs_stale_days` | Integer | "labeled, never loaded" threshold (default 5) |
+| `customrecord_mv_settings` (1 row) | `custrecord_mvs_data` (Long Text) | `{locFrom, locTo, fromName, toName, target:"2026-11-15", start, skip:[iso…], labelCode:"both"|"c128"|"qr", roster:[names], maxPrint:250, staleDays:5, toStatus:"B", activeBatch}` |
+| `customrecord_mv_config` | `_mvc_item` (List/Record → Item), `_mvc_code` (Text), `_mvc_pcs` (Integer), `_mvc_default` (Checkbox), `_mvc_batch` (Text) | — |
+| `customrecord_mv_load` | `_mvl_number` (Text), `_mvl_status` (Text), `_mvl_to` (List/Record → Transaction), `_mvl_if` (List/Record → Transaction), `_mvl_receipts` (Text, ids comma-joined) | `custrecord_mvl_data`: door, carrier, trailer, seal, lines snapshot `{item:qty}`, created/ready/approved/recvReady/recvApproved by+at, error, catchupFor, workingAt (ms), pendingRecv `{seq, ids}`, recvSeq |
+| `customrecord_mv_pallet` | `_mvp_status`, `_mvp_job`, `_mvp_receipt` (receipt id), `_mvp_shipped_day`, `_mvp_printed_day`, `_mvp_summary` (all Text), `_mvp_load`, `_mvp_arrived_on` (List/Record → mv_load), `_mvp_damaged`, `_mvp_catchup`, `_mvp_edited` (Checkbox), `_mvp_pieces` (Integer) | `custrecord_mvp_data`: lines `[{item, sku, cfg, pcs, desc}]`, source, replacedBy, printedAt/By, printCount, loadedAt/By, shippedAt, receivedAt/By, arrivedAt/By, editedAt/By, voidReason/At/By, catchupLoad |
+| `customrecord_mv_scan` | `_mvsc_pallet` (List/Record → mv_pallet), `_mvsc_load` (List/Record → mv_load), `_mvsc_result` (Text) | `custrecord_mvsc_data`: raw, mode, actor, at |
+| `customrecord_mv_label_req` | `_mvr_status` (Text), `_mvr_requester` (Text) | `custrecord_mvr_data`: lines, count, note, via, job, at |
 
-### `customrecord_mv_config`: one row per SKU + config (replaced on import)
-`custrecord_mvc_item` (List/Record → Item), `_code` (Text, A/B/C…), `_pcs` (Integer), `_default` (Checkbox), `_import_batch` (Text).
+(Field ids are shown without the `custrecord` prefix, e.g. `_mvp_status` = `custrecord_mvp_status`.)
 
-### `customrecord_mv_pallet`: one row per printed label
-| Field | Type | Notes |
-|---|---|---|
-| `custrecord_mvp_lines_json` | Long Text | `[{"item":1234,"sku":"YSN201","cfg":"A","pcs":120}]`. More than one line = MIXED |
-| `custrecord_mvp_summary` | Free-Form Text | `YSN201 · A · 120` or `MIXED · YSN330 ×24, YSN10LB ×40` (for lists and searches) |
-| `custrecord_mvp_pieces` | Integer | total |
-| `custrecord_mvp_edited` | Checkbox | pieces ≠ config pcs, or edited at the dock |
-| `custrecord_mvp_status` | Free-Form Text | `labeled` · `loaded` · `shipped` · `received` · `missing` · `arrived_unshipped` · `void` |
-| `custrecord_mvp_damaged` | Checkbox | set at receiving |
-| `custrecord_mvp_catchup` | Checkbox | received via a catch-up |
-| `custrecord_mvp_load` | List/Record → mv_load | current or shipped load |
-| `custrecord_mvp_source` | Free-Form Text | `plan` · `request:<reqId>` · `office` · `relabel:<oldId>` |
-| `custrecord_mvp_replaced_by` | List/Record → mv_pallet | set on a voided label that was relabeled |
-| `custrecord_mvp_printed_at` / `_printed_by` | Date/Time / Text | |
-| `custrecord_mvp_print_count` | Integer | |
-| `custrecord_mvp_loaded_at` / `_loaded_by` | Date/Time / Text | |
-| `custrecord_mvp_received_at` / `_received_by` | Date/Time / Text | |
-| `custrecord_mvp_void_reason` | Free-Form Text | |
-
-**Label code = `PLT` + the pallet record's internal id.** It's unique, never reused, and a reprint uses the same code.
-
-### `customrecord_mv_load`: one row per truck
-| Field | Type | Notes |
-|---|---|---|
-| `custrecord_mvl_number` | Free-Form Text | `MV-001`, … (next = max + 1) |
-| `custrecord_mvl_status` | Free-Form Text | `loading` · `ready` · `shipping` · `shipped` · `receiving` · `recv_ready` · `receiving_tx` · `received` · `received_short` · `error` |
-| `custrecord_mvl_door`, `_carrier`, `_trailer`, `_seal` | Text | |
-| `custrecord_mvl_to` / `_if` / `_receipt_ids` | List/Record → Transaction, and Text (receipt ids, comma-separated, can be several) | |
-| `custrecord_mvl_lines_json` | Long Text | per-SKU quantities snapshot at approval `{itemId: qty}` |
-| `custrecord_mvl_ready_by`/`_at`, `_approved_by`/`_at`, `_recv_ready_by`/`_at`, `_recv_approved_by`/`_at` | Text / Date/Time | |
-| `custrecord_mvl_error` | Long Text | last error message (for Retry) |
-| `custrecord_mvl_catchup_for` | List/Record → mv_load | set on catch-up loads (these get numbers like `MV-011-C1`) |
-
-### `customrecord_mv_scan`: audit log, one row per scan attempt
-`custrecord_mvsc_pallet` (→ mv_pallet, blank if unknown), `_raw`, `_mode` (`load` · `receive`), `_load` (→ mv_load), `_result` (`ok` · `dup` · `other_load` · `void` · `shipped` · `unknown` · `arrived_unshipped` · `damaged`), `_actor`, `_at`.
-
-### `customrecord_mv_label_req`: floor print requests
-`custrecord_mvr_lines_json`, `_count` (labels), `_note`, `_requester`, `_via` (`phone` · `radio`), `_status` (`queued` · `printed` · `cancelled`), `_pallets` (printed pallet ids, text).
+**Pallet statuses:** `labeled` · `loaded` · `shipped` · `received` (scanned in; posted once `_mvp_receipt` is set) · `missing` · `arrived_unshipped` · `void`.
+**Load statuses:** `loading` · `ready` · `shipping` · `shipped` · `receiving` · `recv_ready` · `receiving_tx` · `received` · `received_short` · `error`.
+**Label code = `PLT` + the pallet internal id.** A print "job" id (`_mvp_job`) groups the pallets of one print click, so a retry never duplicates them and the PDF prints exactly that set.
 
 ## 5. Pallet config import
 
@@ -132,7 +94,7 @@ All custom records use **Access Type = No Permission Required** (like Picker Sta
   1. Resolve each SKU to an item id with an `itemid` search, batched.
   2. Validate: pcs > 0, exactly one default per SKU. If no row is marked Y, the first row becomes the default.
   3. Preview: show counts, unknown SKUs, and SKUs with Riverside stock but no config. **Commit** is a second click.
-  4. On commit, write the new rows with a new batch id, then delete the old batch.
+  4. On commit, write the new rows under a new batch id in chunks. Then set `activeBatch` in settings, so the switch-over is atomic and readers only ever see one complete batch. Then delete the other batches in chunks.
 - **Governance:** about 400 rows × (create 2 + delete 2) ≈ 1,600 units, which exceeds one Suitelet request. So the commit runs in chunks of 100 rows, driven by the page (same as the backfill Suitelet's batching). A failed chunk leaves the old batch in place, because old rows are deleted only after all new rows are written.
 - **One-time prep (me, before go-live):** build a draft per-SKU CSV from the Product Matrix sheets (per-customer configs, de-duplicated into A/B/C per SKU) for Jack to correct.
 
@@ -170,7 +132,7 @@ Title, the "I am ___" picker (from settings roster, stored per device in `localS
   - The *Print Queue* lists queued label requests, polled every 15s: time, requester, lines, count, note, and **Print** per row. **+ Add request (radio)** opens the same form as the phone.
   - The *Print Plan* lists every SKU with Riverside on-hand > 0 and a default config, sorted by remaining pallets. Columns: SKU, default config, pallets left, suggested count, editable count, Print. **Print all** and **+ Add SKU** are available.
   - **Suggested counts** split today's *needed/day* across SKUs in proportion to pallets left, rounded, largest SKUs first, capped at pallets left. They're only suggestions.
-- **Print a SKU:** SKU search (shows on-hand and pallets left), config chips (default preselected), pieces/pallet (editable), number of labels, **+ Add another SKU** (mixed), a live label preview, **Print**, and **Add to today's plan**.
+- **Print a SKU:** SKU search (shows on-hand), config chips (default preselected), pieces/pallet (editable), number of labels, **+ Add another SKU** (mixed), **Print** (the PDF opens in a new tab, which is the preview). *The mockup's inline preview and "Add to today's plan" button are cut from v1 (YAGNI).*
 - **SKU Configs:** a table (SKU, description, configs, default, Riverside on-hand, estimated pallets), red rows for SKUs with stock and no config, Import (CSV) and Download CSV.
 - **Reprint / Void:** scan or type a label id, then pallet details, then Reprint / Edit + reprint / Void.
 - **Dashboard:** §10.
@@ -229,7 +191,8 @@ The input is the raw scanned text, trimmed. `PLT(\d+)` → a pallet id; anything
 | `shipped`, load = L | ✅ ok | status `received`* , received_at/by |
 | `received`, load = L | 🟡 dup | none |
 | `shipped` on another load L2 | 🟡 "belongs to MV-xxx" with **Receive on MV-xxx** / **Set aside** | receive against L2 (L2 moves to `receiving`) |
-| `labeled`, or `loaded` on an open Riverside load | 🟠 arrived_unshipped with **Flag for catch-up** | status `arrived_unshipped`, removed from any open load |
+| `labeled`, or `loaded` on a still-`loading` Riverside load | 🟠 arrived_unshipped (flagged automatically, no extra tap) | status `arrived_unshipped`, `arrived_on` = L, removed from any open load |
+| `loaded` on a `ready`/`shipping`/`error` load (truck left before approval) | ❌ "MV-xxx not approved yet" | none. The manager approves that load first |
 | `void` | ❌ void ("set aside, call supervisor") | none |
 | not found | ❌ unknown | none |
 
