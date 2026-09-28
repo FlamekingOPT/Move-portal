@@ -422,8 +422,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
     function shipLoad(Ld, c) {
         if ([L.READY, L.ERROR, L.SHIPPING].indexOf(Ld.status) === -1 || Ld.data.phase === 'recv') throw userErr(Ld.number + ' is ' + Ld.status + ', not ready to ship');
         if (Ld.status === L.SHIPPING && !stale(Ld)) throw userErr(Ld.number + ' is already being shipped. Wait a minute and refresh.');
-        data.updateLoad(Ld, { status: L.SHIPPING, data: { workingAt: Date.now(), error: '', phase: 'ship' } });
+        const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
+        data.updateLoad(Ld, { status: L.SHIPPING, data: { workingAt: Date.now(), error: '', phase: 'ship', claim: claim } });
         Ld = data.getLoad(Ld.id);
+        if (Ld.data.claim !== claim) throw userErr(Ld.number + ' is already being shipped by someone else. Refresh in a minute.');
         try {
             const skuOf = {};
             data.palletsByLoad(Ld.id, [P.LOADED, P.SHIPPED]).forEach(p => p.lines.forEach(l => { skuOf[l.item] = l.sku; }));
@@ -431,7 +433,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
             let lines = Ld.data.lines;
             if (!Ld.to) {
                 const loaded = data.palletsByLoad(Ld.id, [P.LOADED]);
-                if (!loaded.length) throw userErr('No pallets on ' + Ld.number);
+                if (!loaded.length) {
+                    data.updateLoad(Ld, { status: L.READY, data: { workingAt: 0, phase: '' } });
+                    throw userErr('No pallets on ' + Ld.number);
+                }
                 lines = core.aggregate(loaded);
                 const stock = data.locationStock(c.S.locFrom, Object.keys(lines));
                 const avail = {};
@@ -463,7 +468,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
             }
             data.palletsByLoad(Ld.id, [P.LOADED]).forEach(p => data.updatePallet(p, { status: P.SHIPPED, shippedDay: c.now.dayIso, data: { shippedAt: c.now.stamp } }));
             data.updateLoad(Ld, { status: L.SHIPPED, data: { approvedBy: c.actor, approvedAt: c.now.stamp, workingAt: 0, phase: '' } });
-            const t = data.tranids([Ld.to, Ld.if]);
+            let t = {}; try { t = data.tranids([Ld.to, Ld.if]); } catch (e) { t = {}; }
             return { number: Ld.number, toNumber: t[Ld.to] || '', ifNumber: t[Ld.if] || '' };
         } catch (e) {
             const cur = data.getLoad(Ld.id);

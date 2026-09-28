@@ -234,3 +234,22 @@ test('committed shortfall on the TO stops before the IF', () => {
     ctx.run('load_approve', { loadId: L.id });
     assert.equal(txCount(ctx, 'ItemShip'), 1);
 });
+
+test('approve & ship refuses when another request claimed the load first', () => {
+    const ctx = setup();
+    const { ps, L } = loadAndReady(ctx, 1);
+    const origUpdate = ctx.data.updateLoad;
+    ctx.data.updateLoad = function(Ld, patch) {
+        const result = origUpdate.call(this, Ld, patch);
+        if (patch.status === 'shipping') {
+            origUpdate.call(this, ctx.data.getLoad(Ld.id), { data: { claim: 'someone-else' } });
+        }
+        return result;
+    };
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /already being shipped by someone else/);
+    assert.equal(txCount(ctx, 'TrnfrOrd'), 0);
+    ctx.data.updateLoad = origUpdate;
+    ctx.data.updateLoad(ctx.data.getLoad(L.id), { status: 'ready' });
+    ctx.run('load_approve', { loadId: L.id });
+    assert.equal(txCount(ctx, 'TrnfrOrd'), 1);
+});
