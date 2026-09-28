@@ -391,3 +391,17 @@ test('approve receipt refuses when another request claimed the load first', () =
     ctx.run('recv_approve', { loadId: L.id });
     assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 1);
 });
+
+test('undo is refused while the pallet is pinned to a receipt in progress', () => {
+    const ctx = setup();
+    const { ps, L } = shippedLoad(ctx, 1);
+    ctx.run('scan_recv', { loadId: L.id, raw: ps[0].code }, false);
+    ctx.run('recv_ready', { loadId: L.id }, false);
+    ctx.tx._t.failNext = 'r';
+    assert.throws(() => ctx.run('recv_approve', { loadId: L.id }), /R save failed/);
+    assert.equal(ctx.data.getLoad(L.id).status, 'error');
+    assert.throws(() => ctx.run('recv_undo', { palletId: ps[0].id, loadId: L.id }, false), /can no longer be undone/);
+    ctx.tx._t.failNext = null;
+    ctx.run('recv_approve', { loadId: L.id });
+    assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 1);
+});

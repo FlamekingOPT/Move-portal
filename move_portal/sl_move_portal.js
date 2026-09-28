@@ -547,6 +547,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
         const p = mustPallet(a.palletId);
         if (p.status !== P.RECEIVED || p.receipt) throw userErr(p.code + ' can no longer be undone');
         const Ld = mustLoad(p.loadId);
+        const pinned = Ld.data.pendingRecv && (Ld.data.pendingRecv.ids || []).map(Number).indexOf(Number(p.id)) !== -1;
+        if (Ld.status === L.RECEIVING_TX || pinned) throw userErr(p.code + ' is being received right now and can no longer be undone');
         const back = [L.RECEIVED, L.RECEIVED_SHORT].indexOf(Ld.status) !== -1 ? P.MISSING : P.SHIPPED;
         data.updatePallet(p, { status: back, damaged: false, data: { receivedAt: '', receivedBy: '' } });
         return { view: recvView(a.loadId || Ld.id) };
