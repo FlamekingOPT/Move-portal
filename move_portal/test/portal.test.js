@@ -405,3 +405,21 @@ test('undo is refused while the pallet is pinned to a receipt in progress', () =
     ctx.run('recv_approve', { loadId: L.id });
     assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 1);
 });
+
+// ── Task 11 ──
+test('dashboard counts moved, remaining, days and exceptions', () => {
+    const ctx = setup();
+    shippedLoad(ctx, 2);
+    ctx.data.db.stock['35']['11'].onHand = 960;           // NetSuite drops on-hand when the IF ships
+    printLabels(ctx, 1, 'Jlater');
+    ctx.data.db.pallets[Object.keys(ctx.data.db.pallets).pop()].printedDay = '2026-10-01';   // stale label
+    const r = ctx.run('dashboard');
+    assert.deepEqual([r.m.moved, r.m.remaining, r.m.total, r.m.movedToday], [2, 18, 20, 2]);
+    assert.deepEqual([r.inTransit, r.labeled, r.received], [2, 1, 0]);
+    assert.deepEqual(r.days[r.days.length - 1], { day: '2026-10-14', n: 2 });
+    assert.equal(r.days[0].day, '2026-10-01');
+    assert.deepEqual([r.exc.missing, r.exc.stale, r.exc.noConfig], [0, 1, 0]);
+    assert.equal(r.bySku[0].sku, 'YSN301');
+    assert.equal(r.loads.length, 1);
+    assert.throws(() => ctx.run('dashboard', {}, false), /Managers only/);
+});

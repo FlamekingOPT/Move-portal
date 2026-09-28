@@ -669,6 +669,37 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
         return {};
     });
 
+    // ── dashboard ────────────────────────────────────────────────────────
+    act('dashboard', true, (a, c) => {
+        const sm = stockModel(c);
+        const m = tracker(c, sm.est);
+        const moved = data.movedByDay();
+        const end = c.now.dayIso < c.S.target ? c.now.dayIso : c.S.target;
+        const days = core.moveDays(c.S.start, end, c.S.skip || []).map(d => ({ day: d, n: moved[d] || 0 }));
+        const loads = data.recentLoads(15);
+        const lc = data.palletCountsByLoad(loads.map(l => l.id));
+        const exc = {
+            missing: data.countPallets({ status: [P.MISSING] }),
+            arrivedUnshipped: data.countPallets({ status: [P.ARRIVED_UNSHIPPED] }),
+            catchups7: data.countPallets({ catchup: true, shippedSince: core.isoAddDays(c.now.dayIso, -6) }),
+            damaged: data.countPallets({ damaged: true }),
+            edited: data.countPallets({ edited: true, status: [P.SHIPPED, P.RECEIVED, P.MISSING] }),
+            stale: data.countPallets({ status: [P.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
+            noConfig: sm.est.unknownItems.length
+        };
+        const skuOf = k => (sm.stock[k] ? sm.stock[k].sku : k);
+        const bySku = Object.keys(sm.est.byItem).map(k => ({ sku: skuOf(k), palletsLeft: sm.est.byItem[k] }))
+            .sort((x, y) => y.palletsLeft - x.palletsLeft).slice(0, 20);
+        return {
+            m: Object.assign({}, m, { neededPerDay: isFinite(m.neededPerDay) ? m.neededPerDay : null }),
+            labeled: data.countPallets({ status: [P.LABELED, P.LOADED] }),
+            inTransit: data.countPallets({ status: [P.SHIPPED, P.MISSING] }),
+            received: data.countPallets({ status: [P.RECEIVED] }),
+            target: c.S.target, days: days, loads: loads.map(l => pubLoad(l, lc[l.id])), exc: exc, bySku: bySku,
+            noConfigSkus: sm.est.unknownItems.map(skuOf)
+        };
+    });
+
     // ── entry points ─────────────────────────────────────────────────────
     function runAction(action, a, mgr) {
         const def = A[action];
