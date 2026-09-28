@@ -253,3 +253,141 @@ test('approve & ship refuses when another request claimed the load first', () =>
     ctx.run('load_approve', { loadId: L.id });
     assert.equal(txCount(ctx, 'TrnfrOrd'), 1);
 });
+
+// ── Task 10 ──
+function shippedLoad(ctx, n, job) {
+    const o = loadAndReady(ctx, n, job);
+    ctx.run('load_approve', { loadId: o.L.id });
+    return o;
+}
+
+test('receiving: missing pallets stay in transit; a late arrival gets a second receipt', () => {
+    const ctx = setup();
+    const { ps, L } = shippedLoad(ctx, 3);
+    let r = ctx.run('scan_recv', { loadId: L.id, raw: ps[0].code }, false);
+    assert.deepEqual([r.result, r.view.receivedCount, r.view.total, ctx.data.getLoad(L.id).status], ['ok', 1, 3, 'receiving']);
+    assert.equal(ctx.run('scan_recv', { loadId: L.id, raw: ps[0].code }, false).result, 'dup');
+    ctx.run('scan_recv', { loadId: L.id, raw: ps[1].code }, false);
+    ctx.run('recv_damaged', { palletId: ps[1].id, loadId: L.id }, false);
+    ctx.run('recv_ready', { loadId: L.id }, false);
+    assert.throws(() => ctx.run('recv_approve', { loadId: L.id }, false), /Managers only/);
+    const tr = ctx.run('toreceive_list');
+    assert.deepEqual([tr.loads.length, tr.loads[0].scanned, tr.loads[0].expected, tr.loads[0].unpostedPieces, tr.loads[0].damaged.length], [1, 2, 3, 240, 1]);
+    r = ctx.run('recv_approve', { loadId: L.id });
+    assert.deepEqual([r.missing, r.pieces], [1, 240]);
+    const receipts = ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt');
+    assert.equal(receipts.length, 1);
+    assert.deepEqual(receipts[0].lines, { '11': 240 });
+    assert.equal(ctx.data.getPallet(ps[2].id).status, 'missing');
+    assert.equal(ctx.data.getPallet(ps[0].id).receipt, receipts[0].id);
+    assert.equal(ctx.data.getLoad(L.id).status, 'received_short');
+    assert.equal(ctx.run('toreceive_list').loads.length, 0);
+    r = ctx.run('scan_recv', { loadId: L.id, raw: ps[2].code }, false);
+    assert.equal(r.result, 'late');
+    const late = ctx.run('toreceive_list').loads;
+    assert.deepEqual([late.length, late[0].late, late[0].unpostedPieces], [1, true, 120]);
+    ctx.run('recv_approve', { loadId: L.id });
+    assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 2);
+    assert.deepEqual(ctx.data.getLoad(L.id).receipts.length, 2);
+    assert.equal(ctx.data.getLoad(L.id).status, 'received');
+    assert.equal(ctx.data.getPallet(ps[1].id).damaged, true);
+});
+
+test('undo returns a scanned pallet; recv_ready needs a scan', () => {
+    const ctx = setup();
+    const { ps, L } = shippedLoad(ctx, 1);
+    assert.throws(() => ctx.run('recv_ready', { loadId: L.id }, false), /nothing scanned in/);
+    ctx.run('scan_recv', { loadId: L.id, raw: ps[0].code }, false);
+    const r = ctx.run('recv_undo', { palletId: ps[0].id, loadId: L.id }, false);
+    assert.equal(r.view.receivedCount, 0);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'shipped');
+});
+
+test('a pallet from another shipped load can be received on that load', () => {
+    const ctx = setup();
+    const a = shippedLoad(ctx, 1, 'Ja');
+    const b = shippedLoad(ctx, 1, 'Jb');
+    const r = ctx.run('scan_recv', { loadId: a.L.id, raw: b.ps[0].code }, false);
+    assert.deepEqual([r.result, r.otherNumber, r.otherLoadId], ['other_load', b.L.number, b.L.id]);
+    const o = ctx.run('recv_other', { palletId: b.ps[0].id, otherLoadId: b.L.id, loadId: a.L.id }, false);
+    assert.equal(o.result, 'ok');
+    assert.equal(o.view.load.id, a.L.id);
+    assert.equal(ctx.data.getPallet(b.ps[0].id).status, 'received');
+    assert.equal(ctx.data.getLoad(b.L.id).status, 'receiving');
+});
+
+test('a receipt crash right after save is retried without a second receipt', () => {
+    const ctx = setup();
+    const { ps, L } = shippedLoad(ctx, 1);
+    ctx.run('scan_recv', { loadId: L.id, raw: ps[0].code }, false);
+    ctx.run('recv_ready', { loadId: L.id }, false);
+    ctx.tx._t.failNext = 'r_after';
+    assert.throws(() => ctx.run('recv_approve', { loadId: L.id }), /crashed after save/);
+    assert.equal(ctx.data.getLoad(L.id).status, 'error');
+    assert.equal(ctx.run('ship_list').loads.length, 0);
+    assert.equal(ctx.run('toreceive_list').loads.length, 1);
+    ctx.run('recv_approve', { loadId: L.id });
+    assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 1);
+    assert.equal(ctx.data.getLoad(L.id).status, 'received');
+});
+
+test('a pallet loaded without an outbound scan is caught up with its own TO, IF and receipt', () => {
+    const ctx = setup();
+    const { L } = shippedLoad(ctx, 1);
+    const stray = printLabels(ctx, 1, 'Jstray')[0];
+    const r = ctx.run('scan_recv', { loadId: L.id, raw: stray.code }, false);
+    assert.equal(r.result, 'arrived_unshipped');
+    assert.deepEqual([ctx.data.getPallet(stray.id).status, ctx.data.getPallet(stray.id).arrivedOn], ['arrived_unshipped', L.id]);
+    assert.equal(ctx.run('scan_recv', { loadId: L.id, raw: stray.code }, false).result, 'dup_catchup');
+    const list = ctx.run('catchup_list');
+    assert.deepEqual([list.pallets.length, list.pallets[0].ok, list.pallets[0].arrivedOnNumber], [1, true, 'MV-001']);
+    assert.throws(() => ctx.run('catchup_approve', { palletId: stray.id }, false), /Managers only/);
+    const done = ctx.run('catchup_approve', { palletId: stray.id });
+    assert.equal(done.number, 'MV-001-C1');
+    const p = ctx.data.getPallet(stray.id);
+    assert.deepEqual([p.status, p.catchup, !!p.receipt], ['received', true, true]);
+    assert.deepEqual([txCount(ctx, 'TrnfrOrd'), txCount(ctx, 'ItemShip'), txCount(ctx, 'ItemRcpt')], [2, 2, 1]);
+    assert.equal(ctx.run('catchup_list').pallets.length, 0);
+});
+
+test('catch-up is blocked when NetSuite has the stock reserved; reject returns the label', () => {
+    const ctx = setup();
+    const { L } = shippedLoad(ctx, 1);
+    const stray = printLabels(ctx, 1, 'Jstray')[0];
+    ctx.run('scan_recv', { loadId: L.id, raw: stray.code }, false);
+    ctx.data.db.stock['35']['11'].avail = 0;
+    assert.equal(ctx.run('catchup_list').pallets[0].ok, false);
+    ctx.run('catchup_reject', { palletId: stray.id });
+    const p = ctx.data.getPallet(stray.id);
+    assert.deepEqual([p.status, p.loadId, p.arrivedOn], ['labeled', '', '']);
+});
+
+test('a pallet on a load that was never approved is refused at receiving', () => {
+    const ctx = setup();
+    const { L } = shippedLoad(ctx, 1, 'Ja');
+    const pending = loadAndReady(ctx, 1, 'Jb');
+    const r = ctx.run('scan_recv', { loadId: L.id, raw: pending.ps[0].code }, false);
+    assert.deepEqual([r.result, r.otherNumber], ['other_load_pending', pending.L.number]);
+    assert.equal(ctx.data.getPallet(pending.ps[0].id).status, 'loaded');
+});
+
+test('approve receipt refuses when another request claimed the load first', () => {
+    const ctx = setup();
+    const { ps, L } = shippedLoad(ctx, 1);
+    ctx.run('scan_recv', { loadId: L.id, raw: ps[0].code }, false);
+    ctx.run('recv_ready', { loadId: L.id }, false);
+    const origUpdate = ctx.data.updateLoad;
+    ctx.data.updateLoad = function(Ld, patch) {
+        const result = origUpdate.call(this, Ld, patch);
+        if (patch.status === 'receiving_tx') {
+            origUpdate.call(this, ctx.data.getLoad(Ld.id), { data: { claim: 'someone-else' } });
+        }
+        return result;
+    };
+    assert.throws(() => ctx.run('recv_approve', { loadId: L.id }), /already being received by someone else/);
+    assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 0);
+    ctx.data.updateLoad = origUpdate;
+    ctx.data.updateLoad(ctx.data.getLoad(L.id), { status: 'recv_ready' });
+    ctx.run('recv_approve', { loadId: L.id });
+    assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 1);
+});
