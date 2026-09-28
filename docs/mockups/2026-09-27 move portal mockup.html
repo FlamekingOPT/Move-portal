@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move Portal Mockup</title>
+<style>
+:root{
+  --bg:#eef1f5; --card:#fff; --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb;
+  --blue:#2563eb; --blue-soft:#dbeafe; --green:#16a34a; --green-soft:#dcfce7;
+  --amber:#d97706; --amber-soft:#fef3c7; --orange:#ea580c; --orange-soft:#ffedd5;
+  --red:#dc2626; --red-soft:#fee2e2; --navy:#1e293b; --teal:#0d9488;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
+header.top{background:var(--navy);color:#fff;padding:14px 20px}
+header.top h1{margin:0;font-size:18px}
+header.top p{margin:4px 0 0;color:#cbd5e1;font-size:13px}
+nav.tabs{display:flex;flex-wrap:wrap;gap:6px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav.tabs button{border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:999px;cursor:pointer;font-size:13px}
+nav.tabs button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+nav.tabs .sep{width:1px;background:var(--line);margin:0 4px}
+main{padding:20px}
+section.view{display:none}
+section.view.on{display:block}
+.row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.note{max-width:340px;font-size:13px;color:var(--muted)}
+.note h3{color:var(--ink);font-size:15px;margin:0 0 6px}
+.note ul{padding-left:18px;margin:6px 0}
+.note li{margin:3px 0}
+
+/* phone frame */
+.phone{width:390px;max-width:100%;height:780px;background:#f8fafc;border:10px solid #111827;border-radius:36px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.ph-top{background:var(--navy);color:#fff;padding:10px 12px 8px}
+.ph-title{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#cbd5e1}
+.ph-title b{color:#fff;font-size:14px}
+.toggle{display:flex;margin-top:8px;background:#334155;border-radius:10px;padding:3px}
+.toggle button{flex:1;border:0;background:transparent;color:#cbd5e1;padding:9px 4px;border-radius:8px;font-weight:600;font-size:13px}
+.toggle button.on.out{background:var(--blue);color:#fff}
+.toggle button.on.in{background:var(--teal);color:#fff}
+.subnav{display:flex;background:#fff;border-bottom:1px solid var(--line)}
+.subnav div{flex:1;text-align:center;padding:10px 2px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent}
+.subnav div.on{color:var(--ink);border-color:var(--blue)}
+.ph-body{flex:1;overflow:auto;padding:12px}
+.ph-foot{padding:10px 12px;background:#fff;border-top:1px solid var(--line)}
+
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:15px;font-size:16px;font-weight:700;cursor:pointer}
+.btn.pri{background:var(--blue);color:#fff}
+.btn.go{background:var(--green);color:#fff}
+.btn.teal{background:var(--teal);color:#fff}
+.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink);font-weight:600}
+.btn.sm{padding:9px;font-size:13px;border-radius:9px}
+.btn:disabled{opacity:.45}
+label.f{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:12px 0 5px}
+.inp{width:100%;padding:13px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px;background:#fff}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:2px solid var(--line);background:#fff;border-radius:10px;padding:10px 12px;font-size:14px;cursor:pointer;flex:1;min-width:30%;text-align:center}
+.chip small{display:block;color:var(--muted);font-size:11px}
+.chip.on{border-color:var(--blue);background:var(--blue-soft)}
+.stepper{display:flex;align-items:center;gap:8px}
+.stepper button{width:52px;height:52px;border-radius:12px;border:1px solid #cbd5e1;background:#fff;font-size:24px}
+.stepper .inp{text-align:center;font-size:22px;font-weight:700}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+.card h4{margin:0 0 4px;font-size:15px}
+.muted{color:var(--muted);font-size:12px}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+.p-blue{background:var(--blue-soft);color:var(--blue)}
+.p-green{background:var(--green-soft);color:var(--green)}
+.p-amber{background:var(--amber-soft);color:var(--amber)}
+.p-orange{background:var(--orange-soft);color:var(--orange)}
+.p-red{background:var(--red-soft);color:var(--red)}
+.p-gray{background:#f1f5f9;color:#475569}
+
+.scanbox{display:flex;gap:8px;align-items:center;background:#fff;border:2px dashed #94a3b8;border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.scanbox span{font-size:22px}
+.scanbox input{border:0;flex:1;font-size:16px;outline:none}
+.flash{border-radius:14px;padding:16px;margin-bottom:10px;color:#fff}
+.flash .big{font-size:26px;font-weight:800;line-height:1.1}
+.flash .mid{font-size:18px;font-weight:700;margin-top:4px}
+.flash .sm{font-size:13px;opacity:.95;margin-top:6px}
+.f-green{background:var(--green)} .f-amber{background:var(--amber)} .f-orange{background:var(--orange)} .f-red{background:var(--red)}
+.flash .acts{display:flex;gap:8px;margin-top:10px}
+.flash .acts button{flex:1;border:0;border-radius:9px;padding:10px;font-weight:700;background:rgba(255,255,255,.22);color:#fff;font-size:14px}
+.totals{display:flex;gap:8px;margin-bottom:10px}
+.totals div{flex:1;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center}
+.totals b{display:block;font-size:20px}
+.totals small{color:var(--muted);font-size:11px}
+.plist .it{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.plist .it:last-child{border:0}
+.plist .it b{font-size:14px}
+.plist .ac button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 9px;font-size:12px;margin-left:4px}
+.sim{margin-top:10px;padding:10px;border:1px dashed #a5b4fc;border-radius:10px;background:#eef2ff;font-size:12px}
+.sim b{display:block;margin-bottom:6px;color:#4338ca}
+.sim button{margin:3px 3px 0 0;border:1px solid #c7d2fe;background:#fff;border-radius:7px;padding:6px 8px;font-size:12px;cursor:pointer}
+.progress{height:12px;background:#e2e8f0;border-radius:999px;overflow:hidden}
+.progress div{height:100%;background:var(--teal)}
+.warnrow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.warnrow:last-child{border:0}
+
+/* desktop */
+.desk{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.06);overflow:hidden;width:100%;max-width:1180px}
+.desk-top{background:var(--navy);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.desk-top .tabs2 span{margin-left:14px;color:#cbd5e1;font-size:13px}
+.desk-top .tabs2 span.on{color:#fff;font-weight:700;border-bottom:2px solid #fff;padding-bottom:2px}
+.desk-body{padding:16px}
+.grid2{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.kpi{border:1px solid var(--line);border-radius:12px;padding:12px}
+.kpi small{color:var(--muted);font-size:12px}
+.kpi b{display:block;font-size:26px;margin-top:2px}
+.kpi span{font-size:12px;color:var(--muted)}
+.kpi.good{border-color:#86efac;background:#f0fdf4}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:12px;padding:7px 8px;border-bottom:1px solid var(--line)}
+td{padding:8px;border-bottom:1px solid var(--line)}
+td input{width:64px;padding:6px;border:1px solid #cbd5e1;border-radius:6px}
+.panel{border:1px solid var(--line);border-radius:12px;padding:12px}
+.panel h3{margin:0 0 10px;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+.dbtn{border:0;border-radius:8px;padding:7px 12px;font-weight:700;font-size:12px;cursor:pointer}
+.dbtn.pri{background:var(--blue);color:#fff}
+.dbtn.go{background:var(--green);color:#fff}
+.dbtn.gh{background:#fff;border:1px solid var(--line)}
+
+/* label */
+.label{width:384px;height:576px;background:#fff;border:1px solid #111;padding:18px;font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;box-shadow:0 6px 20px rgba(0,0,0,.12)}
+.label .l1{display:flex;justify-content:space-between;font-weight:800;font-size:15px;border-bottom:3px solid #111;padding-bottom:8px}
+.label .sku{font-size:58px;font-weight:900;margin-top:14px;line-height:1}
+.label .cfg{font-size:22px;font-weight:700;margin-top:6px}
+.label .pcs{font-size:44px;font-weight:900;margin-top:10px}
+.label .bc{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:10px}
+body.code-c128 .label .bc > svg{display:none}
+body.code-qr .label .bc > div{display:none}
+body.code-qr .label .bc > svg{width:120px;height:120px}
+.codesel{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin:6px 0}
+.codesel button{border:0;background:#fff;padding:8px 12px;font-size:13px;cursor:pointer;border-right:1px solid var(--line)}
+.codesel button:last-child{border-right:0}
+.codesel button.on{background:var(--navy);color:#fff}
+.label .desc{font-size:15px;margin-top:10px}
+.label .foot{display:flex;justify-content:space-between;font-size:12px;margin-top:10px;border-top:1px solid #111;padding-top:6px}
+.label .mixed td{font-size:18px;font-weight:700;padding:4px 0;border-bottom:1px solid #ddd}
+.hdrcard{width:384px;height:576px;background:#fff;border:1px dashed #111;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-family:Arial;box-shadow:0 6px 20px rgba(0,0,0,.12)}
+
+@media (max-width:900px){
+  .grid2,.grid3{grid-template-columns:1fr}
+  .grid4{grid-template-columns:repeat(2,1fr)}
+  main{padding:12px}
+  .phone{border-width:6px;border-radius:24px;height:auto;min-height:680px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Move Portal: Riverside → Tippecanoe · MOCKUP</h1>
+  <p>Sample data, shown as if it were Tue Oct 14 (day 12 of 39 move days, Mon–Sat, target Nov 15). Separate app from the picker portal. The purple boxes simulate scans.</p>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-v="req" class="on">📱 Label Request</button>
+  <button data-v="load">📱 Load (outbound)</button>
+  <button data-v="recv">📱 Receive (inbound)</button>
+  <button data-v="approve">📱 Manager approvals</button>
+  <span class="sep"></span>
+  <button data-v="office">🖥 Office: Print</button>
+  <button data-v="dash">🖥 Dashboard</button>
+  <button data-v="label">🏷 Label 4×6</button>
+</nav>
+<main>
+
+<!-- ============ LABEL REQUEST ============ -->
+<section class="view on" id="v-req">
+<div class="row">
+  <div class="phone">
+    <div class="ph-top">
+      <div class="ph-title"><b>Move Portal</b><span>I am: Miguel Trejo ▾</span></div>
+      <div class="toggle"><button class="on out">📤 Outbound · Riverside</button><button>📥 Inbound · Tippecanoe</button></div>
+    </div>
+    <div class="subnav"><div class="on">Request label</div><div>Load</div><div>Void</div></div>
+    <div class="ph-body">
+      <label class="f">SKU (type or scan product barcode)</label>
+      <input class="inp" value="YSN500K">
+      <div class="muted" style="margin-top:4px">Torch +3m P.O.L. Hose Set · 21,712 on hand at Riverside</div>
+
+      <label class="f">Pallet config (from sheet)</label>
+      <div class="chips" id="cfgchips">
+        <div class="chip" data-p="44">Config A<small>44 / pallet</small></div>
+        <div class="chip on" data-p="88">Config B<small>88 / pallet</small></div>
+        <div class="chip" data-p="">Custom<small>type count</small></div>
+      </div>
+
+      <label class="f">Pieces on this pallet</label>
+      <div class="stepper"><button onclick="step(-1)">−</button><input class="inp" id="pcs" value="88"><button onclick="step(1)">+</button></div>
+      <div class="muted" id="edited" style="margin-top:4px;color:var(--amber);display:none">⚠ Differs from Config B (88), so the label will show EDITED</div>
+
+      <label class="f">How many labels</label>
+      <div class="stepper"><button>−</button><input class="inp" value="1"><button>+</button></div>
+
+      <label class="f">Note for runner (optional)</label>
+      <input class="inp" placeholder="e.g. aisle 12, top rack" value="Aisle 12, top rack">
+
+      <div style="margin-top:10px"><button class="btn ghost sm">+ Mixed pallet (add another SKU)</button></div>
+
+      <label class="f" style="margin-top:18px">My requests today</label>
+      <div class="card"><h4>YSN500K · Config B · 88 <span class="pill p-green">Printed · on its way</span></h4><div class="muted">9:41 am · Aisle 12</div></div>
+      <div class="card"><h4>MIXED · YSN330 ×24, YSN10LB ×40 <span class="pill p-amber">In print queue</span></h4><div class="muted">10:02 am · by dock door 4</div></div>
+    </div>
+    <div class="ph-foot"><button class="btn pri">Send to office printer</button></div>
+  </div>
+  <div class="note">
+    <h3>Label Request (floor phone)</h3>
+    <ul>
+      <li>Used for pallets the office plan doesn't cover: short, mixed, rebuilt, or a lost label. Full standard pallets come from the office Print Plan.</li>
+      <li>Choosing a config fills in the piece count. Change it only if the pallet is short, and the label then shows EDITED.</li>
+      <li>The request goes to the office print queue, and the runner uses the note to find the pallet.</li>
+      <li>Big tap targets and one column. Same phone and login as the picker portal, different link.</li>
+    </ul>
+    <p>Try the config chips and the − / + buttons.</p>
+  </div>
+</div>
+</section>
+
+<!-- ============ LOAD ============ -->
+<section class="view" id="v-load">
+<div class="row">
+  <div class="phone">
+    <div class="ph-top">
+      <div class="ph-title"><b>Move Portal</b><span>I am: David Fanco ▾</span></div>
+      <div class="toggle"><button class="on out">📤 Outbound · Riverside</button><button>📥 Inbound · Tippecanoe</button></div>
+    </div>
+    <div class="subnav"><div>Request label</div><div class="on">Load</div><div>Void</div></div>
+    <div class="ph-body">
+      <div class="card" style="border-color:var(--blue)">
+        <h4>MV-014 · Door 4 <span class="pill p-blue">Loading</span></h4>
+        <div class="muted">Estes · Trailer 53-88213 · Seal 0045521</div>
+      </div>
+      <div class="scanbox"><span>📷</span><input placeholder="Scan pallet label…" autofocus></div>
+      <div id="loadFlash"><div class="flash f-green"><div class="big">✅ YSN201 · Config A</div><div class="mid">120 pcs · PLT48213</div><div class="sm">Added to MV-014 · 14 pallets</div><div class="acts"><button>Edit count</button><button>Remove</button></div></div></div>
+      <div class="totals"><div><b id="lp">14</b><small>pallets</small></div><div><b id="lpc">1,736</b><small>pieces</small></div><div><b>4</b><small>SKUs</small></div></div>
+      <div class="card plist" id="loadList">
+        <div class="it"><div><b>PLT48213</b> · YSN201 A · 120</div><div class="ac"><button>Edit</button><button>✕</button></div></div>
+        <div class="it"><div><b>PLT48214</b> · YSN201 A · 120</div><div class="ac"><button>Edit</button><button>✕</button></div></div>
+        <div class="it"><div><b>PLT48260</b> · YSN500K B · 88</div><div class="ac"><button>Edit</button><button>✕</button></div></div>
+        <div class="it"><div><b>PLT48301</b> · MIXED · 64 <span class="pill p-amber">EDITED</span></div><div class="ac"><button>Edit</button><button>✕</button></div></div>
+        <div class="muted" style="padding-top:6px">+ 10 more</div>
+      </div>
+      <div class="sim"><b>Simulate a scan</b>
+        <button onclick="loadScan('ok')">✅ Good pallet</button>
+        <button onclick="loadScan('dup')">🟡 Same pallet twice</button>
+        <button onclick="loadScan('other')">🟡 On another open load</button>
+        <button onclick="loadScan('void')">❌ Cancelled label</button>
+        <button onclick="loadScan('ship')">❌ Already shipped</button>
+        <button onclick="loadScan('unk')">❌ Unknown</button>
+      </div>
+    </div>
+    <div class="ph-foot"><button class="btn go">Load done: send for approval</button></div>
+  </div>
+  <div class="note">
+    <h3>Load (Riverside dock)</h3>
+    <ul>
+      <li>Open a load (MV-014 fills in automatically), then scan pallets as they go on the truck. Two docks can each have a load open.</li>
+      <li>Every scan flashes a big color with the contents. <b>Edit</b> fixes a pallet whose label doesn't match (it gets flagged EDITED).</li>
+      <li>Scanning changes nothing in NetSuite inventory. <b>Load done</b> sends it to a manager, who clicks <b>Approve & Ship</b>.</li>
+      <li>The scan field keeps focus, so a Bluetooth scanner works without tapping.</li>
+    </ul>
+    <p>Use the purple buttons to see each scan result, or see them all below.</p>
+  </div>
+  <div style="width:390px;max-width:100%">
+    <h3 style="margin:0 0 8px;font-size:15px">Every scan result on the Load screen</h3>
+    <div class="flash f-green"><div class="big">✅ YSN201 · Config A</div><div class="mid">120 pcs · PLT48401</div><div class="sm">Added to MV-014 · 15 pallets</div><div class="acts"><button>Edit count</button><button>Remove</button></div></div>
+    <div class="flash f-amber"><div class="big">🟡 Already on this load</div><div class="mid">PLT48213 · YSN201 · 120</div><div class="sm">No change.</div></div>
+    <div class="flash f-amber"><div class="big">🟡 On load MV-015 (door 2)</div><div class="mid">PLT48190 · YSN301 · 60</div><div class="acts"><button>Move it to MV-014</button><button>Leave it</button></div></div>
+    <div class="flash f-red"><div class="big">❌ Label cancelled</div><div class="mid">PLT48102 · was YSN230 · 96</div><div class="sm">Don't load it. Request a new label for this pallet.</div></div>
+    <div class="flash f-red"><div class="big">❌ Already shipped</div><div class="mid">PLT47801 · on MV-009 (10/10)</div><div class="sm">This pallet already left. Check with the supervisor.</div></div>
+    <div class="flash f-red"><div class="big">❌ Unknown label</div><div class="mid">"0714528803"</div><div class="sm">Not a move label. Maybe a product barcode?</div></div>
+  </div>
+</div>
+</section>
+
+<!-- ============ RECEIVE ============ -->
+<section class="view" id="v-recv">
+<div class="row">
+  <div class="phone">
+    <div class="ph-top">
+      <div class="ph-title"><b>Move Portal</b><span>I am: David Fanco ▾</span></div>
+      <div class="toggle"><button>📤 Outbound · Riverside</button><button class="on in">📥 Inbound · Tippecanoe</button></div>
+    </div>
+    <div class="subnav"><div class="on" style="border-color:var(--teal)">Receive</div><div>Inbound loads</div></div>
+    <div class="ph-body">
+      <div class="card" style="border-color:var(--teal)">
+        <h4>MV-011 from Riverside <span class="pill p-green">Shipped 10/13</span></h4>
+        <div class="muted">Estes · Trailer 53-77410 · 22 pallets · 2,604 pcs</div>
+        <div style="margin:8px 0 4px;display:flex;justify-content:space-between;font-weight:700"><span id="rc">18 of 22 in</span><span class="muted">4 left</span></div>
+        <div class="progress"><div id="rbar" style="width:82%"></div></div>
+      </div>
+      <div class="scanbox"><span>📷</span><input placeholder="Scan pallet label…"></div>
+      <div id="recvFlash"><div class="flash f-green"><div class="big">✅ YSN201 · Config A</div><div class="mid">120 pcs · PLT48120</div><div class="sm">18 of 22 in</div><div class="acts"><button>Mark damaged</button><button>Undo</button></div></div></div>
+      <div class="card plist">
+        <div class="muted" style="font-weight:700;margin-bottom:4px">Still expected</div>
+        <div class="it"><div><b>PLT47990</b> · YSN301 A · 60</div></div>
+        <div class="it"><div><b>PLT47991</b> · YSN301 A · 60</div></div>
+        <div class="it"><div><b>PLT48002</b> · YSN230 A · 96</div></div>
+        <div class="it"><div><b>PLT48010</b> · YSN10LB A · 180</div></div>
+      </div>
+      <div class="sim"><b>Simulate a scan</b>
+        <button onclick="recvScan('ok')">✅ Expected pallet</button>
+        <button onclick="recvScan('dmg')">🟡 Mark damaged</button>
+        <button onclick="recvScan('other')">🟡 Belongs to other load</button>
+        <button onclick="recvScan('noscan')">🟠 Loaded without scan</button>
+        <button onclick="recvScan('void')">❌ Cancelled label</button>
+      </div>
+    </div>
+    <div class="ph-foot"><button class="btn teal">Unloading done: send for approval</button></div>
+  </div>
+  <div class="note">
+    <h3>Receive (Tippecanoe dock)</h3>
+    <ul>
+      <li>The same worker and phone flip the header toggle to <b>Inbound</b>. No separate login.</li>
+      <li>Pick an inbound load and scan pallets as they come off. The list shows what's still expected.</li>
+      <li><b>Loaded without scan</b> (orange): the pallet arrived but was never on a shipped load. The worker flags it and a manager approves a catch-up shipment.</li>
+      <li><b>Unloading done</b> → manager <b>Approve Receipt</b>. Tippecanoe on-hand goes up for the scanned pallets only, and missing ones stay in transit.</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<!-- ============ APPROVALS ============ -->
+<section class="view" id="v-approve">
+<div class="row">
+  <div class="phone">
+    <div class="ph-top">
+      <div class="ph-title"><b>Move Portal · Manager</b><span>Jack Kessler</span></div>
+      <div class="toggle" id="mgrToggle"><button class="on out" onclick="mgrSide('out')">📤 Outbound · Riverside</button><button onclick="mgrSide('in')">📥 Inbound · Tippecanoe</button></div>
+    </div>
+    <div class="subnav" id="mgrSubOut"><div class="on">To ship (1)</div><div>Open loads (2)</div><div>Print queue (2)</div></div>
+    <div class="subnav" id="mgrSubIn" style="display:none"><div class="on" style="border-color:var(--teal)">To receive (1)</div><div>Catch-ups (1)</div><div>Inbound (8)</div></div>
+    <div class="ph-body">
+      <div id="mgrOut">
+      <div class="card" style="border-color:var(--amber)">
+        <h4>MV-014 · Door 4 <span class="pill p-amber">⏳ Approve & Ship</span></h4>
+        <div class="muted">22 pallets · 2,640 pcs · loaded by David Fanco · 11:48 am</div>
+        <table style="margin-top:8px">
+          <tr><th>SKU</th><th>On truck</th><th>Available</th><th></th></tr>
+          <tr><td>YSN201</td><td>1,440</td><td>118,210</td><td>✅</td></tr>
+          <tr><td>YSN500K</td><td>880</td><td>20,044</td><td>✅</td></tr>
+          <tr><td>YSN330</td><td>256</td><td>212</td><td>❌</td></tr>
+          <tr><td>YSN10LB</td><td>64</td><td>9,380</td><td>✅</td></tr>
+        </table>
+        <div class="muted" style="color:var(--red);margin-top:6px">⚠ YSN330: truck has 256 but only 212 are available (44 reserved for customer orders). Remove a pallet or check the count.</div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn ghost sm">Open load</button><button class="btn go sm" disabled>Approve & Ship</button></div>
+      </div>
+      <div class="card"><h4>MV-015 · Door 2 <span class="pill p-blue">Loading</span></h4><div class="muted">9 pallets so far · Santiago Chumil</div></div>
+      <div class="card"><h4>MV-013 <span class="pill p-green">Shipped 10/14 9:12 am</span></h4><div class="muted">24 pallets · TO 9412 · IF 72031 · load sheet printed</div></div>
+      </div>
+      <div id="mgrIn" style="display:none">
+      <div class="card" style="border-color:var(--teal)">
+        <h4>MV-011 receipt <span class="pill p-amber">⏳ Approve Receipt</span></h4>
+        <div class="muted">20 of 22 scanned in · 1 damaged</div>
+        <div class="warnrow"><span>Missing: PLT47990, PLT47991 (YSN301 ×120)</span><span class="pill p-red">stay in transit</span></div>
+        <div class="warnrow"><span>Damaged: PLT48002 YSN230</span><span class="pill p-amber">received, flagged</span></div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn ghost sm">Open</button><button class="btn teal sm">Approve Receipt (2,424 pcs)</button></div>
+      </div>
+      <div class="card" style="border-color:var(--orange)">
+        <h4>Catch-up · PLT48355 <span class="pill p-orange">⏳ Approve catch-up</span></h4>
+        <div class="muted">YSN201 A · 120 · arrived on MV-011 without an outbound scan</div>
+        <div class="muted" style="margin-top:4px">Creates a small transfer order, marks it Shipped and receives it at once. Riverside −120, Tippecanoe +120.</div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn ghost sm">Reject</button><button class="btn go sm">Approve catch-up</button></div>
+      </div>
+      <div class="card"><h4>MV-012 <span class="pill p-blue">In transit</span></h4><div class="muted">21 pallets · shipped 10/13 · ETA 10/17</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <h3>Manager approvals: same model as the picker portal</h3>
+    <ul>
+      <li><b>Separate Outbound and Inbound screens</b> (tap the toggle). Outbound: loads to ship, open loads, print queue. Inbound: receipts to approve, catch-ups, trucks in transit.</li>
+      <li>Floor workers only scan, so they need no new NetSuite access.</li>
+      <li>Only managers create the transfer order / IF / receipt: <b>Approve & Ship</b>, <b>Approve Receipt</b>, <b>Approve catch-up</b>.</li>
+      <li>The stock check blocks shipping a SKU when NetSuite's available quantity is lower than what's on the truck.</li>
+      <li>After Approve & Ship, the load sheet prints on the office printer.</li>
+    </ul>
+    <p>⚠ The manager role will likely need Transfer Order + Item Receipt permission added. To confirm in sandbox.</p>
+  </div>
+</div>
+</section>
+
+<!-- ============ OFFICE PRINT ============ -->
+<section class="view" id="v-office">
+<div class="desk">
+  <div class="desk-top"><b>Move Portal · Office</b><div class="tabs2" id="offTabs"><span class="on" data-o="qp">Queue + Plan</span><span data-o="man">Print a SKU</span><span data-o="cfg">SKU Configs</span><span data-o="rv">Reprint / Void</span></div></div>
+  <div class="desk-body">
+    <!-- PRINT A SKU (manual) -->
+    <div class="opane" id="o-man" style="display:none">
+      <div class="grid2">
+        <div class="panel">
+          <h3>Print labels for a SKU</h3>
+          <label class="f">SKU</label>
+          <input class="inp" value="YSN301" style="max-width:360px">
+          <div class="muted" style="margin-top:4px">30# LP Cylinder w/OPD · Riverside on hand 32,880 · ~548 pallets left at Config A</div>
+          <label class="f">Config</label>
+          <div class="chips" style="max-width:520px">
+            <div class="chip on">Config A<small>60 / pallet · default</small></div>
+            <div class="chip">Config B<small>30 / pallet</small></div>
+            <div class="chip">Custom<small>type pcs</small></div>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px">
+            <div><label class="f">Pieces per pallet</label><input class="inp" value="60" style="width:140px"></div>
+            <div><label class="f">Number of labels</label><input class="inp" value="35" style="width:140px"></div>
+          </div>
+          <label class="f">Mixed pallet?</label>
+          <button class="dbtn gh">+ Add another SKU to this pallet</button>
+          <div style="display:flex;gap:10px;margin-top:16px">
+            <button class="dbtn pri" style="padding:11px 18px">Print 35 labels + header card</button>
+            <button class="dbtn gh" style="padding:11px 18px">Add to today's plan instead</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Preview</h3>
+          <div class="muted" style="font-weight:700">Label code:</div><div class="codesel" data-codesel><button class="on" onclick="setCode('both')">Both</button><button onclick="setCode('c128')">Barcode only</button><button onclick="setCode('qr')">QR only</button></div>
+          <div style="transform:scale(.55);transform-origin:top left;height:330px">
+            <div class="label" style="box-shadow:none">
+              <div class="l1"><span>MOVE</span><span>RIVERSIDE ▶ TIPPECANOE</span></div>
+              <div class="sku">YSN301</div><div class="cfg">Config A</div><div class="pcs">60 pcs</div>
+              <div class="desc">30# LP Cylinder w/OPD</div>
+              <div class="bc">
+                <div><svg id="bc3" width="250" height="80"></svg><div style="font:700 16px monospace;text-align:center">PLT48273</div></div>
+                <svg id="qr3" width="80" height="80" viewBox="0 0 80 80"></svg>
+              </div>
+              <div class="foot"><span>printed 10/14 · office</span><span></span></div>
+            </div>
+          </div>
+          <div class="muted">Label ids are assigned when printed (PLT48273 – PLT48307).</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SKU CONFIGS -->
+    <div class="opane" id="o-cfg" style="display:none">
+      <div class="panel">
+        <h3>SKU pallet configs (copy of the Google Sheet) <span><button class="dbtn gh">⬇ Download CSV</button> <button class="dbtn pri">⬆ Import from sheet (CSV)</button></span></h3>
+        <div class="muted" style="margin-bottom:8px">Last imported 10/13 4:05 pm by Jack · 412 configs · 367 SKUs. <b style="color:var(--red)">9 SKUs with Riverside stock have no config</b>. They can still print with a typed piece count, but aren't counted in the tracker.</div>
+        <table>
+          <tr><th>SKU</th><th>Description</th><th>Config</th><th>Pcs / pallet</th><th>Default</th><th>Riverside on hand</th><th>Est. pallets</th></tr>
+          <tr><td>YSN201</td><td>20# LP Cylinders w/OPD</td><td>A</td><td>120</td><td>✓</td><td>121,440</td><td>1,012</td></tr>
+          <tr><td>YSN301</td><td>30# LP Cylinder w/OPD</td><td>A</td><td>60</td><td>✓</td><td rowspan="2">32,880</td><td rowspan="2">548</td></tr>
+          <tr><td></td><td></td><td>B</td><td>30</td><td></td></tr>
+          <tr><td>YSN500K</td><td>Torch +3m P.O.L. Hose Set</td><td>A</td><td>44</td><td></td><td rowspan="2">20,044</td><td rowspan="2">228</td></tr>
+          <tr><td></td><td></td><td>B</td><td>88</td><td>✓</td></tr>
+          <tr style="background:var(--red-soft)"><td>YSN-HT-500</td><td>Heater hose 500</td><td colspan="3"><b>No config</b>. Add it to the sheet and re-import</td><td>166</td><td>?</td></tr>
+          <tr><td colspan="7" class="muted">+ 406 more</td></tr>
+        </table>
+        <div class="muted" style="margin-top:8px">The sheet is the master. Edit configs there, then re-import. Sheet columns: SKU · Config code · Pcs per pallet · Default (Y/N). The default config is what the Print Plan and tracker use.</div>
+      </div>
+    </div>
+
+    <!-- REPRINT / VOID -->
+    <div class="opane" id="o-rv" style="display:none">
+      <div class="panel" style="max-width:520px">
+        <h3>Reprint or void a label</h3>
+        <label class="f">Scan or type label id</label><input class="inp" value="PLT48102">
+        <div class="card" style="margin-top:10px"><h4>PLT48102 · YSN230 · Config A · 96 <span class="pill p-gray">labeled</span></h4><div class="muted">Printed 10/13 · plan batch · not loaded yet</div></div>
+        <div style="display:flex;gap:10px"><button class="dbtn pri">Reprint (same id)</button><button class="dbtn gh">Edit + reprint (voids old)</button><button class="dbtn gh" style="color:var(--red)">Void</button></div>
+      </div>
+    </div>
+
+    <div class="grid2 opane" id="o-qp">
+      <div class="panel">
+        <h3>Print Queue: floor requests <span><button class="dbtn gh">+ Add request (radio)</button></span></h3>
+        <table>
+          <tr><th>Time</th><th>From</th><th>Pallet</th><th>Labels</th><th>Note</th><th></th></tr>
+          <tr><td>10:02</td><td>Miguel Trejo</td><td><b>MIXED</b> YSN330 ×24, YSN10LB ×40</td><td>1</td><td>by door 4</td><td><button class="dbtn pri">Print</button></td></tr>
+          <tr><td>10:15</td><td>radio · Santiago</td><td>YSN301 · Config A · <b>52</b> <span class="pill p-amber">EDITED</span></td><td>1</td><td>aisle 3</td><td><button class="dbtn pri">Print</button></td></tr>
+          <tr style="color:var(--muted)"><td>9:41</td><td>Miguel Trejo</td><td>YSN500K · Config B · 88</td><td>1</td><td>aisle 12</td><td><span class="pill p-green">Printed</span></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>Print Plan: today, Tue 10/14 <span class="muted">target 194 pallets/day · <button class="dbtn gh">+ Add SKU</button></span></h3>
+        <table>
+          <tr><th>SKU</th><th>Config</th><th>Left at Riverside</th><th>Suggested</th><th>Print</th><th></th></tr>
+          <tr><td>YSN201</td><td>A · 120</td><td>1,012 plt</td><td>60</td><td><input value="60"></td><td><button class="dbtn pri">Print</button></td></tr>
+          <tr><td>YSN201-AG</td><td>A · 120</td><td>462 plt</td><td>30</td><td><input value="30"></td><td><button class="dbtn pri">Print</button></td></tr>
+          <tr><td>YSN301</td><td>A · 60</td><td>548 plt</td><td>35</td><td><input value="35"></td><td><button class="dbtn pri">Print</button></td></tr>
+          <tr><td>YSN500K</td><td>B · 88</td><td>228 plt</td><td>20</td><td><input value="20"></td><td><button class="dbtn pri">Print</button></td></tr>
+          <tr><td>FLMKNG164LP</td><td>A · 1,440</td><td>18 plt</td><td>8</td><td><input value="8"></td><td><button class="dbtn pri">Print</button></td></tr>
+          <tr><td colspan="3" class="muted">+ 41 more SKUs</td><td><b>194</b></td><td></td><td><button class="dbtn go">Print all (194)</button></td></tr>
+        </table>
+        <div class="muted" style="margin-top:6px">Each batch starts with a header card ("YSN201 · Config A · 60 labels"). Extra labels are harmless: only labels scanned onto a truck count.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============ DASHBOARD ============ -->
+<section class="view" id="v-dash">
+<div class="desk">
+  <div class="desk-top"><b>Move Status: Riverside → Tippecanoe</b><span style="font-size:13px;color:#cbd5e1">Target Nov 15 · Mon–Sat move days · updated 2:14 pm</span></div>
+  <div class="desk-body">
+    <div class="grid4">
+      <div class="kpi"><small>Total pallets to move (est.)</small><b>7,480</b><span>on-hand ÷ config · 5,610 labeled</span></div>
+      <div class="kpi"><small>Pallets moved (shipped)</small><b>2,230</b><span>2,054 received at Tippecanoe</span></div>
+      <div class="kpi"><small>Pallets remaining</small><b>5,250</b><span>70% left</span></div>
+      <div class="kpi"><small>Move days left</small><b>27</b><span>of 39 · Mon–Sat to Nov 15</span></div>
+      <div class="kpi"><small>Needed per day</small><b>194</b><span>5,250 ÷ 27</span></div>
+      <div class="kpi"><small>Moved today · 7-day avg</small><b>188 · 201</b><span>all-time avg 186</span></div>
+      <div class="kpi good"><small>Projected finish</small><b>Nov 14</b><span>✅ 1 day ahead at 201/day</span></div>
+      <div class="kpi"><small>In transit</small><b>176</b><span>8 loads · 2 missing pallets</span></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h3>Pallets moved per day <span class="muted">— dashed line = 194/day needed</span></h3>
+      <svg viewBox="0 0 900 190" width="100%" height="190" role="img" aria-label="Pallets moved per day">
+        <g id="bars"></g>
+        <line x1="40" x2="890" y1="44" y2="44" stroke="#dc2626" stroke-dasharray="6 5"/>
+        <text x="44" y="38" font-size="11" fill="#dc2626">194 needed</text>
+        <line x1="40" x2="890" y1="160" y2="160" stroke="#cbd5e1"/>
+      </svg>
+    </div>
+
+    <div class="grid3" style="margin-top:16px">
+      <div class="panel"><h3>Loads</h3>
+        <table><tr><th>Load</th><th>Pallets</th><th>Status</th></tr>
+        <tr><td>MV-014</td><td>22</td><td><span class="pill p-amber">Approve & Ship</span></td></tr>
+        <tr><td>MV-013</td><td>24</td><td><span class="pill p-blue">In transit</span></td></tr>
+        <tr><td>MV-012</td><td>21</td><td><span class="pill p-blue">In transit</span></td></tr>
+        <tr><td>MV-011</td><td>22</td><td><span class="pill p-amber">Approve Receipt</span></td></tr>
+        <tr><td>MV-009</td><td>24</td><td><span class="pill p-red">Received · 2 short</span></td></tr>
+        <tr><td>MV-008</td><td>23</td><td><span class="pill p-green">Received</span></td></tr></table>
+      </div>
+      <div class="panel"><h3>Exceptions</h3>
+        <div class="warnrow"><span>Missing pallets (in transit)</span><b>2</b></div>
+        <div class="warnrow"><span>Catch-ups this week</span><b>3</b></div>
+        <div class="warnrow"><span>Damaged, flagged</span><b>1</b></div>
+        <div class="warnrow"><span>Edited at dock</span><b>17</b></div>
+        <div class="warnrow"><span>Labeled, never loaded &gt; 5 days</span><b>41</b></div>
+        <div class="warnrow"><span>SKUs with no config in sheet</span><b style="color:var(--red)">9</b></div>
+      </div>
+      <div class="panel"><h3>Remaining by SKU (top)</h3>
+        <table><tr><th>SKU</th><th>Pallets left</th><th>Moved</th></tr>
+        <tr><td>YSN201</td><td>1,012</td><td>264</td></tr>
+        <tr><td>YSN301</td><td>548</td><td>147</td></tr>
+        <tr><td>YSN201-AG</td><td>462</td><td>68</td></tr>
+        <tr><td>YSN500K</td><td>228</td><td>19</td></tr>
+        <tr><td>YSN230</td><td>155</td><td>18</td></tr>
+        <tr><td colspan="3" class="muted">+ 370 more</td></tr></table>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============ LABEL ============ -->
+<section class="view" id="v-label">
+<div class="row">
+  <div class="label">
+    <div class="l1"><span>MOVE</span><span>RIVERSIDE ▶ TIPPECANOE</span></div>
+    <div class="sku">YSN201</div>
+    <div class="cfg">Config A</div>
+    <div class="pcs">120 pcs</div>
+    <div class="desc">20# LP Cylinders w/OPD</div>
+    <div class="bc">
+      <div><svg id="bc1" width="250" height="80"></svg><div style="font:700 16px monospace;text-align:center">PLT48213</div></div>
+      <svg id="qr1" width="80" height="80" viewBox="0 0 80 80"></svg>
+    </div>
+    <div class="foot"><span>printed 10/14 · plan</span><span></span></div>
+  </div>
+  <div class="label">
+    <div class="l1"><span>MOVE</span><span>RIVERSIDE ▶ TIPPECANOE</span></div>
+    <div class="sku" style="font-size:52px">MIXED</div>
+    <table class="mixed" style="margin-top:12px;width:100%">
+      <tr><td>YSN330</td><td style="text-align:right">24 pcs</td></tr>
+      <tr><td>YSN10LB</td><td style="text-align:right">40 pcs</td></tr>
+      <tr><td>Total</td><td style="text-align:right">64 pcs</td></tr>
+    </table>
+    <div class="bc">
+      <div><svg id="bc2" width="250" height="80"></svg><div style="font:700 16px monospace;text-align:center">PLT48301</div></div>
+      <svg id="qr2" width="80" height="80" viewBox="0 0 80 80"></svg>
+    </div>
+    <div class="foot"><span>printed 10/14 · Miguel Trejo</span><b>EDITED</b></div>
+  </div>
+  <div class="hdrcard">
+    <div style="font-size:18px">BATCH HEADER</div>
+    <div style="font-size:60px;font-weight:900">YSN201</div>
+    <div style="font-size:26px;font-weight:700">Config A · 120 pcs</div>
+    <div style="font-size:40px;font-weight:900;margin-top:16px">60 labels</div>
+    <div style="margin-top:14px">Tue 10/14 plan · PLT48213 – PLT48272</div>
+  </div>
+  <div class="note">
+    <h3>4×6 thermal label</h3>
+    <div class="muted" style="font-weight:700">Label code (office setting, applies to all labels):</div><div class="codesel" data-codesel><button class="on" onclick="setCode('both')">Both</button><button onclick="setCode('c128')">Barcode only</button><button onclick="setCode('qr')">QR only</button></div>
+    <ul>
+      <li>SKU and piece count are readable from a distance.</li>
+      <li>Code128 barcode and QR code are stacked and hold the same PLT id. Pick <b>one</b> in the setting above if your scanners read both. One trigger pull reads one code, and a repeat scan just shows 🟡 "already on this load", so a double scan can't add a pallet twice.</li>
+      <li>No dims. Weight is left off.</li>
+      <li>EDITED shows when the count differs from the config.</li>
+      <li>The header card starts each batch so the stack is easy to hand out.</li>
+    </ul>
+    <p>Barcodes shown are placeholders, not scannable.</p>
+  </div>
+</div>
+</section>
+
+</main>
+<script>
+// tabs
+document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('section.view').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); document.getElementById('v-'+b.dataset.v).classList.add('on');
+});
+// label request
+let cfgP=88;
+document.querySelectorAll('#cfgchips .chip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('#cfgchips .chip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');
+  if(c.dataset.p){cfgP=+c.dataset.p;document.getElementById('pcs').value=cfgP;} else {cfgP=null;}
+  chk();
+});
+function step(d){const i=document.getElementById('pcs');i.value=Math.max(1,(+i.value||0)+d);chk();}
+function chk(){const v=+document.getElementById('pcs').value;const e=document.getElementById('edited');
+  e.style.display=(cfgP&&v!==cfgP)?'block':'none';}
+document.getElementById('pcs').oninput=chk;
+
+// label code setting
+function setCode(m){document.body.classList.remove('code-c128','code-qr');if(m!=='both')document.body.classList.add('code-'+m);
+  document.querySelectorAll('[data-codesel]').forEach(g=>g.querySelectorAll('button').forEach((b,i)=>b.classList.toggle('on',['both','c128','qr'][i]===m)));}
+// office sub-tabs
+document.querySelectorAll('#offTabs span').forEach(s=>s.onclick=()=>{
+  document.querySelectorAll('#offTabs span').forEach(x=>x.classList.remove('on'));s.classList.add('on');
+  document.querySelectorAll('.opane').forEach(p=>p.style.display='none');
+  const p=document.getElementById('o-'+s.dataset.o);p.style.display=p.classList.contains('grid2')?'grid':'block';
+});
+// manager outbound/inbound
+function mgrSide(s){
+  const b=document.querySelectorAll('#mgrToggle button');
+  b[0].className=s==='out'?'on out':''; b[1].className=s==='in'?'on in':'';
+  document.getElementById('mgrOut').style.display=s==='out'?'':'none';
+  document.getElementById('mgrIn').style.display=s==='in'?'':'none';
+  document.getElementById('mgrSubOut').style.display=s==='out'?'':'none';
+  document.getElementById('mgrSubIn').style.display=s==='in'?'':'none';
+}
+// load scans
+let lp=14,lpc=1736,n=48400;
+function loadScan(k){
+  const f=document.getElementById('loadFlash');let h='';
+  if(k==='ok'){n++;lp++;lpc+=120;document.getElementById('lp').textContent=lp;document.getElementById('lpc').textContent=lpc.toLocaleString();
+    h=`<div class="flash f-green"><div class="big">✅ YSN201 · Config A</div><div class="mid">120 pcs · PLT${n}</div><div class="sm">Added to MV-014 · ${lp} pallets</div><div class="acts"><button>Edit count</button><button>Remove</button></div></div>`;
+    const l=document.getElementById('loadList');l.insertAdjacentHTML('afterbegin',`<div class="it"><div><b>PLT${n}</b> · YSN201 A · 120</div><div class="ac"><button>Edit</button><button>✕</button></div></div>`);}
+  if(k==='dup') h=`<div class="flash f-amber"><div class="big">🟡 Already on this load</div><div class="mid">PLT48213 · YSN201 · 120</div><div class="sm">No change.</div></div>`;
+  if(k==='other') h=`<div class="flash f-amber"><div class="big">🟡 On load MV-015 (door 2)</div><div class="mid">PLT48190 · YSN301 · 60</div><div class="acts"><button>Move it to MV-014</button><button>Leave it</button></div></div>`;
+  if(k==='void') h=`<div class="flash f-red"><div class="big">❌ Label cancelled</div><div class="mid">PLT48102 · was YSN230 · 96</div><div class="sm">Don't load it. Request a new label for this pallet.</div></div>`;
+  if(k==='ship') h=`<div class="flash f-red"><div class="big">❌ Already shipped</div><div class="mid">PLT47801 · on MV-009 (10/10)</div><div class="sm">This pallet already left. Check with the supervisor.</div></div>`;
+  if(k==='unk') h=`<div class="flash f-red"><div class="big">❌ Unknown label</div><div class="mid">"0714528803"</div><div class="sm">Not a move label. Maybe a product barcode?</div></div>`;
+  f.innerHTML=h;
+}
+// receive scans
+let rc=18;
+function recvScan(k){
+  const f=document.getElementById('recvFlash');let h='';
+  const bump=()=>{rc=Math.min(22,rc+1);document.getElementById('rc').textContent=rc+' of 22 in';document.getElementById('rbar').style.width=(rc/22*100)+'%';};
+  if(k==='ok'){bump();h=`<div class="flash f-green"><div class="big">✅ YSN301 · Config A</div><div class="mid">60 pcs · PLT47990</div><div class="sm">${rc} of 22 in</div><div class="acts"><button>Mark damaged</button><button>Undo</button></div></div>`;}
+  if(k==='dmg'){h=`<div class="flash f-amber"><div class="big">🟡 Damaged: PLT48002</div><div class="mid">YSN230 · 96 pcs</div><div class="sm">Still received (it's here), flagged for review. <br>Add photo / note (optional)</div></div>`;}
+  if(k==='other'){h=`<div class="flash f-amber"><div class="big">🟡 Belongs to MV-012</div><div class="mid">PLT48120 · YSN201 · 120</div><div class="acts"><button>Receive on MV-012</button><button>Set aside</button></div></div>`;}
+  if(k==='noscan'){h=`<div class="flash f-orange"><div class="big">🟠 Loaded without scan</div><div class="mid">PLT48355 · YSN201 · 120</div><div class="sm">Never on a shipped load, so NetSuite still counts it at Riverside.</div><div class="acts"><button>Flag for catch-up</button></div></div>`;}
+  if(k==='void'){h=`<div class="flash f-red"><div class="big">❌ Label cancelled</div><div class="mid">PLT48102</div><div class="sm">Set it aside and call the supervisor.</div></div>`;}
+  f.innerHTML=h;
+}
+// chart
+(function(){
+  const d=[112,160,174,181,190,176,205,198,214,188,203,188];
+  const days=['10/1','10/2','10/3','10/4','10/6','10/7','10/8','10/9','10/10','10/11','10/13','10/14'];
+  const g=document.getElementById('bars');const max=240,h=140,x0=50,w=70;
+  d.forEach((v,i)=>{const bh=v/max*h,x=x0+i*w,y=160-bh;
+    g.insertAdjacentHTML('beforeend',`<rect x="${x}" y="${y}" width="44" height="${bh}" rx="3" fill="${v>=194?'#0d9488':'#94a3b8'}"/><text x="${x+22}" y="${y-4}" font-size="11" text-anchor="middle" fill="#374151">${v}</text><text x="${x+22}" y="176" font-size="11" text-anchor="middle" fill="#6b7280">${days[i]}</text>`);});
+})();
+// fake barcodes/qr
+function bc(id,seed){const s=document.getElementById(id);let x=0,r=seed;while(x<250){r=(r*9301+49297)%233280;const w=1+Math.floor(r/233280*4);if(Math.floor(r)%2)s.insertAdjacentHTML('beforeend',`<rect x="${x}" y="0" width="${w}" height="80" fill="#000"/>`);x+=w;}}
+function qr(id,seed){const s=document.getElementById(id);let r=seed;for(let i=0;i<20;i++)for(let j=0;j<20;j++){r=(r*9301+49297)%233280;const corner=(i<6&&j<6)||(i<6&&j>13)||(i>13&&j<6);
+  const on=corner?((i%6===0||i%6===5||j%6===0||j%6===5||(i%6>1&&i%6<4&&j%6>1&&j%6<4))&&!(i%6===0&&false)):r/233280>.5;
+  if(on)s.insertAdjacentHTML('beforeend',`<rect x="${j*4}" y="${i*4}" width="4" height="4" fill="#000"/>`);}}
+bc('bc1',7);bc('bc2',13);bc('bc3',21);qr('qr1',3);qr('qr2',11);qr('qr3',17);
+</script>
+</body>
+</html>
