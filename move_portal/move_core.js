@@ -89,7 +89,89 @@ define([], function () {
         return out;
     }
 
-    // ── (Task 2) scan rules, aggregation, numbering ──────────────────────
+    // ── scan rules ────────────────────────────────────────────────────────
+    // pallet: { status, loadId } | null   loads: { [loadId]: { status, number } }
+    function loadScanRule(pallet, loadId, loads) {
+        if (!pallet) return { result: 'unknown' };
+        const me = String(loadId);
+        const pl = pallet.loadId ? String(pallet.loadId) : '';
+        const other = (loads && loads[pl]) || {};
+        switch (pallet.status) {
+            case PALLET.LABELED:
+                return { result: 'ok', set: { status: PALLET.LOADED, loadId: me } };
+            case PALLET.LOADED:
+                if (pl === me) return { result: 'dup' };
+                if (other.status === LOAD.LOADING) return { result: 'other_load', otherLoadId: pl, otherNumber: other.number || '' };
+                return { result: 'locked_load', otherLoadId: pl, otherNumber: other.number || '' };
+            case PALLET.VOID:
+                return { result: 'void' };
+            default:
+                return { result: 'shipped', otherLoadId: pl, otherNumber: other.number || '' };
+        }
+    }
+
+    function receiveScanRule(pallet, loadId, loads) {
+        if (!pallet) return { result: 'unknown' };
+        const me = String(loadId);
+        const pl = pallet.loadId ? String(pallet.loadId) : '';
+        const other = (loads && loads[pl]) || {};
+        const elsewhere = { otherLoadId: pl, otherNumber: other.number || '' };
+        switch (pallet.status) {
+            case PALLET.SHIPPED:
+                return pl === me ? { result: 'ok', set: { status: PALLET.RECEIVED } } : Object.assign({ result: 'other_load' }, elsewhere);
+            case PALLET.MISSING:
+                return pl === me ? { result: 'late', set: { status: PALLET.RECEIVED } } : Object.assign({ result: 'other_load' }, elsewhere);
+            case PALLET.RECEIVED:
+                return pl === me ? { result: 'dup' } : Object.assign({ result: 'dup_other' }, elsewhere);
+            case PALLET.LABELED:
+                return { result: 'arrived_unshipped', set: { status: PALLET.ARRIVED_UNSHIPPED, loadId: '' }, fromLoadNumber: '' };
+            case PALLET.LOADED:
+                if (other.status === LOAD.LOADING) {
+                    return { result: 'arrived_unshipped', set: { status: PALLET.ARRIVED_UNSHIPPED, loadId: '' }, fromLoadNumber: other.number || '' };
+                }
+                return Object.assign({ result: 'other_load_pending' }, elsewhere);
+            case PALLET.ARRIVED_UNSHIPPED:
+                return { result: 'dup_catchup' };
+            case PALLET.VOID:
+                return { result: 'void' };
+            default:
+                return { result: 'unknown' };
+        }
+    }
+
+    const TONE = { ok: 'ok', late: 'ok', dup: 'warn', other_load: 'warn', dup_other: 'warn', dup_catchup: 'warn', arrived_unshipped: 'warn' };
+    function toneFor(result) { return TONE[result] || 'bad'; }
+
+    // ── aggregation and numbering ────────────────────────────────────────
+    function aggregate(pallets) {
+        const out = {};
+        (pallets || []).forEach(p => (p.lines || []).forEach(l => {
+            const k = String(l.item);
+            out[k] = (out[k] || 0) + (Number(l.pcs) || 0);
+        }));
+        return out;
+    }
+
+    function shortages(agg, avail) {
+        return Object.keys(agg)
+            .filter(k => (Number(avail && avail[k]) || 0) < agg[k])
+            .map(k => ({ item: k, need: agg[k], avail: Number(avail && avail[k]) || 0 }));
+    }
+
+    function nextLoadNumber(numbers) {
+        let max = 0;
+        (numbers || []).forEach(n => { const m = /^MV-(\d+)$/.exec(String(n)); if (m) max = Math.max(max, Number(m[1])); });
+        return 'MV-' + String(max + 1).padStart(3, '0');
+    }
+
+    function catchupNumber(parent, numbers) {
+        const re = new RegExp('^' + String(parent).replace(/[.*+?^${}()|[\]\\-]/g, '\\$&') + '-C(\\d+)$');
+        let max = 0;
+        (numbers || []).forEach(n => { const m = re.exec(String(n)); if (m) max = Math.max(max, Number(m[1])); });
+        return parent + '-C' + (max + 1);
+    }
+
+    function txToken(loadId, kind) { return '[mv:' + loadId + ':' + kind + ']'; }
 
     // ── (Task 3) CSV config import ────────────────────────────────────────
 
@@ -97,6 +179,7 @@ define([], function () {
 
     return {
         PALLET, LOAD, palletCode, parseScan, totalPieces, summarize, headline,
-        isEdited, validateLines, pcsMap, defaultPcs
+        isEdited, validateLines, pcsMap, defaultPcs, loadScanRule, receiveScanRule, toneFor,
+        aggregate, shortages, nextLoadNumber, catchupNumber, txToken
     };
 });
