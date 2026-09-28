@@ -21,7 +21,7 @@ Move all Riverside inventory (≈891,739 pcs across 376 SKUs, per `CurrentInvent
 | # | Decision |
 |---|---|
 | D1 | **Separate app.** A new Suitelet with its own script, deployment and files. The picker portal (prod script 913, v19.8) is not touched, and nothing depends on v20. |
-| D2 | **1 truck = 1 Load = 1 Transfer Order = 1 Item Fulfillment.** The TO is built from the pallets scanned onto the truck. Nothing is committed in NetSuite until a manager approves the load, so customer orders are never starved. |
+| D2 | **SUPERSEDED 2026-09-28 by `2026-09-28-move-portal-bulk-to-design.md` (office per-SKU TOs, N IFs per truck).** Original: **1 truck = 1 Load = 1 Transfer Order = 1 Item Fulfillment.** The TO is built from the pallets scanned onto the truck. Nothing is committed in NetSuite until a manager approves the load, so customer orders are never starved. |
 | D3 | **Pick/approve model.** Floor workers only scan and request; that writes custom records only, so no new NetSuite permissions. **Managers approve every inventory-changing step:** Approve & Ship, Approve Receipt, Approve catch-up. |
 | D4 | **Outbound / Inbound toggle** in the header. The same login and phone work at both sites. Managers also get separate Outbound and Inbound screens. |
 | D5 | **Labels are printed by one office person** on a 4×6 thermal printer, and floor workers stick them on. Sources: the **Print Plan** (daily batches by SKU), **floor label requests** from phones (short, mixed, rebuilt or lost-label pallets), and **radio requests** entered by the office. |
