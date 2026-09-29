@@ -84,15 +84,13 @@ td input{width:70px;padding:6px;border:1px solid #cbd5e1;border-radius:7px}
 <!-- ───────── MANAGER HOME ───────── -->
 <section class="view on" id="v-home">
   <div class="kpis">
-    <div class="kpi"><b>0</b><span>pallets moved</span></div>
-    <div class="kpi"><b>7,412</b><span>pallets left (est.)</span></div>
-    <div class="kpi"><b>177</b><span>needed per move day</span></div>
+    <div class="kpi"><b>0</b><span>truckloads moved</span></div>
+    <div class="kpi"><b>286</b><span>truckloads left (est.)</span></div>
+    <div class="kpi"><b>7</b><span>trucks needed per move day</span></div>
     <div class="kpi"><b>42</b><span>move days left · target Sat 11/14</span></div>
   </div>
   <div class="bar"><i></i></div>
-  <div class="note">Started Wed 9/30 · 1 label printed · 0 on a truck</div>
-
-  <div class="hero" data-go="print"><div class="ic">🖨</div><div><b>Print labels</b><span>Today's plan: 177 pallets across 38 SKUs · 3 floor requests waiting</span></div><div class="go">Start printing →</div></div>
+  <div class="note">Today: 0 of 7 trucks shipped · 2 ready to ship · 1 loading · est. 26 pallets per truck (Move setting)</div>
 
   <h2>Outbound · Riverside</h2>
   <div class="grid">
@@ -112,6 +110,7 @@ td input{width:70px;padding:6px;border:1px solid #cbd5e1;border-radius:7px}
 
 <!-- ───────── PRINT (one screen, three modes) ───────── -->
 <section class="view" id="v-print">
+  <div class="hero" data-seg-here="plan" style="margin-top:0;margin-bottom:12px"><div class="ic">🖨</div><div><b>Print today's labels</b><span>7 trucks ≈ 177 pallets across 38 SKUs · 3 floor requests waiting</span></div><div class="go">Print today's plan →</div></div>
   <div class="seg" id="printSeg"><div class="on" data-s="sku">One SKU</div><div data-s="plan">Today's plan</div><div data-s="queue">Queue <span class="badge">3</span></div></div>
 
   <div class="pseg" id="s-sku">
@@ -139,7 +138,7 @@ td input{width:70px;padding:6px;border:1px solid #cbd5e1;border-radius:7px}
   </div>
 
   <div class="pseg" id="s-plan" style="display:none">
-    <div class="card"><b>Today's plan · 177 pallets</b> <span class="note">(pallets left ÷ 42 move days, minus labels already printed)</span>
+    <div class="card"><b>Today's plan · 7 trucks ≈ 177 pallets</b> <span class="note">(trucks left ÷ 42 move days × 26 pallets per truck, minus labels already printed)</span>
       <table><tr><th>SKU</th><th>Config</th><th>Pallets left</th><th>Print today</th><th></th></tr>
         <tr><td>YSN201</td><td>A · 120</td><td>1,516</td><td><input value="36"></td><td><a href="#" data-print>Print</a></td></tr>
         <tr><td>YSN301</td><td>A · 60</td><td>812</td><td><input value="19"></td><td><a href="#" data-print>Print</a></td></tr>
@@ -208,6 +207,7 @@ function seg(s) { $$('#printSeg div').forEach(x => x.classList.toggle('on', x.da
 $$('.nav div').forEach(d => d.onclick = () => show(d.dataset.v));
 $$('[data-go]').forEach(d => d.onclick = () => { show(d.dataset.go); if (d.dataset.seg) seg(d.dataset.seg); });
 $$('#printSeg div').forEach(d => d.onclick = () => seg(d.dataset.s));
+$$('[data-seg-here]').forEach(d => d.onclick = () => seg(d.dataset.segHere));
 $$('[data-print]').forEach(b => b.onclick = e => { e.preventDefault(); dlg.classList.add('on'); });
 $$('.mock button').forEach(b => b.onclick = () => {
   mode = b.dataset.mode; $$('.mock button').forEach(x => x.classList.toggle('on', x === b));
