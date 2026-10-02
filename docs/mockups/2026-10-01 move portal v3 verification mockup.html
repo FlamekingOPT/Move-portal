@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Move Portal v3 Mockup</title>
+<style>
+  :root{--navy:#1a3557;--ink:#111827;--mute:#6b7280;--line:#e5e7eb;--soft:#f8fafc;--bg:#f3f4f6;
+    --blue-bg:#E6F1FB;--blue:#0C447C;--teal-bg:#E1F5EE;--teal:#0F6E56;--amb-bg:#FAEEDA;--amb:#633806;
+    --vio-bg:#ece9f7;--vio:#3C3489;--ok:#059669;--warn:#b45309;--bad:#c2410c;--red-bg:#fef2f2}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);margin:0;color:var(--ink);font-size:14px}
+  .hdr{background:var(--navy);color:#fff;padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+  .hdr h1{font-size:17px;margin:0}.hdr .sub{font-size:12px;opacity:.8}
+  .seg{display:inline-flex;background:rgba(255,255,255,.12);border-radius:7px;padding:2px;flex-wrap:wrap}
+  .seg button{border:0;background:transparent;color:#fff;font:inherit;font-size:12px;font-weight:700;padding:6px 10px;border-radius:6px;cursor:pointer}
+  .seg button.on{background:#fff;color:var(--navy)}
+  .wrap{max-width:1000px;margin:0 auto;padding:14px 16px 60px}
+  .mock{background:#fff7ed;border:1px dashed #f59e0b;color:#7c2d12;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px}
+  .tile{background:#fff;border-radius:9px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .tile .l{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+  .tile .v{font-size:22px;font-weight:800;color:var(--navy)}
+  .card{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden}
+  .card-h{padding:11px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .card-h.click{cursor:pointer}
+  .so{font-weight:800;font-size:15px;color:var(--navy)}
+  .meta{font-size:12px;color:var(--mute)}
+  .card-b{border-top:1px solid var(--line);padding:12px 14px}
+  .pill{font-size:11px;font-weight:700;border-radius:99px;padding:2px 9px;background:#eef2f7;color:#334155;white-space:nowrap}
+  .pill.blue{background:var(--blue-bg);color:var(--blue)}.pill.teal{background:var(--teal-bg);color:var(--teal)}
+  .pill.amb{background:var(--amb-bg);color:var(--amb)}.pill.vio{background:var(--vio-bg);color:var(--vio)}
+  .pill.red{background:var(--red-bg);color:var(--bad)}
+  .grow{flex:1}
+  .sect{font-size:12px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;margin:16px 0 8px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:var(--soft);padding:7px 10px;text-align:left;font-weight:700;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line)}
+  td{padding:8px 10px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .item-desc{font-size:12px;color:var(--mute)}
+  .fill{height:8px;background:#e5e7eb;border-radius:6px;overflow:hidden;min-width:90px}
+  .fill>i{display:block;height:100%;background:var(--navy)}
+  .fill.ok>i{background:var(--ok)}.fill.over>i{background:var(--warn)}
+  .scan{display:flex;gap:6px;align-items:center;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:8px;margin:10px 0;flex-wrap:wrap}
+  .scan input{flex:1;min-width:200px;padding:9px 10px;border:1px solid #c4b5fd;border-radius:6px;font:inherit;font-size:15px}
+  .btn{border:1px solid transparent;cursor:pointer;font:inherit;font-size:12px;font-weight:700;border-radius:6px;padding:7px 12px}
+  .btn.vio{background:var(--vio-bg);color:var(--vio);border-color:#c9c1ec}
+  .btn.navy{background:var(--navy);color:#fff}.btn.ok{background:var(--ok);color:#fff}
+  .btn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+  .btn.warn{background:var(--amb-bg);color:var(--amb);border-color:#EF9F27}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .feed{max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px;font-size:12px}
+  .feed div{display:flex;gap:8px;padding:5px 9px;border-bottom:1px solid #f3f4f6}
+  .feed .t{color:var(--mute);min-width:52px}
+  .feed .dup{background:var(--red-bg);color:var(--bad)}.feed .x{background:#fffbeb;color:var(--warn)}
+  .dec{display:inline-block;font-size:10px;font-weight:800;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:4px;padding:1px 6px;vertical-align:middle;cursor:help}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+  .grid label{font-size:11px;color:var(--mute);font-weight:700;text-transform:uppercase;display:flex;flex-direction:column;gap:3px}
+  .grid input,.grid select{padding:7px 8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;font-size:14px}
+  .recon{border:1px solid var(--line);border-radius:8px;margin-top:10px}
+  .recon div{display:flex;gap:10px;padding:7px 10px;border-bottom:1px solid #f3f4f6;font-size:13px;align-items:baseline;flex-wrap:wrap}
+  .recon div:last-child{border-bottom:0}
+  .recon .k{font-weight:800;min-width:110px}
+  .k.ok{color:var(--ok)}.k.warn{color:var(--warn)}.k.bad{color:var(--bad)}.k.vio{color:var(--vio)}
+  .label{width:288px;height:432px;border:2px solid #111;border-radius:6px;background:#fff;padding:16px;display:flex;flex-direction:column;gap:8px;font-family:Arial,sans-serif}
+  .label .sku{font-size:40px;font-weight:900;letter-spacing:-.5px}
+  .label .qty{font-size:28px;font-weight:800}
+  .qr{width:150px;height:150px;align-self:center;background:
+     repeating-linear-gradient(90deg,#111 0 6px,#fff 6px 12px),repeating-linear-gradient(0deg,#111 0 6px,#fff 6px 12px);background-blend-mode:difference;border:8px solid #fff;outline:3px solid #111}
+  .pop{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+  .dlg{background:#fff;border-radius:12px;max-width:620px;width:100%;padding:16px;max-height:88vh;overflow:auto}
+  .dlg h3{margin:0 0 6px;color:var(--navy)}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;z-index:10;max-width:90vw;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+  .bol{border:1px solid #111;font-family:Arial,sans-serif;font-size:12px;padding:10px}
+  .bol h4{margin:0 0 6px;font-size:15px;text-align:center}
+  .bol table td,.bol table th{border:1px solid #999;padding:4px 6px;font-size:11px}
+  .decs li{font-size:13px;margin:6px 0}
+  [hidden]{display:none!important}
+  @media (max-width:700px){.btn{padding:10px 12px}.label{transform:scale(.85);transform-origin:top left}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div><h1>🚚 Move Portal · Riverside → Tippecanoe</h1><div class="sub">Verification only · office builds TO + IF + BOL · <span id="whoTxt">Floor</span></div></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div class="seg" id="tabSeg"><button class="on" data-v="load">Load out</button><button data-v="labels">Print labels</button><button data-v="recv">Receive</button></div>
+    <div class="seg" id="roleSeg"><button class="on" data-v="floor">Floor</button><button data-v="mgr">Manager</button></div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="mock"><b>Mockup.</b> Planned trucks are the real Packed IFs on TO11663 (YSN100, 42 pallets × 12 = 504). Everything else is sample data and nothing talks to NetSuite. Yellow <span class="dec">DECISION</span> tags are still open.</div>
+
+  <div id="v-load">
+    <div class="tiles" id="loadTiles"></div>
+    <div id="loadDetail"></div>
+    <div class="sect">Planned trucks · Packed IFs from the office</div>
+    <div id="plannedList"></div>
+    <div class="sect">Shipped today</div>
+    <div id="shippedList"></div>
+  </div>
+
+  <div id="v-labels" hidden></div>
+
+  <div id="v-recv" hidden>
+    <div class="tiles" id="recvTiles"></div>
+    <div id="recvDetail"></div>
+    <div class="sect">In transit · by truck and seal</div>
+    <div id="transitList"></div>
+  </div>
+
+  <div class="sect">Decided · open</div>
+  <div class="card"><div class="card-b"><ul class="decs" id="decs"></ul></div></div>
+</div>
+
+<div class="pop" id="pop" hidden><div class="dlg" id="dlg"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const DEC={over:"Extra SKU with no open office TO: the portal creates a 1-SKU overflow TO + IF on this truck, or it blocks the scan and the pallet comes off.",
+  fields:"Field mapping: trailer → Container Number (custbody_rsm_container_no), seal → Master BOL Number (likely custbody7), as the office does on receipts today. Confirm custbody7 before building.",
+  bol:"BOL number: today it's the TO # (not unique per truck). Option: reprint with 'Truck # of the day' or the seal, listing every IF."};
+const dec=(k,t)=>`<span class="dec" title="${DEC[k]}">DECISION${t?": "+t:""}</span>`;
+const ITEMS={YSN100:{d:"100# LP Cylinder w/POL Valve",pcs:12},YSN201:{d:"20 lb Steel Propane Cylinder",pcs:72},KT12ACR:{d:"Acme Regulator Kit (case)",pcs:40}};
+const OPEN_TOS={YSN100:["TO11663"],YSN201:["TO11701","TO11733"],KT12ACR:[]};
+let serial=10400, truckOfDay=5, ifSeq=72050, irSeq=20570;
+// planned trucks = office's Packed IFs
+const PLANNED=[
+ {id:"IF72020",to:"TO11663",sku:"YSN100",qty:504},{id:"IF72022",to:"TO11663",sku:"YSN100",qty:504},
+ {id:"IF72023",to:"TO11663",sku:"YSN100",qty:504},{id:"IF72025",to:"TO11663",sku:"YSN100",qty:504},
+ {id:"IF72026",to:"TO11663",sku:"YSN100",qty:504},{id:"IF72027",to:"TO11663",sku:"YSN100",qty:504}
+].map(p=>({...p,pallets:p.qty/ITEMS[p.sku].pcs,scans:[],status:"planned"}));
+const SHIPPED=[{truck:3,seal:"5249301",trailer:"522051",at:"9:42 AM",ifs:[{id:"IF71965",sku:"YSN100",qty:504,pallets:42}]},
+               {truck:4,seal:"5249305",trailer:"416452",at:"10:58 AM",ifs:[{id:"IF72024",sku:"YSN100",qty:432,pallets:36},{id:"IF72048",sku:"YSN201",qty:288,pallets:4,addon:true}]}];
+// inbound: truck 4 en route with scan state
+const TRANSIT=SHIPPED.slice(1).map(t=>({...t,ifs:t.ifs.map(f=>({...f,serials:mkSerials(f.pallets),got:[],ir:null})),unexpected:[]}));
+function mkSerials(n){return Array.from({length:n},()=>"PLT"+(serial++))}
+let tab="load",role="floor",active="IF72022",activeIn=4,extras=[];
+
+const $=id=>document.getElementById(id);const fmt=n=>Math.round(n).toLocaleString();
+const now=()=>new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3600)}
+const P=id=>PLANNED.find(p=>p.id===id);
+
+// ---------- LOAD OUT ----------
+function renderLoad(){
+  const planned=PLANNED.filter(p=>p.status==="planned"), loading=PLANNED.filter(p=>p.scans.length&&p.status==="planned");
+  $("loadTiles").innerHTML=`<div class="tile"><div class="l">Planned trucks</div><div class="v">${planned.length}</div></div>
+   <div class="tile"><div class="l">Loading now</div><div class="v">${loading.length}</div></div>
+   <div class="tile"><div class="l">Shipped today</div><div class="v">${SHIPPED.length}</div></div>
+   <div class="tile"><div class="l">Next truck #</div><div class="v">${truckOfDay}</div></div>`;
+  $("plannedList").innerHTML=planned.map(p=>`<div class="card"><div class="card-h click" data-open="${p.id}"><span class="so">${p.id}</span><span class="pill">${p.to}</span><span class="pill blue">${p.sku} × ${fmt(p.qty)}</span><span class="pill">${p.pallets} pallets</span>${p.scans.length?`<span class="pill vio">Loading · ${p.scans.length}/${p.pallets}</span>`:`<span class="pill">Packed · waiting</span>`}<span class="grow"></span>${p.id===active?'<span class="meta">▲ open above</span>':'<button class="btn ghost" data-open="'+p.id+'">Start loading</button>'}</div></div>`).join("")||`<div class="meta">No planned trucks. The office creates them as Packed IFs.</div>`;
+  $("shippedList").innerHTML=SHIPPED.map(t=>`<div class="card"><div class="card-h"><span class="so">Truck #${t.truck}</span><span class="pill teal">Shipped ${t.at}</span><span class="pill">Trailer ${t.trailer}</span><span class="pill">Seal ${t.seal}</span>${t.ifs.map(f=>`<span class="pill ${f.addon?"vio":"blue"}">${f.id} · ${f.sku} × ${fmt(f.qty)}${f.addon?" (add-on)":""}</span>`).join("")}<span class="grow"></span><button class="btn ghost" data-bol="${t.truck}">BOL</button></div></div>`).join("");
+  const p=P(active);
+  $("loadDetail").innerHTML=p&&p.status==="planned"?loadCard(p):"";
+}
+function loadCard(p){
+  const n=p.scans.length, pct=n/p.pallets;
+  const exBy={};extras.forEach(e=>{(exBy[e.sku]=exBy[e.sku]||[]).push(e)});
+  const rows=[`<tr><td><b>${p.sku}</b><div class="item-desc">${ITEMS[p.sku].d} · ${p.id} · ${p.to}</div></td><td class="n">${p.pallets}</td><td class="n"><b>${n}</b></td>
+     <td><div class="fill ${n===p.pallets?"ok":n>p.pallets?"over":""}"><i style="width:${Math.min(100,pct*100)}%"></i></div></td>
+     <td>${n===p.pallets?'<span class="pill teal">✓ matches</span>':n<p.pallets?`<span class="pill amb">short ${p.pallets-n}</span>`:`<span class="pill amb">over ${n-p.pallets}</span>`}</td></tr>`]
+   .concat(Object.entries(exBy).map(([sku,arr])=>{const to=OPEN_TOS[sku][0];return `<tr style="background:#faf5ff"><td><b>${sku}</b><div class="item-desc">${ITEMS[sku].d} · not on this IF</div></td><td class="n">0</td><td class="n"><b>${arr.length}</b></td><td></td>
+     <td>${to?`<span class="pill vio">add-on IF from ${to}</span>`:`<span class="pill red">no open TO</span> ${dec("over")}`}</td></tr>`}));
+  const feed=p.scans.concat(extras.map(e=>({...e,extra:true}))).concat(p.dups||[]).sort((a,b)=>b.k-a.k).slice(0,40);
+  return `<div class="card" style="border:2px solid var(--navy)">
+   <div class="card-h"><span class="so">Loading ${p.id}</span><span class="pill">${p.to}</span><span class="pill vio">Truck # assigned at seal</span><span class="grow"></span><button class="btn ghost" data-close-load>Close</button></div>
+   <div class="card-b">
+    <div class="scan">📷 <input id="scanIn" placeholder="Scan pallet label (PLT⇥SKU⇥pcs)" aria-label="Scan pallet label" autofocus>
+     <button class="btn vio" data-sc="ok">Scan ${p.sku}</button><button class="btn vio" data-sc="ok5">×5</button><button class="btn vio" data-sc="fill">Fill rest</button>
+     <button class="btn ghost" data-sc="dup">Re-scan last (dup)</button><button class="btn ghost" data-sc="x201">Extra YSN201</button><button class="btn ghost" data-sc="xkt">Extra KT12ACR</button></div>
+    <table><thead><tr><th>SKU</th><th class="n">On IF (plt)</th><th class="n">Scanned</th><th></th><th>Status</th></tr></thead><tbody>${rows.join("")}</tbody></table>
+    <div class="sect" style="margin-top:12px">Scan log</div>
+    <div class="feed">${feed.map(s=>`<div class="${s.dup?"dup":s.extra?"x":""}"><span class="t">${s.t}</span><b>${s.serial}</b> ${s.sku} × ${s.pcs}<span class="grow"></span>${s.dup?"already on this truck · ignored":s.extra?"extra · not on IF":"✓"}</div>`).join("")||'<div class="meta">No scans yet.</div>'}</div>
+    <div class="sect" style="margin-top:14px">Close the truck</div>
+    <div class="grid"><label>Trailer #<input id="trl" placeholder="e.g. 416460" value="${p.trl||""}"></label><label>Seal #<input id="seal" placeholder="e.g. 5249308" value="${p.seal||""}"></label><label>Carrier<input id="car" value="Armstrong Group"></label></div>
+    <div class="acts"><button class="btn navy" data-review>Review & seal truck</button><span class="meta">The portal assigns Truck #${truckOfDay} and writes to NetSuite only when you confirm.</span></div>
+   </div></div>`;
+}
+function scan(kind){
+  const p=P(active);const t=now(),k=Date.now()+Math.random();
+  const add=(sku)=>({serial:"PLT"+(serial++),sku,pcs:ITEMS[sku].pcs,t,k});
+  if(kind==="ok"){p.scans.push(add(p.sku))}
+  else if(kind==="ok5"){for(let i=0;i<5;i++)p.scans.push(add(p.sku))}
+  else if(kind==="fill"){while(p.scans.length<p.pallets)p.scans.push(add(p.sku))}
+  else if(kind==="dup"){const last=p.scans.slice(-1)[0];if(!last)return toast("Nothing to re-scan yet.");(p.dups=p.dups||[]).push({...last,dup:true,t,k});toast(`${last.serial} is already on this truck. Ignored.`)}
+  else if(kind==="x201"){extras.push(add("YSN201"));toast("YSN201 isn't on this IF. It'll go on an add-on IF from TO11701 when you seal.")}
+  else if(kind==="xkt"){extras.push(add("KT12ACR"));toast("KT12ACR has no open office TO. See the open decision.")}
+  render();setTimeout(()=>$("scanIn")&&$("scanIn").focus(),0);
+}
+function review(){
+  const p=P(active);p.trl=$("trl").value.trim();p.seal=$("seal").value.trim();
+  if(!p.trl||!p.seal)return toast("Enter the trailer # and seal # first.");
+  const n=p.scans.length,diff=n-p.pallets,pcs=ITEMS[p.sku].pcs;
+  const exBy={};extras.forEach(e=>{(exBy[e.sku]=exBy[e.sku]||[]).push(e)});
+  const lines=[];
+  lines.push(diff===0?`<div><span class="k ok">✓ Matches</span>${p.id} · ${p.sku} ${p.pallets} pallets / ${fmt(p.qty)} units</div>`
+   :diff<0?`<div><span class="k warn">Short ${-diff} plt</span>Lower ${p.id} from ${fmt(p.qty)} to <b>${fmt(n*pcs)}</b>. ${fmt(-diff*pcs)} units stay on ${p.to} for a later truck. <b>Needs manager OK.</b></div>`
+   :`<div><span class="k warn">Over ${diff} plt</span>Raise ${p.id} from ${fmt(p.qty)} to <b>${fmt(n*pcs)}</b> (${p.to} has the qty left).</div>`);
+  Object.entries(exBy).forEach(([sku,a])=>{const to=OPEN_TOS[sku][0];lines.push(to?`<div><span class="k vio">Add-on IF</span>New IF from <b>${to}</b> (oldest open) · ${sku} × ${fmt(a.length*ITEMS[sku].pcs)} (${a.length} plt) · same truck and seal</div>`
+    :`<div><span class="k bad">No TO</span>${sku} × ${a.length} plt has no open office TO. ${dec("over")} <span class="meta">Overflow TO + IF, or take it off the truck.</span></div>`)});
+  lines.push(`<div><span class="k">Stamp</span>Truck #${truckOfDay} · trailer ${esc(p.trl)} · seal ${esc(p.seal)} · ${now()} on every IF on the truck ${dec("fields")}</div>`);
+  lines.push(`<div><span class="k">Ship</span>Mark all IFs on this truck <b>Shipped</b>. The tracker counts them as 1 truck by seal.</div>`);
+  const needMgr=diff<0||Object.keys(exBy).some(s=>!OPEN_TOS[s][0]);
+  const blocked=Object.keys(exBy).some(s=>!OPEN_TOS[s][0]);
+  $("dlg").innerHTML=`<h3>Seal Truck #${truckOfDay}</h3><div class="meta">${p.id} · ${p.to} · ${n} pallets scanned · ${p.dups?.length||0} duplicate scans ignored</div>
+   <div class="recon">${lines.join("")}</div>
+   ${needMgr&&role!=="mgr"?`<div class="acts"><span class="pill amb">Manager OK needed</span><span class="meta">Switch to Manager (top right) to approve, or fix the load.</span></div>`:""}
+   <div class="acts"><span class="grow"></span><button class="btn ghost" data-x>Back to loading</button>
+    ${blocked?`<button class="btn warn" data-seal-go="drop" ${diff<0&&role!=="mgr"?"disabled":""}>Take off ${Object.keys(exBy).filter(s=>!OPEN_TOS[s][0]).join(", ")} & seal</button><button class="btn warn" data-seal-go="overflow" ${role!=="mgr"?"disabled":""}>Overflow TO & seal</button>`:""}
+    <button class="btn ok" data-seal-go="go" ${(needMgr&&role!=="mgr")||blocked?"disabled":""}>Confirm · seal & ship</button></div>`;
+  $("pop").hidden=false;
+}
+function sealGo(mode){
+  const p=P(active),pcs=ITEMS[p.sku].pcs,n=p.scans.length;
+  const exBy={};extras.forEach(e=>{if(mode==="drop"&&!OPEN_TOS[e.sku][0])return;(exBy[e.sku]=exBy[e.sku]||[]).push(e)});
+  const ifs=[{id:p.id,sku:p.sku,qty:n*pcs,pallets:n}];
+  Object.entries(exBy).forEach(([sku,a])=>ifs.push({id:"IF"+(ifSeq++),sku,qty:a.length*ITEMS[sku].pcs,pallets:a.length,addon:true,to:OPEN_TOS[sku][0]||"overflow TO"}));
+  const t={truck:truckOfDay++,seal:p.seal,trailer:p.trl,at:now(),ifs};
+  SHIPPED.push(t);
+  TRANSIT.push({...t,ifs:ifs.map((f,i)=>({...f,serials:i===0?p.scans.map(s=>s.serial):exBy[f.sku].map(s=>s.serial),got:[],ir:null})),unexpected:[]});
+  p.status="shipped";extras=[];$("pop").hidden=true;
+  const nxt=PLANNED.find(x=>x.status==="planned");active=nxt?nxt.id:null;
+  toast(`Truck #${t.truck} sealed: ${ifs.map(f=>f.id).join(" + ")} Shipped with seal ${t.seal}.`);render();
+}
+function showBol(n){
+  const t=SHIPPED.find(x=>x.truck===n);
+  $("dlg").innerHTML=`<h3>BOL preview · Truck #${t.truck}</h3>
+   <div class="bol"><h4>BILL OF LADING</h4>
+    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><b>Ship from</b> YSN Imports, Riverside<br><b>Ship to</b> YSN Imports, 752 N Tippecanoe Ave</div>
+    <div><b>BOL #</b> ${dec("bol")}<br>Truck #${t.truck} · ${new Date().toLocaleDateString()}<br><b>Trailer</b> ${t.trailer} · <b>Seal</b> ${t.seal}<br><b>Carrier</b> Armstrong Group</div></div>
+    <table style="margin-top:8px"><thead><tr><th>Order (IF)</th><th>SKU</th><th class="n">PLT</th><th class="n">Units</th></tr></thead><tbody>
+     ${t.ifs.map(f=>`<tr><td>${f.id}${f.addon?" (add-on)":""}</td><td>${f.sku}</td><td class="n">${f.pallets}</td><td class="n">${fmt(f.qty)}</td></tr>`).join("")}
+     <tr><td colspan="2"><b>Grand total</b></td><td class="n"><b>${t.ifs.reduce((a,f)=>a+f.pallets,0)}</b></td><td class="n"><b>${fmt(t.ifs.reduce((a,f)=>a+f.qty,0))}</b></td></tr></tbody></table>
+   </div>
+   <div class="meta" style="margin-top:6px">The office prints the original BOL. If an add-on IF is created at the dock, the portal reprints it with every IF listed.</div>
+   <div class="acts"><span class="grow"></span><button class="btn ghost" data-x>Close</button></div>`;
+  $("pop").hidden=false;
+}
+
+// ---------- LABELS ----------
+function renderLabels(){
+  const s=document.querySelector("#lSku")?.value||"YSN100";
+  $("v-labels").innerHTML=`<div class="card"><div class="card-h"><span class="so">Print pallet labels</span><span class="pill">4×6 · QR only</span><span class="grow"></span><span class="meta">No IF on the label. Unique serial, SKU and units only.</span></div>
+   <div class="card-b" style="display:flex;gap:18px;flex-wrap:wrap">
+    <div style="flex:1;min-width:240px">
+     <div class="grid"><label>SKU<select id="lSku">${Object.keys(ITEMS).map(k=>`<option ${k===s?"selected":""}>${k}</option>`).join("")}</select></label>
+      <label>Units per pallet<input id="lPcs" type="number" value="${ITEMS[s].pcs}"></label><label>Labels<input id="lN" type="number" value="42"></label></div>
+     <div class="acts"><button class="btn navy" data-print>Print 42 labels</button><span class="meta" id="lRange">Serials PLT${serial} – PLT${serial+41}</span></div>
+     <div class="meta" style="margin-top:10px">Any label can go on any truck. The scan at the dock ties the pallet to an IF. A changed pallet (units edited) gets a new label, and the old serial is voided.</div>
+    </div>
+    <div class="label"><div style="font-size:12px;font-weight:700">YSN IMPORTS · RIVERSIDE → TIPPECANOE</div><div class="sku" id="lvSku">${s}</div><div class="item-desc" style="font-size:13px;color:#333">${ITEMS[s].d}</div>
+     <div class="qty"><span id="lvPcs">${ITEMS[s].pcs}</span> units</div><div class="qr"></div><div style="text-align:center;font-weight:800;font-size:18px">PLT${serial}</div></div>
+   </div></div>`;
+  $("lSku").onchange=renderLabels;
+  $("lPcs").oninput=e=>$("lvPcs").textContent=e.target.value;
+  $("lN").oninput=e=>{$("lRange").textContent=`Serials PLT${serial} – PLT${serial+(+e.target.value||1)-1}`;document.querySelector("[data-print]").textContent=`Print ${e.target.value} labels`};
+}
+
+// ---------- RECEIVE ----------
+function renderRecv(){
+  const open=TRANSIT.filter(t=>t.ifs.some(f=>!f.ir));
+  $("recvTiles").innerHTML=`<div class="tile"><div class="l">Trucks in transit</div><div class="v">${open.length}</div></div>
+   <div class="tile"><div class="l">IFs to receive</div><div class="v">${TRANSIT.reduce((a,t)=>a+t.ifs.filter(f=>!f.ir).length,0)}</div></div>
+   <div class="tile"><div class="l">Received today</div><div class="v">${TRANSIT.reduce((a,t)=>a+t.ifs.filter(f=>f.ir).length,0)+1}</div></div>`;
+  $("transitList").innerHTML=TRANSIT.map(t=>`<div class="card"><div class="card-h click" data-in="${t.truck}"><span class="so">Truck #${t.truck}</span><span class="pill">Seal ${t.seal}</span><span class="pill">Trailer ${t.trailer}</span><span class="pill">Left ${t.at}</span>${t.ifs.map(f=>`<span class="pill ${f.ir?"teal":f.addon?"vio":"blue"}">${f.id}${f.ir?" ✓":""}</span>`).join("")}<span class="grow"></span>${t.ifs.every(f=>f.ir)?'<span class="pill teal">Received</span>':'<button class="btn ghost" data-in="'+t.truck+'">Unload</button>'}</div></div>`).join("");
+  const t=TRANSIT.find(x=>x.truck===activeIn);
+  $("recvDetail").innerHTML=t&&t.ifs.some(f=>!f.ir)?recvCard(t):"";
+}
+function recvCard(t){
+  return `<div class="card" style="border:2px solid var(--navy)"><div class="card-h"><span class="so">Unloading Truck #${t.truck}</span><span class="pill">Seal ${t.seal}</span><span class="pill">Trailer ${t.trailer}</span><span class="grow"></span><span class="meta">Check the seal on the doors matches before you break it.</span></div>
+   <div class="card-b">
+    <div class="scan">📷 <input placeholder="Scan pallet as it comes off" aria-label="Scan inbound pallet"><button class="btn vio" data-in-sc="one">Scan next</button><button class="btn vio" data-in-sc="all">Scan all but 2</button><button class="btn ghost" data-in-sc="stray">Unexpected pallet</button></div>
+    <table><thead><tr><th>IF</th><th>SKU</th><th class="n">Shipped</th><th class="n">Scanned off</th><th></th><th></th></tr></thead><tbody>
+    ${t.ifs.map(f=>{const g=f.got.length,miss=f.serials.filter(s=>!f.got.includes(s));return `<tr><td><b>${f.id}</b>${f.addon?'<div class="item-desc">add-on</div>':""}</td><td>${f.sku}</td><td class="n">${f.pallets}</td><td class="n"><b>${g}</b></td>
+      <td><div class="fill ${g===f.pallets?"ok":""}"><i style="width:${g/f.pallets*100}%"></i></div>${miss.length&&g?`<div class="item-desc">missing: ${miss.slice(0,4).join(", ")}${miss.length>4?" …":""}</div>`:""}</td>
+      <td>${f.ir?`<span class="pill teal">✓ ${f.ir}</span>`:role==="mgr"?`<button class="btn ${g===f.pallets?"ok":"warn"}" data-recv="${f.id}" ${g?"":"disabled"}>Receive ${fmt(g*ITEMS[f.sku].pcs)}${g<f.pallets?` · ${f.pallets-g} plt stay in transit`:""}</button>`:`<span class="meta">manager receives</span>`}</td></tr>`}).join("")}
+    </tbody></table>
+    ${t.unexpected.length?`<div class="recon"><div><span class="k bad">Unexpected</span>${t.unexpected.join(", ")}: never scanned onto this truck at Riverside. Hold it and flag it for the office.</div></div>`:""}
+    <div class="meta" style="margin-top:8px">Each receipt is created from its IF with Container Number = trailer and Master BOL = seal copied over, which the office types by hand today. ${dec("fields")}</div>
+   </div></div>`;
+}
+function inScan(kind){
+  const t=TRANSIT.find(x=>x.truck===activeIn);
+  const pool=t.ifs.filter(f=>!f.ir).flatMap(f=>f.serials.filter(s=>!f.got.includes(s)).map(s=>({f,s})));
+  if(kind==="one"){if(!pool.length)return toast("Every pallet is scanned.");pool[0].f.got.push(pool[0].s);toast(`${pool[0].s} → ${pool[0].f.id}`)}
+  if(kind==="all"){pool.slice(0,Math.max(0,pool.length-2)).forEach(x=>x.f.got.push(x.s))}
+  if(kind==="stray"){t.unexpected.push("PLT0"+(serial++));toast("That pallet was never loaded onto this truck. Flagged.")}
+  render();
+}
+
+// ---------- decisions ----------
+$("decs").innerHTML=`<li><b>Decided:</b> The office creates TO + IF (Packed) + BOL. The portal verifies and does not plan trucks.</li>
+ <li><b>Decided:</b> Labels carry a unique serial + SKU + units, with no IF. The scan at the dock ties a pallet to an IF.</li>
+ <li><b>Decided:</b> The seal is entered at departure. That assigns Truck # of the day, stamps trailer/seal/time on every IF on the truck, and marks them Shipped. NetSuite writes happen only at that one confirm.</li>
+ <li><b>Decided:</b> Short means lower the IF (manager OK). Over means raise it. An extra SKU means an add-on IF from its oldest open office TO, on the same seal. The tracker counts trucks by seal.</li>
+ <li><b>Decided:</b> Unload scans every pallet. A receipt per IF for what was scanned, with trailer/seal copied. Missing serials stay in transit. Unexpected pallets get flagged.</li>
+ <li>${dec("over")} ${DEC.over}</li><li>${dec("fields")} ${DEC.fields}</li><li>${dec("bol")} ${DEC.bol}</li>`;
+
+// ---------- wiring ----------
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function render(){["load","labels","recv"].forEach(v=>$("v-"+v).hidden=tab!==v);$("whoTxt").textContent=role==="mgr"?"Manager":"Floor";
+  if(tab==="load")renderLoad();else if(tab==="labels")renderLabels();else renderRecv()}
+document.addEventListener("click",e=>{
+  const c=(s)=>e.target.closest(s);let el;
+  if(el=c("[data-open]")){active=el.dataset.open;extras=[];render();window.scrollTo({top:0,behavior:"smooth"});return}
+  if(c("[data-close-load]")){active=null;render();return}
+  if(el=c("[data-sc]"))return scan(el.dataset.sc);
+  if(c("[data-review]"))return review();
+  if(el=c("[data-seal-go]"))return sealGo(el.dataset.sealGo);
+  if(el=c("[data-bol]"))return showBol(+el.dataset.bol);
+  if(c("[data-x]")||e.target.id==="pop"){$("pop").hidden=true;return}
+  if(c("[data-print]")){const n=+$("lN").value||1;toast(`${n} labels sent to the 4×6 printer: PLT${serial} – PLT${serial+n-1}`);serial+=n;renderLabels();return}
+  if(el=c("[data-in]")){activeIn=+el.dataset.in;render();return}
+  if(el=c("[data-in-sc]"))return inScan(el.dataset.inSc);
+  if(el=c("[data-recv]")){const t=TRANSIT.find(x=>x.truck===activeIn),f=t.ifs.find(x=>x.id===el.dataset.recv);f.ir="IR"+(irSeq++);
+    toast(`${f.ir} from ${f.id}: ${fmt(f.got.length*ITEMS[f.sku].pcs)} received · container ${t.trailer} · seal ${t.seal}${f.got.length<f.pallets?` · ${f.pallets-f.got.length} plt still in transit`:""}`);render();return}
+});
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="scanIn"){e.preventDefault();scan("ok")}if(e.key==="Escape")$("pop").hidden=true});
+document.querySelectorAll("#tabSeg button").forEach(b=>b.onclick=()=>{tab=b.dataset.v;document.querySelectorAll("#tabSeg button").forEach(x=>x.classList.toggle("on",x===b));render()});
+document.querySelectorAll("#roleSeg button").forEach(b=>b.onclick=()=>{role=b.dataset.v;document.querySelectorAll("#roleSeg button").forEach(x=>x.classList.toggle("on",x===b));if(!$("pop").hidden&&$("seal"))review();render()});
+render();
+</script>
+</body>
+</html>

@@ -17,7 +17,37 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
 - **SDD ledger, with every ruling:** `docs/sdd-ledger/progress.md`, plus the task briefs and reports. The review diffs were left out (the history covers them).
 
-## 🧭 SANDBOX DEPLOY DONE (2026-09-28, Task 13 steps 1–4)
+## 🧭 READ FIRST — HANDOFF (2026-10-01): REDESIGN, PORTAL = VERIFICATION ONLY · ⏭ NEXT = WRITE SPEC, THEN PLAN, THEN LOCAL BETA
+This **supersedes** both the original design and the bulk-TO amendment (2026-09-28). Brainstorm decisions below are Jack's, confirmed 2026-10-01. No code has changed yet.
+
+**Process (what really happens today, from real prod data + BOL photos):**
+- Office creates the TO (1 per SKU), the **IF ahead of time (status Packed)**, and a VICS BOL. Today's BOL # = the TO # (not unique), "Additional shipper info" = the IF #. 1 BOL = 1 IF.
+- The floor hand-writes "Truck #N" + date, trailer #, seal #, departure time and carrier (Armstrong Group) on the BOL.
+- The office types trailer → **Container Number** (`custbody_rsm_container_no`) and `SEAL: <n>` → **Master BOL Number** (probably `custbody7`, ⚠ confirm) on the **Item Receipt** at Tippecanoe.
+- Real data: the only Riverside move IFs so far are 17 on **TO11663 / YSN100**, created by Cesar Uicab. **42 pallets × 12 = 504 per truck.** No truck id on any IF. 30 more IFs to Tippecanoe are import containers from In-Transit California (Sherylle); the tracker already excludes them (it filters ship-from = Riverside).
+- The tracker artifact (https://claude.ai/artifact/WP1LLc7kJ6Jb8kJXvzYTkG) now links each receipt to its IF via `PreviousTransactionLink` linktype `TOrdCost` (FIFO only as a `*` fallback). 1 receipt = 1 IF.
+
+**New design (decided):**
+1. **Office keeps building the TO + IF (Packed) + BOL.** Each Packed IF on a move TO = a planned truck in the portal. The portal does NOT build TOs/IFs for planned trucks.
+2. **Labels:** unique serial + SKU + units (`PLT<serial>⇥SKU⇥pcs`), **no IF on the label**. The scan at the dock ties a pallet to an IF. Duplicate scans are caught.
+3. **Loading:** scans verify against the IF lines (expected vs scanned pallets).
+4. **Seal entered at departure (Riverside)** assigns **Truck # of the day**, stamps trailer + seal + time on every IF on the truck (same 2 fields the office uses), and marks them Shipped. All NetSuite writes happen at that one confirm, never per scan.
+5. **Corrections (option C):** short → lower the IF qty (manager OK). Over, same SKU → raise the IF if the TO has qty left. Extra SKU → **add-on IF** from its oldest open office TO, on the same truck/seal. The BOL gets reprinted listing all IFs.
+6. **Unload at Tippecanoe:** scan every pallet; receipt per IF for the scanned qty, with trailer/seal copied; missing serials stay in transit; pallets that were never loaded get flagged.
+7. **Tracker counts trucks by distinct seal** (fallback 1 IF = 1 truck). Needs a small tracker update later.
+8. **Beta = option 4:** the real Suitelet with `WRITE_MODE='off'`. No writes to IFs/TOs/receipts; it writes only its own custom records (labels, scans, trucks) plus a saved **"would write" plan**. The floor uses a no-login URL (like the picker portal). It runs on **prod data**; the sandbox is skipped.
+9. **Build it locally first:** the local preview server + a **prod snapshot JSON** (pulled read-only via the SuiteQL connector) + a local scans store, then a shadow-compare report (plan vs what the office actually did in NetSuite). Same code as the Suitelet; only the data layer swaps. Optional: floor scanners hit `http://<pc>:8765` over wifi.
+
+**Still open:** an extra SKU with no open office TO (overflow TO vs block the scan); confirm `custbody7` = Master BOL Number; BOL # on a reprint.
+
+**Mockups:**
+- `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (current; also live at https://claude.ai/artifact/5W7K931oFEMdzTKoq62fNV)
+- `docs/mockups/2026-10-01 move portal v2 mockup.html` (superseded: build-the-IF model)
+- ⚠ The Claude app's file viewer doesn't run page scripts. Open mockups in Chrome or serve them (`python -m http.server` in docs/mockups).
+
+**⏭ NEXT:** write the spec `docs/superpowers/specs/2026-10-01-move-portal-verification-design.md` (superpowers:brainstorming, final steps), get Jack's review, then superpowers:writing-plans, then build the local beta. Kept from the old code: label template, QR payload, test harness, preview server. Replaced: load/claim/bulk-TO/IF-building logic.
+
+## (superseded) 🧭 SANDBOX DEPLOY DONE (2026-09-28, Task 13 steps 1–4)
 - **Move Settings row 1:** `labelCode` = `qr`, `start` = **2026-09-30** (first move day, per Jack).
 - **File Cabinet** `SuiteScripts/MovePortal` = folder **331983**: move_core **2055084**, move_data **2055085**, move_label_template **2055086**, move_tx **2055087**, move_ui **2055088**, sl_move_portal **2055089**.
 - **Script** `customscript_move_portal` = id **893** (Suitelet, API 2.1). **Deployment** `customdeploy_move_portal` = id **2771**: Testing (owner-only), Execute As Current Role, audience Administrator, log Debug.

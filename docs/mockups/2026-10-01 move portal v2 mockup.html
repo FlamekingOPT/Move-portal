@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Move Portal v2 Mockup</title>
+<style>
+  /* Picker-portal look (navy header, white cards, band rows), reused for the move-only portal */
+  :root{--navy:#1a3557;--ink:#111827;--mute:#6b7280;--line:#e5e7eb;--soft:#f8fafc;--bg:#f3f4f6;
+    --blue-bg:#E6F1FB;--blue:#0C447C;--teal-bg:#E1F5EE;--teal:#0F6E56;--amb-bg:#FAEEDA;--amb:#633806;
+    --vio-bg:#ece9f7;--vio:#3C3489;--ok:#059669;--warn:#b45309;--bad:#c2410c;--card:#fff}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);margin:0;color:var(--ink);font-size:14px}
+  .hdr{background:var(--navy);color:#fff;padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+  .hdr h1{font-size:17px;margin:0}
+  .hdr .sub{font-size:12px;opacity:.8}
+  .seg{display:inline-flex;background:rgba(255,255,255,.12);border-radius:7px;padding:2px}
+  .seg button{border:0;background:transparent;color:#fff;font:inherit;font-size:12px;font-weight:700;padding:6px 10px;border-radius:6px;cursor:pointer}
+  .seg button.on{background:#fff;color:var(--navy)}
+  .wrap{max-width:1000px;margin:0 auto;padding:14px 16px 60px}
+  .mock{background:#fff7ed;border:1px dashed #f59e0b;color:#7c2d12;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px}
+  .tile{background:#fff;border-radius:9px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .tile .l{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+  .tile .v{font-size:22px;font-weight:800;color:var(--navy)}
+  .card{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden}
+  .card-h{padding:12px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;cursor:pointer}
+  .card-h .so{font-weight:800;font-size:15px;color:var(--navy)}
+  .card-h .meta{font-size:12px;color:var(--mute)}
+  .pill{font-size:11px;font-weight:700;border-radius:99px;padding:2px 9px;background:#eef2f7;color:#334155}
+  .pill.blue{background:var(--blue-bg);color:var(--blue)}.pill.teal{background:var(--teal-bg);color:var(--teal)}
+  .pill.amb{background:var(--amb-bg);color:var(--amb)}.pill.vio{background:var(--vio-bg);color:var(--vio)}
+  .pill.gray{background:#f1f5f9;color:#64748b}
+  .grow{flex:1}
+  .card-b{border-top:1px solid var(--line);padding:12px 14px;display:none}
+  .card.open .card-b{display:block}
+  .trucks{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .tchip{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12px;background:var(--soft);cursor:pointer;font:inherit;font-size:12px;color:inherit;text-align:left}
+  .tchip b{display:block;font-size:12px}
+  .tchip.cur{border-color:var(--navy);box-shadow:0 0 0 1px var(--navy);background:#fff}
+  .tchip.ship{opacity:.75}
+  .fill{height:10px;background:#e5e7eb;border-radius:6px;overflow:hidden;margin:6px 0 2px}
+  .fill > i{display:block;height:100%;background:var(--navy);transition:width .25s}
+  .fill.full > i{background:var(--ok)}
+  .fillrow{display:flex;justify-content:space-between;font-size:12px;color:var(--mute)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:var(--soft);padding:7px 10px;text-align:left;font-weight:700;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line)}
+  td{padding:9px 10px;border-bottom:1px solid #f3f4f6;vertical-align:top}
+  .item-name{font-weight:600}.item-desc{font-size:12px;color:var(--mute)}
+  .qty-badge{display:inline-block;background:#eff6ff;color:#1d4ed8;font-weight:700;padding:2px 8px;border-radius:5px}
+  .bands{display:flex;flex-direction:column;gap:5px}
+  .band{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 9px;background:var(--soft);border:1px solid #eef2f7;border-radius:7px;font-size:12px}
+  .band-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 7px}
+  .band-tag.scan{background:var(--vio-bg);color:var(--vio)}.band-tag.full{background:var(--blue-bg);color:var(--blue)}.band-tag.partial{background:var(--teal-bg);color:var(--teal)}
+  .cfg-input{width:54px;padding:4px 5px;border:1px solid #d1d5db;border-radius:5px;font-size:12px;text-align:right;font-family:inherit}
+  .band-rm{border:0;background:transparent;color:var(--bad);cursor:pointer;font-size:16px;font-weight:700;margin-left:auto}
+  .btn{border:1px solid transparent;cursor:pointer;font:inherit;font-size:12px;font-weight:700;border-radius:6px;padding:6px 11px}
+  .btn.full{background:var(--blue-bg);color:var(--blue);border-color:#bcd8f3}
+  .btn.part{background:var(--teal-bg);color:var(--teal);border-color:#b6e6d6}
+  .btn.vio{background:var(--vio-bg);color:var(--vio);border-color:#c9c1ec}
+  .btn.navy{background:var(--navy);color:#fff}
+  .btn.ok{background:var(--ok);color:#fff}
+  .btn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .scan{display:flex;gap:6px;align-items:center;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:8px;margin-bottom:10px;flex-wrap:wrap}
+  .scan input{flex:1;min-width:180px;padding:8px 10px;border:1px solid #c4b5fd;border-radius:6px;font:inherit;font-size:14px}
+  .note{font-size:12px;color:var(--mute);margin-top:6px}
+  .dec{display:inline-block;font-size:10px;font-weight:800;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:4px;padding:1px 6px;vertical-align:middle;cursor:help}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px}
+  .grid2 label{font-size:11px;color:var(--mute);font-weight:700;text-transform:uppercase;display:flex;flex-direction:column;gap:3px}
+  .grid2 input{padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font:inherit}
+  .ifrow{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px;flex-wrap:wrap}
+  .ok-t{color:var(--ok);font-weight:700}.warn-t{color:var(--warn);font-weight:700}.bad-t{color:var(--bad);font-weight:700}
+  .pop{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+  .dlg{background:#fff;border-radius:12px;max-width:560px;width:100%;padding:16px;max-height:85vh;overflow:auto}
+  .dlg h3{margin:0 0 6px;color:var(--navy)}
+  .plt{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:13px}
+  .plt select{margin-left:auto;padding:4px;border-radius:5px;border:1px solid #d1d5db;font:inherit;font-size:12px}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;z-index:10;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+  .decs{background:#fff;border-radius:10px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .decs h2{font-size:14px;margin:0 0 6px;color:var(--navy)}
+  .decs li{font-size:13px;margin:5px 0}
+  .sect{font-size:12px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;margin:16px 0 8px}
+  [hidden]{display:none!important}
+  @media (max-width:700px){
+    thead{display:none} table,tbody,tr,td{display:block;width:100%}
+    tr{border-bottom:2px solid var(--line);margin-bottom:10px}
+    td[data-label]::before{content:attr(data-label);display:block;font-weight:700;font-size:10px;text-transform:uppercase;color:var(--mute);margin-bottom:3px}
+    .btn{padding:9px 12px}
+  }
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div><h1>🚚 Move Portal · Riverside → Tippecanoe</h1><div class="sub">Built on the Picker Portal v20.1 TO path · move TOs only · <span id="whoTxt">Floor view</span></div></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div class="seg" id="dirSeg"><button class="on" data-v="out">Outbound · Riverside</button><button data-v="in">Inbound · Tippecanoe</button></div>
+    <div class="seg" id="roleSeg"><button class="on" data-v="floor">Floor</button><button data-v="mgr">Manager</button></div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="mock"><b>Mockup.</b> Sample data (TO11663 / YSN100 matches the real prod pattern: 504 per truck = 21 pallets × 24). Nothing here talks to NetSuite. Yellow <span class="dec">DECISION</span> tags mark open decisions. Hover them for details.</div>
+
+  <!-- OUTBOUND -->
+  <div id="v-out">
+    <div class="tiles" id="outTiles"></div>
+    <div id="approveSect" hidden>
+      <div class="sect">⏳ Trucks waiting for approval</div>
+      <div id="approveList"></div>
+    </div>
+    <div class="sect">Move transfer orders · one card per office TO</div>
+    <div id="toCards"></div>
+  </div>
+
+  <!-- INBOUND -->
+  <div id="v-in" hidden>
+    <div class="tiles" id="inTiles"></div>
+    <div class="sect">Trucks in transit · receive each IF</div>
+    <div id="inList"></div>
+  </div>
+
+  <div class="sect">Open decisions</div>
+  <div class="decs"><ul id="decList"></ul></div>
+</div>
+
+<div class="pop" id="pop" hidden><div class="dlg" id="dlg"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const DEC={
+  key:"Truck identifier. Trailer # is reused on the shuttle, so it can't identify a trip. Options: portal-generated Load # (e.g. MV-1001-03), seal #, BOL #, or trailer + date + sequence. Pending: do shuttles get seals or a BOL?",
+  tl:"Where units per truckload lives in NetSuite (the tracker's TL table is in the artifact DB, which the Suitelet can't read). Options: item field with NetSuite as master (recommended), or a periodic copy from the tracker.",
+  ifs:"When the IF is created. Shown here: at Approve as Packed (the tracker shows 'Loading'), then flipped to Shipped at Mark Departed. Alternatives: create it as Shipped at Approve, or create it at Picked when loading starts.",
+  over:"No office TO for a scanned SKU, or more scanned than the TO has left: create an overflow TO at approval (per the bulk-TO spec), or block the scan."
+};
+const dec=(k,t)=>`<span class="dec" title="${DEC[k]}">DECISION${t?": "+t:""}</span>`;
+
+// ---------- sample data ----------
+const ITEMS={YSN100:{desc:"100 lb Steel Propane Cylinder",pcs:24,tl:504},YSN201:{desc:"20 lb Steel Propane Cylinder",pcs:72,tl:1584},YSN301:{desc:"30 lb Steel Propane Cylinder",pcs:48,tl:1056}};
+let seq=20, loadSeq=3, ifSeq=72040, irSeq=20560, pltSeq=99120;
+const TOS=[
+  {id:"TO11663",sku:"YSN100",ordered:10080,shippedIFs:17,shipped:8352},
+  {id:"TO11701",sku:"YSN201",ordered:9504,shippedIFs:2,shipped:3168},
+  {id:"TO11702",sku:"YSN301",ordered:2112,shippedIFs:0,shipped:0}
+];
+// trucks: each has lines [{to, sku, pallets:[{id,pcs,src}]}]
+const TRUCKS=[
+  {n:18,load:"MV-1001-01",status:"approve",lines:[{to:"TO11663",sku:"YSN100",pallets:mk(21,24,"scan")}],trailer:"RVS-07",seal:""},
+  {n:19,load:"MV-1001-02",status:"build",lines:[{to:"TO11663",sku:"YSN100",pallets:mk(18,24,"scan")}],trailer:"RVS-03",seal:""},
+  {n:20,load:"MV-1001-03",status:"build",lines:[{to:"TO11701",sku:"YSN201",pallets:mk(10,72,"manual")}],trailer:"",seal:""}
+];
+const INBOUND=[
+  {n:16,load:"MV-0930-14",trailer:"RVS-07",seal:"",ifs:[{id:"IF72028",to:"TO11663",sku:"YSN100",qty:504,pallets:21,scanned:21,ir:"IR20548"}]},
+  {n:17,load:"MV-0930-15",trailer:"RVS-03",seal:"",ifs:[{id:"IF72030",to:"TO11663",sku:"YSN100",qty:312,pallets:13,scanned:9,ir:null},{id:"IF72031",to:"TO11701",sku:"YSN201",qty:576,pallets:8,scanned:0,ir:null}]}
+];
+function mk(n,pcs,src){return Array.from({length:n},()=>({id:"PLT"+(pltSeq++),pcs,src}))}
+
+let role="floor",dir="out",openTO="TO11663",curTruck={TO11663:19,TO11701:20,TO11702:null};
+
+// ---------- helpers ----------
+const $=id=>document.getElementById(id);
+const fmt=n=>Math.round(n).toLocaleString();
+function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3200)}
+const lineQty=l=>l.pallets.reduce((a,p)=>a+p.pcs,0);
+const fillOf=t=>t.lines.reduce((a,l)=>a+lineQty(l)/ITEMS[l.sku].tl,0);
+const truckQty=t=>t.lines.reduce((a,l)=>a+lineQty(l),0);
+function onTrucks(toId,st){return TRUCKS.filter(t=>!st||st.includes(t.status)).reduce((a,t)=>a+t.lines.filter(l=>l.to===toId).reduce((b,l)=>b+lineQty(l),0),0)}
+function toLeft(to){return to.ordered-to.shipped-onTrucks(to.id)}
+function truckBy(n){return TRUCKS.find(t=>t.n===n)}
+function stPill(t){return {build:'<span class="pill blue">Building</span>',approve:'<span class="pill amb">Waiting for manager</span>',packed:'<span class="pill vio">IF Packed · Loading</span>',shipped:'<span class="pill teal">Shipped</span>'}[t.status]}
+
+// ---------- outbound ----------
+function renderOut(){
+  const building=TRUCKS.filter(t=>t.status==="build").length, wait=TRUCKS.filter(t=>t.status==="approve").length,
+    packed=TRUCKS.filter(t=>t.status==="packed").length, shipped=TOS.reduce((a,t)=>a+t.shippedIFs,0)+TRUCKS.filter(t=>t.status==="shipped").length;
+  $("outTiles").innerHTML=`<div class="tile"><div class="l">Building</div><div class="v">${building}</div></div>
+   <div class="tile"><div class="l">Waiting approval</div><div class="v">${wait}</div></div>
+   <div class="tile"><div class="l">IF packed · loading</div><div class="v">${packed}</div></div>
+   <div class="tile"><div class="l">Trucks shipped</div><div class="v">${shipped}</div></div>`;
+  // manager approval queue
+  const q=TRUCKS.filter(t=>t.status==="approve"||t.status==="packed");
+  $("approveSect").hidden=role!=="mgr"||!q.length;
+  $("approveList").innerHTML=q.map(approveCard).join("");
+  $("toCards").innerHTML=TOS.map(toCard).join("");
+  wire();
+}
+function approveCard(t){
+  const f=fillOf(t);
+  return `<div class="card open"><div class="card-h"><span class="so">Truck ${t.n}</span><span class="pill gray">${t.load} ${dec("key")}</span>${stPill(t)}<span class="grow"></span><span class="meta">${fmt(truckQty(t))} units · ${Math.round(f*100)}% of a truckload</span></div>
+  <div class="card-b">
+    ${t.lines.map(l=>`<div class="ifrow"><span><b>${l.to}</b> · ${l.sku} × ${fmt(lineQty(l))} (${l.pallets.length} pallets)</span><span>${t.status==="packed"?`<b>${l.ifId}</b> · Packed`:"→ 1 IF on approve"}</span></div>`).join("")}
+    <div class="grid2"><label>Trailer #<input value="${t.trailer}" data-trl="${t.n}" placeholder="e.g. RVS-07"></label><label>Seal # ${dec("key")}<input value="${t.seal}" data-seal="${t.n}" placeholder="optional"></label><label>Load # (auto)<input value="${t.load}" disabled></label></div>
+    <div class="acts">
+      ${t.status==="approve"?`<button class="btn ghost" data-move="${t.n}">✏️ Edit · move pallets</button><button class="btn ok" data-approve="${t.n}">✅ Approve & create ${t.lines.length} IF${t.lines.length>1?"s":""}</button> ${dec("ifs")}`
+      :`<button class="btn navy" data-depart="${t.n}">🚚 Mark departed → Shipped</button>`}
+    </div>
+  </div></div>`;
+}
+function toCard(to){
+  const it=ITEMS[to.sku], left=toLeft(to), open=openTO===to.id;
+  const mine=TRUCKS.filter(t=>t.lines.some(l=>l.to===to.id));
+  const cur=truckBy(curTruck[to.id]);
+  const shippedChip=to.shippedIFs?`<div class="tchip ship"><b>Trucks 1–${to.shippedIFs}</b>✓ Shipped · ${fmt(to.shipped)}</div>`:"";
+  const chips=mine.map(t=>`<button class="tchip ${cur&&cur.n===t.n?"cur":""}" data-pick="${to.id}|${t.n}"><b>Truck ${t.n}${t.lines.length>1?" · mixed":""}</b>${{build:"Building",approve:"⏳ Approval",packed:"Packed",shipped:"✓ Shipped"}[t.status]} · ${Math.round(fillOf(t)*100)}%</button>`).join("");
+  const body=cur?truckBody(to,cur):`<div class="note">No truck being built for this TO.</div>`;
+  return `<div class="card ${open?"open":""}" data-card="${to.id}">
+   <div class="card-h" data-toggle="${to.id}"><span class="so">${to.id}</span><span class="pill">⇄ Transfer → Tippecanoe</span><span class="pill blue">${to.sku}</span><span class="grow"></span>
+    <span class="meta">${fmt(to.shipped)} shipped of ${fmt(to.ordered)} · ${fmt(left)} left to load (${(left/it.tl).toFixed(1)} TL)</span></div>
+   <div class="card-b">
+    <div class="trucks">${shippedChip}${chips}<button class="tchip" data-newtruck="${to.id}"><b>＋ New truck</b>start manually</button></div>
+    ${body}
+   </div></div>`;
+}
+function truckBody(to,t){
+  const f=fillOf(t), full=f>=0.999, edit=t.status==="build";
+  const rows=t.lines.map((l,li)=>{
+    const it=ITEMS[l.sku],q=lineQty(l),scanN=l.pallets.filter(p=>p.src==="scan").length,man=l.pallets.filter(p=>p.src!=="scan");
+    return `<tr><td><div class="item-name">${l.sku}</div><div class="item-desc">${it.desc}</div><div class="item-desc">${l.to} · ${it.pcs}/pallet · ${fmt(it.tl)}/TL ${dec("tl")}</div></td>
+     <td data-label="This truck"><span class="qty-badge">${fmt(q)}</span><div class="item-desc">${l.pallets.length} pallets · ${Math.round(q/it.tl*100)}% TL</div></td>
+     <td data-label="Pallets">
+      <div class="bands">
+       ${scanN?`<div class="band"><span class="band-tag scan">Scanned</span>${scanN} × ${it.pcs} = <b>${fmt(scanN*it.pcs)}</b><span class="item-desc">last ${l.pallets.filter(p=>p.src==="scan").slice(-1)[0].id}</span></div>`:""}
+       ${man.length?`<div class="band"><span class="band-tag full">Manual</span>${edit?`<input class="cfg-input" type="number" min="0" value="${man.length}" data-man="${t.n}|${li}">`:man.length} × ${it.pcs} = <b>${fmt(man.length*it.pcs)}</b>${edit?`<button class="band-rm" data-rmman="${t.n}|${li}" title="Remove manual pallets">✕</button>`:""}</div>`:""}
+      </div>
+      ${edit?`<div class="acts"><button class="btn full" data-addman="${t.n}|${li}">+ Full pallets (manual)</button><button class="btn part" data-addpart="${t.n}|${li}">+ Partial pallet</button></div>`:""}
+     </td></tr>`}).join("");
+  return `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:4px"><b style="color:var(--navy)">Truck ${t.n}</b><span class="pill gray">${t.load}</span>${stPill(t)}${t.lines.length>1?'<span class="pill vio">Mixed · '+t.lines.length+' TOs → '+t.lines.length+' IFs</span>':""}</div>
+   <div class="fill ${full?"full":""}"><i style="width:${Math.min(100,f*100)}%"></i></div>
+   <div class="fillrow"><span>${Math.round(f*100)}% of a truckload · ${fmt(truckQty(t))} units</span><span>${full?"✓ Full: sent to manager":"Fills to 100% → auto-starts the next truck"}</span></div>
+   ${edit?`<div class="scan" style="margin-top:10px">📷 <input id="scanIn" placeholder="Scan pallet label (PLT…⇥SKU⇥pcs)" aria-label="Scan pallet label"><button class="btn vio" data-scan="${to.id}|${t.n}">Simulate scan</button><button class="btn vio" data-scan5="${to.id}|${t.n}">×5</button></div>`:'<div class="note">Locked: waiting on the manager. Manager can Edit to move pallets.</div>'}
+   <table><thead><tr><th>Item</th><th>This truck</th><th>Pallets (scan or manual)</th></tr></thead><tbody>${rows}</tbody></table>
+   ${edit?`<div class="acts">
+     <button class="btn vio" data-mix="${t.n}">＋ Add another SKU to this truck</button>
+     <button class="btn ghost" data-move="${t.n}">↔ Move pallets</button>
+     <span class="grow"></span>
+     <button class="btn navy" data-picked="${t.n}">✓ Truck loaded: send to manager</button>
+   </div><div class="note">Scans and manual pallets count the same. "Truck loaded" is for a short truck; a full one goes to the manager on its own.</div>`:""}`;
+}
+
+function startNext(toId,fromTruck){
+  const n=++seq;const t={n,load:"MV-1001-"+String(++loadSeq).padStart(2,"0"),status:"build",lines:[{to:toId,sku:TOS.find(x=>x.id===toId).sku,pallets:[]}],trailer:"",seal:""};
+  TRUCKS.push(t);curTruck[toId]=n;return t;
+}
+function addPallets(toId,n,count,src){
+  let t=truckBy(n);
+  for(let i=0;i<count;i++){
+    const to=TOS.find(x=>x.id===toId);
+    if(toLeft(to)<=0){toast(`${toId} is fully loaded. Extra scans would go on an overflow TO.`);break}
+    let l=t.lines.find(x=>x.to===toId);if(!l){l={to:toId,sku:to.sku,pallets:[]};t.lines.push(l)}
+    l.pallets.push({id:"PLT"+(pltSeq++),pcs:ITEMS[to.sku].pcs,src});
+    if(fillOf(t)>=0.999){t.status="approve";const nx=startNext(toId,t);toast(`Truck ${t.n} full: sent to manager. Truck ${nx.n} started.`);t=nx}
+  }
+  render();
+}
+
+// ---------- dialogs ----------
+function openMix(n){
+  const t=truckBy(n),opts=TOS.filter(x=>!t.lines.some(l=>l.to===x.id));
+  showDlg(`<h3>Add another SKU to Truck ${n}</h3><div class="note">Top off the truck from another office TO. Each TO becomes its own IF; both IFs share Load # ${t.load}. ${dec("over")}</div>
+   ${opts.map(o=>`<div class="ifrow"><span><b>${o.id}</b> · ${o.sku} · ${fmt(toLeft(o))} left · ${ITEMS[o.sku].pcs}/pallet</span><button class="btn vio" data-mixgo="${n}|${o.id}">Add 4 pallets</button></div>`).join("")}
+   <div class="acts"><span class="grow"></span><button class="btn ghost" data-close>Close</button></div>`);
+}
+function openMove(n){
+  const t=truckBy(n),targets=TRUCKS.filter(x=>x.n!==n&&x.status==="build");
+  const ps=t.lines.flatMap((l,li)=>l.pallets.map((p,pi)=>({l,li,p,pi})));
+  showDlg(`<h3>Move pallets · Truck ${n}</h3><div class="note">Pick a destination for each pallet you want to move. Matches option B: split a truck or rebalance.</div>
+   <div style="max-height:320px;overflow:auto">${ps.slice(-12).map(x=>`<div class="plt"><b>${x.p.id}</b> ${x.l.sku} × ${x.p.pcs} <span class="item-desc">${x.p.src}</span>
+     <select data-mv="${n}|${x.li}|${x.p.id}"><option value="">stay</option>${targets.map(g=>`<option value="${g.n}">→ Truck ${g.n}</option>`).join("")}<option value="new">→ New truck</option></select></div>`).join("")}</div>
+   ${ps.length>12?`<div class="note">Showing the last 12 of ${ps.length} pallets.</div>`:""}
+   <div class="acts"><span class="grow"></span><button class="btn ghost" data-close>Cancel</button><button class="btn navy" data-mvgo="${n}">Move selected</button></div>`);
+}
+function showDlg(h){$("dlg").innerHTML=h;$("pop").hidden=false}
+function closeDlg(){$("pop").hidden=true}
+
+// ---------- inbound ----------
+function renderIn(){
+  const nIF=INBOUND.reduce((a,t)=>a+t.ifs.length,0), open=INBOUND.reduce((a,t)=>a+t.ifs.filter(f=>!f.ir).length,0);
+  $("inTiles").innerHTML=`<div class="tile"><div class="l">Trucks in transit</div><div class="v">${INBOUND.length}</div></div>
+   <div class="tile"><div class="l">IFs to receive</div><div class="v">${open}</div></div>
+   <div class="tile"><div class="l">IFs received today</div><div class="v">${nIF-open}</div></div>`;
+  $("inList").innerHTML=INBOUND.map(t=>`<div class="card open"><div class="card-h"><span class="so">Truck ${t.n}</span><span class="pill gray">${t.load} ${dec("key")}</span><span class="pill">Trailer ${t.trailer}</span>${t.ifs.length>1?`<span class="pill vio">${t.ifs.length} IFs on this truck</span>`:""}<span class="grow"></span><span class="meta">${t.ifs.filter(f=>f.ir).length} of ${t.ifs.length} received</span></div>
+   <div class="card-b">
+    ${t.ifs.some(f=>!f.ir)?`<div class="scan">📷 <input placeholder="Scan pallet as it comes off the trailer" aria-label="Scan inbound pallet"><button class="btn vio" data-inscan="${t.n}">Simulate scan</button></div>`:""}
+    ${t.ifs.map(f=>{const done=!!f.ir,pct=f.scanned/f.pallets;return `<div class="ifrow"><span><b>${f.id}</b> · ${f.to} · ${f.sku} × ${fmt(f.qty)}<div class="fill ${pct>=1?"full":""}" style="width:220px"><i style="width:${pct*100}%"></i></div><span class="item-desc">${f.scanned} of ${f.pallets} pallets scanned</span></span>
+      <span>${done?`<span class="ok-t">✓ ${f.ir}</span>`:role==="mgr"?`<button class="btn ok" data-recv="${t.n}|${f.id}">Receive ${f.id}${f.scanned<f.pallets?` (short ${f.pallets-f.scanned})`:""}</button>`:`<span class="warn-t">${f.scanned<f.pallets?"Scanning…":"Ready for manager"}</span>`}</span></div>`}).join("")}
+    <div class="note">One receipt per IF, linked to that IF, the way the tracker reads it. Unscanned pallets stay in transit on that IF.</div>
+   </div></div>`).join("");
+  wire();
+}
+
+// ---------- decisions ----------
+$("decList").innerHTML=`<li>${dec("key")} ${DEC.key}</li><li>${dec("tl")} ${DEC.tl}</li><li>${dec("ifs")} ${DEC.ifs}</li><li>${dec("over")} ${DEC.over}</li>
+ <li><b>Decided:</b> new portal = picker portal v20.1 TO path, move TOs only. The real picker portal is untouched. 1 truck = 1 round = 1 IF per TO. No short-pick warning on move rounds. Mixed trucks = several IFs sharing one Load #. The tracker counts trucks by Load #.</li>`;
+
+// ---------- wiring ----------
+function render(){$("v-out").hidden=dir!=="out";$("v-in").hidden=dir!=="in";$("whoTxt").textContent=role==="mgr"?"Manager view":"Floor view";dir==="out"?renderOut():renderIn()}
+function wire(){
+  const on=(sel,fn)=>document.querySelectorAll(sel).forEach(el=>el.onclick=e=>{e.stopPropagation();fn(el)});
+  on("[data-toggle]",el=>{openTO=openTO===el.dataset.toggle?null:el.dataset.toggle;render()});
+  on("[data-pick]",el=>{const[a,b]=el.dataset.pick.split("|");curTruck[a]=+b;render()});
+  on("[data-newtruck]",el=>{const t=startNext(el.dataset.newtruck);toast(`Truck ${t.n} started for ${el.dataset.newtruck}.`);render()});
+  on("[data-scan]",el=>{const[a,b]=el.dataset.scan.split("|");addPallets(a,+b,1,"scan")});
+  on("[data-scan5]",el=>{const[a,b]=el.dataset.scan5.split("|");addPallets(a,+b,5,"scan")});
+  on("[data-addman]",el=>{const[n,li]=el.dataset.addman.split("|");const t=truckBy(+n);addPallets(t.lines[li].to,+n,1,"manual")});
+  on("[data-addpart]",el=>{const[n,li]=el.dataset.addpart.split("|");const t=truckBy(+n),l=t.lines[li];l.pallets.push({id:"PLT"+(pltSeq++),pcs:Math.round(ITEMS[l.sku].pcs/2),src:"manual"});toast("Partial pallet added (half pallet in the mockup).");render()});
+  on("[data-rmman]",el=>{const[n,li]=el.dataset.rmman.split("|");const l=truckBy(+n).lines[li];l.pallets=l.pallets.filter(p=>p.src==="scan");render()});
+  document.querySelectorAll("[data-man]").forEach(el=>el.onchange=()=>{const[n,li]=el.dataset.man.split("|");const t=truckBy(+n),l=t.lines[li];const scan=l.pallets.filter(p=>p.src==="scan");const cur=l.pallets.length-scan.length,want=Math.max(0,+el.value||0);
+    if(want<cur){l.pallets=scan.concat(l.pallets.filter(p=>p.src!=="scan").slice(0,want));render()}else addPallets(l.to,+n,want-cur,"manual")});
+  on("[data-picked]",el=>{const t=truckBy(+el.dataset.picked);t.status="approve";const to=t.lines[0].to;startNext(to);toast(`Truck ${t.n} sent to manager at ${Math.round(fillOf(t)*100)}%. Next truck started.`);render()});
+  on("[data-mix]",el=>openMix(+el.dataset.mix));
+  on("[data-move]",el=>openMove(+el.dataset.move));
+  on("[data-approve]",el=>{const t=truckBy(+el.dataset.approve);t.lines.forEach(l=>l.ifId="IF"+(ifSeq++));t.status="packed";toast(`Truck ${t.n}: ${t.lines.map(l=>l.ifId).join(", ")} created (Packed). Tracker shows it as Loading.`);render()});
+  on("[data-depart]",el=>{const t=truckBy(+el.dataset.depart);t.status="shipped";t.lines.forEach(l=>{const to=TOS.find(x=>x.id===l.to);to.shipped+=lineQty(l);to.shippedIFs++});
+    INBOUND.push({n:t.n,load:t.load,trailer:t.trailer||"—",seal:t.seal,ifs:t.lines.map(l=>({id:l.ifId,to:l.to,sku:l.sku,qty:lineQty(l),pallets:l.pallets.length,scanned:0,ir:null}))});
+    TRUCKS.splice(TRUCKS.indexOf(t),1);toast(`Truck ${t.n} departed: IFs Shipped. Now on Inbound.`);render()});
+  document.querySelectorAll("[data-trl]").forEach(el=>el.oninput=()=>truckBy(+el.dataset.trl).trailer=el.value);
+  document.querySelectorAll("[data-seal]").forEach(el=>el.oninput=()=>truckBy(+el.dataset.seal).seal=el.value);
+  on("[data-inscan]",el=>{const t=INBOUND.find(x=>x.n===+el.dataset.inscan);const f=t.ifs.find(x=>!x.ir&&x.scanned<x.pallets);if(f){f.scanned++;toast(`Pallet matched to ${f.id}`)}else toast("Every pallet on this truck is already scanned.");render()});
+  on("[data-recv]",el=>{const[n,id]=el.dataset.recv.split("|");const f=INBOUND.find(x=>x.n===+n).ifs.find(x=>x.id===id);f.ir="IR"+(irSeq++);toast(`${f.ir} created against ${f.id}${f.scanned<f.pallets?`. ${f.pallets-f.scanned} pallets stay in transit`:""}.`);render()});
+}
+document.addEventListener("click",e=>{
+  const g=e.target.closest("[data-mixgo]");if(g){const[n,to]=g.dataset.mixgo.split("|");closeDlg();addPallets(to,+n,4,"manual");toast(`4 pallets from ${to} added to Truck ${n}. It becomes a second IF on ${truckBy(+n)?.load||"this load"}.`)}
+  const m=e.target.closest("[data-mvgo]");if(m){const n=+m.dataset.mvgo,src=truckBy(n);let moved=0;
+    document.querySelectorAll("[data-mv]").forEach(s=>{if(!s.value)return;const[,li,pid]=s.dataset.mv.split("|");const l=src.lines[li];const p=l.pallets.find(x=>x.id===pid);if(!p)return;
+      let dst=s.value==="new"?startNext(l.to):truckBy(+s.value);let dl=dst.lines.find(x=>x.to===l.to);if(!dl){dl={to:l.to,sku:l.sku,pallets:[]};dst.lines.push(dl)}
+      l.pallets=l.pallets.filter(x=>x!==p);dl.pallets.push(p);moved++});
+    src.lines=src.lines.filter(l=>l.pallets.length);if(src.status==="approve"&&fillOf(src)<0.999)src.status="build";
+    closeDlg();toast(moved?`Moved ${moved} pallet${moved>1?"s":""}.`:"Nothing selected.");render()}
+  if(e.target.closest("[data-close]")||e.target.id==="pop")closeDlg();
+});
+document.querySelectorAll("#dirSeg button").forEach(b=>b.onclick=()=>{dir=b.dataset.v;document.querySelectorAll("#dirSeg button").forEach(x=>x.classList.toggle("on",x===b));render()});
+document.querySelectorAll("#roleSeg button").forEach(b=>b.onclick=()=>{role=b.dataset.v;document.querySelectorAll("#roleSeg button").forEach(x=>x.classList.toggle("on",x===b));render()});
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="scanIn"){document.querySelector("[data-scan]")?.click()}if(e.key==="Escape")closeDlg()});
+render();
+</script>
+</body>
+</html>
