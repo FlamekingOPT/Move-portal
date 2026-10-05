@@ -539,7 +539,7 @@ h3{font-size:15px;margin:16px 0 8px}
         function stageHtml(v) {
             const t = v.truck, st = t.status, vf = v.verify || {};
             const undo = '<button class="btn ghost sm" data-act="tundo">↶ Undo last scan</button>';
-            const when = vf.at ? '<div class="muted">Checked ' + esc(vf.at) + (vf.by ? ' by ' + esc(vf.by) : '') + '</div>' : '';
+            const when = vf.at ? '<div class="muted">Checked ' + esc(vf.at) + (vf.by ? ' by ' + esc(typeof vf.by === 'object' ? vf.by.name : vf.by) : '') + '</div>' : '';
             const err = st !== 'departing' && t.error ? errBox(t.error) : '';
             if (st === 'loading') return err + '<button class="btn pri" data-act="tverify">✔ Verify load</button>' + undo;
             if (st === 'needs_fix') return err + '<div class="card amberc"><h4>⚠ Needs IF fix</h4>' + when + diffList(vf.diffs) + sugHtml(v.suggestions, false, t.id) +

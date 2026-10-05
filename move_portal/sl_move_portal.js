@@ -252,7 +252,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // opt.newIfs(x, planned, trucks): the IF list to check (default: the saved one). Saves the fresh NetSuite IFs plus the
     // gone ones (flagged) as data.ifs, so reservations never use a stale IF qty and if_gone repeats until a manager drops it.
     // opt.truck/trucks/planned/openTo/loadedAll: reads the caller already made (recheck reads them once per request).
-    // opt.poll: write only when the status, the diffs or the IFs changed, so at/by stay those of the last real change.
+    // opt.poll: write only when the status, the diffs or the IFs changed. Any verify keeps at/by when nothing changed.
+    // opt.auto (trucks_recheck): a change found by the background poll is recorded as AUTO_BY, not the polling device.
     // Refuses if the truck closed, or its IFs or pallets changed while it was being checked.
     // The verify rule with no write: departure re-runs it from the claimed (frozen) truck.
     function checkTruck(x, c, opt) {
@@ -263,6 +264,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const r = verify.verifyLoad({ savedIfs: ifs, freshIfs: planned, pallets: ps, toLines: reservedToLines(x.id, trucks, opt.loadedAll, c, opt.openTo) });
         return { r: r, ps: ps, trucks: trucks, planned: planned };
     }
+    const AUTO_BY = { id: 0, name: 'Auto re-check' };
     function verifyTruck(id, c, opt) {
         opt = opt || {};
         const x = opt.truck || mustTruck(id);
@@ -276,7 +278,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const cur = data.getLoad(id);                 // right before the write: never merge over a stale copy
         if (!cur || !isOpen(cur)) throw userErr('This truck is closed for changes (' + (cur ? (cur.data.claim || cur.data.depart ? T.DEPARTING : cur.status) : 'gone') + ')');
         if (ifSig(cur.data.ifs) !== ifSig(x.data.ifs)) throw userErr('This truck changed while it was being checked. Verify again.');
-        data.updateLoad(cur, { status: status, data: Object.assign({ ifs: r.keep, verify: { at: c.now.stamp, by: c.actor, diffs: r.diffs } },
+        // Unchanged: keep at/by, so a re-pressed Verify never raises a second ready alert. A poll-driven change is the auto re-check's.
+        const old = x.data.verify || {}, by = !changed && old.at ? old.by : opt.auto ? AUTO_BY : c.actor;
+        data.updateLoad(cur, { status: status, data: Object.assign({ ifs: r.keep, verify: { at: !changed && old.at ? old.at : c.now.stamp, by: by, diffs: r.diffs } },
             status === T.READY ? { correctError: '' } : {}) });      // a ready truck has nothing left to correct
         out.x = mustTruck(id);
         return out;
@@ -672,7 +676,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const ready = trucks.filter(x => x.status === T.READY && isOpen(x));
         const fix = trucks.filter(x => x.status === T.NEEDS_FIX && isOpen(x));
         if (!fix.length) return { nowReady: nowReady, ready: readyOut(ready) };
-        const shared = { trucks: trucks, planned: ns.plannedIfs(), openTo: ns.openToLines(), loadedAll: data.palletsByStatus([VP.LOADED]), poll: true };
+        const shared = { trucks: trucks, planned: ns.plannedIfs(), openTo: ns.openToLines(), loadedAll: data.palletsByStatus([VP.LOADED]), poll: true, auto: true };
         fix.forEach(x => {
             let v;
             try { v = verifyTruck(x.id, c, Object.assign({ truck: x }, shared)); } catch (e) { if (e.user) return; throw e; }

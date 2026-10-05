@@ -1113,8 +1113,8 @@ test('I2: a recheck with no change writes nothing and keeps verify at/by', () =>
     const r = ctx.run('trucks_recheck', { actor: 'Poller' }, false);
     assert.deepEqual([r.nowReady, n.n, reads.n], [[], 0, 1]);
     assert.deepEqual(ctx.data.getLoad(t.id).data.verify, before);
-    ctx.run('truck_verify', { truckId: t.id, actor: 'Bo' }, false);          // a manual verify always records
-    assert.equal(ctx.data.getLoad(t.id).data.verify.by, 'Bo');
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Bo' }, false);          // unchanged: a manual verify keeps at/by too
+    assert.equal(ctx.data.getLoad(t.id).data.verify.by, 'Ana');
 });
 
 test('I2: recheck reads planned IFs and TO lines once for all trucks', () => {
@@ -1511,4 +1511,27 @@ test('final1: the release write clears the old verify, so a failed re-verify lea
     assert.throws(() => ctx.run('depart_release', { truckId: t.id }), /NetSuite down/);
     const x = ctx.data.getLoad(t.id);
     assert.deepEqual([x.status, x.data.claim, x.data.verify], ['needs_fix', '', null]);
+});
+
+test('final2: re-pressing Verify on an unchanged truck keeps verify at/by; a change records the new actor', () => {
+    const ctx = setup();
+    const { t } = readyTruck(ctx, 42);
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Ana' }, false);
+    const before = ctx.data.getLoad(t.id).data.verify;
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Bo' }, false);
+    const after = ctx.data.getLoad(t.id).data.verify;
+    assert.deepEqual([after.at, after.by, ctx.data.getLoad(t.id).status], [before.at, before.by, 'ready']);
+    printLabels(ctx, 1, 'Jfin2', [L975]).forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Cy' }, false);
+    assert.equal(ctx.data.getLoad(t.id).data.verify.by, 'Cy');
+});
+
+test('final2: a poll flip records Auto re-check, not the polling device', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Ana' }, false);
+    matchIf(ctx, '9001', 480);
+    ctx.run('trucks_recheck', { actor: 'Poller' }, false);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.verify.by], ['ready', { id: 0, name: 'Auto re-check' }]);
 });
