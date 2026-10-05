@@ -1077,6 +1077,45 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { perIf: rp.perIf, missing: rp.missing, written: res.written, view: unloadView(mustTruck(x.id), c) };
     });
 
+    // ── v3 manager approvals and shadow report ───────────────────────────
+    act('approvals', true, (a, c) => {
+        const trucks = allTrucks();
+        const stuck = x => !!(x.data.error || stale(x));
+        return {
+            departures: trucks.filter(x => x.status === T.LOADING && x.data.pending).map(x => {
+                let plan = null, error = null;
+                try { plan = pubPlan(departPlan(x, x.data.pending, c).plan); } catch (e) { error = e.message; }
+                return { truck: truckSummary(x), pending: x.data.pending, plan: plan, error: error };
+            }),
+            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(truckSummary),
+            receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
+                const unposted = data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).length;
+                const isStuck = x.status === T.APPROVING;
+                if (!unposted || (!isStuck && x.status !== T.RECEIVED && !x.data.recvRequested)) return null;
+                const rp = receiptPlan(x);
+                const o = { truck: truckSummary(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED };
+                if (isStuck) o.stuck = true;
+                return o;
+            }).filter(Boolean)
+        };
+    });
+
+    act('report', true, (a, c) => {
+        const trucks = allTrucks().filter(x => x.data.depart);
+        const ids = {};
+        trucks.forEach(x => (x.data.alloc || []).forEach(al => Object.keys(al.lines).forEach(k => { ids[k] = 1; })));
+        const rows = verify.shadowRows({ trucks: trucks, ifInfo: ns.ifInfo(), ifsByTo: ns.ifsByTo(), receipts: ns.receiptsByIf(), sku: skuNames(Object.keys(ids)) });
+        const days = {};
+        trucks.forEach(x => {
+            const dd = days[x.data.depart.day] = days[x.data.depart.day] || { day: x.data.depart.day, trucks: 0, pallets: 0, pieces: 0, diffs: 0 };
+            const ps = data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
+            dd.trucks++; dd.pallets += ps.length; dd.pieces += ps.reduce((s, p) => s + p.pieces, 0);
+            const label = truckLabel(x);
+            dd.diffs += rows.filter(r => r.truck === label && r.ok === false).length;
+        });
+        return { rows: rows, days: Object.values(days).sort((p, q) => (p.day < q.day ? 1 : -1)), pulledAt: ns.pulledAt(), writeMode: writeMode(c) };
+    });
+
     // ── entry points ─────────────────────────────────────────────────────
     function runAction(action, a, mgr) {
         const def = A[action];

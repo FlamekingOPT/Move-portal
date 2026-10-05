@@ -942,3 +942,49 @@ test('a stuck approving truck is listed and previewable; prevStatus is saved wit
     ctx.run('receipt_approve', { truckId: t.id });
     assert.equal(seen, 'receiving');
 });
+
+// ── v3 approvals and report ──
+test('approvals lists pending departures, failed departures and receipts waiting', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'P1' }, false);
+    const d = departed(ctx, 1, 'P2', '9002');
+    ctx.run('unload_scan', { truckId: d.t.id, raw: d.ps[0].code }, false);
+    ctx.run('unload_done', { truckId: d.t.id }, false);
+    const r = ctx.run('approvals');
+    assert.deepEqual(r.departures.map(x => [x.truck.id, x.pending.seal, x.plan.corrections]), [[t.id, 'P1', 1]]);
+    assert.deepEqual(r.receipts.map(x => [x.truck.id, x.perIf[0].received]), [[d.t.id, 12]]);
+    assert.throws(() => ctx.run('approvals', {}, false), /Managers only/);
+});
+
+test('approvals surfaces stuck departing trucks (error or stale) and stuck approving trucks', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = truckWith(ctx, 42);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '1', seal: 'S1' }), /NetSuite write failed/);
+    assert.deepEqual(ctx.run('approvals').retries.map(x => x.id), [t.id]);          // error set
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { error: '', workingAt: Date.now() } });
+    assert.deepEqual(ctx.run('approvals').retries, []);                              // fresh claim: still running
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { workingAt: 1 } });
+    assert.deepEqual(ctx.run('approvals').retries.map(x => x.id), [t.id]);          // stale
+    ctx.run('depart_retry', { truckId: t.id });
+
+    const d = departed(ctx, 2, 'S2', '9002');
+    d.ps.forEach(p => ctx.run('unload_scan', { truckId: d.t.id, raw: p.code }, false));
+    ctx.data.updateLoad(ctx.data.getLoad(d.t.id), { status: 'approving', data: { claim: 'old', workingAt: Date.now(), phase: 'receive', prevStatus: 'receiving' } });
+    assert.deepEqual(ctx.run('approvals').receipts, []);                             // approving and fresh
+    ctx.data.updateLoad(ctx.data.getLoad(d.t.id), { data: { error: 'boom' } });
+    let r = ctx.run('approvals').receipts;
+    assert.deepEqual(r.map(x => [x.truck.id, x.stuck, x.perIf[0].received]), [[d.t.id, true, 24]]);
+    ctx.data.updateLoad(ctx.data.getLoad(d.t.id), { data: { error: '', workingAt: 1 } });
+    assert.deepEqual(ctx.run('approvals').receipts.map(x => [x.truck.id, x.stuck]), [[d.t.id, true]]);   // stale
+});
+
+test('report compares plan with the snapshot', () => {
+    const ctx = setup();
+    departed(ctx, 42, '5249300');
+    const r = ctx.run('report');
+    assert.ok(r.rows.some(x => x.ifNum === 'IF9001' && x.check === 'IF qty YSN100' && x.ok === null));   // IF9001 is still B in the snapshot
+    assert.deepEqual([r.days[0].trucks, r.days[0].pallets, r.writeMode], [1, 42, 'off']);
+});
