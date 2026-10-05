@@ -1576,3 +1576,13 @@ test('final5: verify while a manager correction holds the claim says it is being
     ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'c1', phase: 'correct', workingAt: Date.now() } });
     assert.throws(() => ctx.run('truck_verify', { truckId: t.id }, false), /being corrected by a manager, try again in a moment/);
 });
+
+test('final6: an if_qty correction with the same numbers is written again (the office reverted the IF)', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_correct', { truckId: t.id });                 // 504 → 480; the fixture still says 504 (reverted)
+    ctx.run('truck_correct', { truckId: t.id });
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['if_qty', 504, 480], ['if_qty', 504, 480]]);
+});

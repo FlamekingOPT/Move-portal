@@ -789,14 +789,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             assertClaim(id, claim, label, 'correct');
             data.updateLoad(data.getLoad(id), { data: { ifs: ifs } });
         }
-        // A recorded write is done only for the same numbers. A recorded add-on IF counts only while it is on the truck;
-        // once dropped it is never created again (the manager re-adds it from the suggestions).
+        // Only an add-on IF is skipped as done (same TO + lines), and only while it is on the truck; once dropped it is never
+        // created again (the manager re-adds it from the suggestions). if_qty is never skipped: setIfItemQty is idempotent, and
+        // an IF the office reverted to the old number must be written again.
         const now = data.getLoad(id), cw = Object.assign({}, now.data.correctionWrites), done = {}, orphan = {};
         orphanCreates(now).forEach(o => { orphan[o.key] = o; });
         const ops = mergeCreates(all.filter(op => op.op !== 'drop_if')).filter(op => {
             const k = verify.opKey(op);
             if (op.op === 'if_create' && orphan[k]) { skipped.push({ key: k, reason: orphan[k].text }); return false; }
-            const w = cw[k + '|' + corrSig(op)];
+            const w = op.op === 'if_create' && cw[k + '|' + corrSig(op)];
             if (w) done[k] = w.id;
             return true;
         }).map(op => op.op === 'if_create' ? Object.assign({}, op, { token: createToken(id, op) }) : op);
