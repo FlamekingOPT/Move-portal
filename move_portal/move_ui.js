@@ -39,7 +39,7 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 .stepper .inp{text-align:center;font-size:22px;font-weight:700;margin:0}
 .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
 .card h4{margin:0 0 4px;font-size:15px}.card.bl{border-color:var(--blue)}.card.bt{border-color:var(--teal)}.card.bo{border-color:var(--orange)}.card.warnc{border-color:var(--red)}
-[data-act="opentruck"],[data-act="openunload"],[data-act="openrecv"]{cursor:pointer}
+[data-act="opentruck"],[data-act="openunload"]{cursor:pointer}
 .muted{color:var(--muted);font-size:13px}.warn{color:var(--red)!important}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle}
 .p-blue{background:var(--blue-soft);color:var(--blue)}.p-green{background:var(--green-soft);color:var(--green)}.p-amber{background:var(--amber-soft);color:var(--amber)}.p-red{background:var(--red-soft);color:var(--red)}.p-gray{background:#f1f5f9;color:#475569}
@@ -70,7 +70,7 @@ h3{font-size:15px;margin:16px 0 8px}
         'use strict';
         const isMgr = B.mode === 'manager';
         const S = { side: get('mv_side') === 'in' ? 'in' : 'out', tab: null, who: get('mv_who') || '', poll: null,
-            ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, recvId: null, rv: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
+            ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
 
         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function put(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
@@ -114,8 +114,7 @@ h3{font-size:15px;margin:16px 0 8px}
         function errBox(msg) { return flash('red', '❌ ' + esc(msg)); }
 
         const PILL = { loading: ['Loading', 'p-blue'], departing: ['Departing…', 'p-amber'], departed: ['In transit', 'p-blue'],
-            receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], waiting: ['⏳ Waiting for manager', 'p-amber'],
-            recv_ready: ['⏳ Receipt approval', 'p-amber'], receiving_tx: ['Receiving…', 'p-amber'], received_short: ['Received · short', 'p-red'], error: ['Needs attention', 'p-red'] };
+            receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], waiting: ['⏳ Waiting for manager', 'p-amber'], error: ['Needs attention', 'p-red'] };
         function statusPill(s) { const p = PILL[s] || [s, 'p-gray']; return '<span class="pill ' + p[1] + '">' + esc(p[0]) + '</span>'; }
 
         function needWho() {
@@ -126,9 +125,9 @@ h3{font-size:15px;margin:16px 0 8px}
 
         // ── shell ────────────────────────────────────────────────────────
         const TABS = {
-            out: [['req', 'Request label'], ['trucks', 'Load out'], ['void', 'Void']].concat(isMgr ? [['queue', 'Print queue'],
-                ['plan', 'Print plan'], ['sku', 'Print a SKU'], ['configs', 'SKU configs'], ['reprint', 'Reprint'], ['dash', 'Dashboard']] : []),
-            in: [['recv', 'Receive']].concat(isMgr ? [['toreceive', 'To receive'], ['catchup', 'Catch-ups'], ['dash', 'Dashboard']] : [])
+            out: [['req', 'Request label'], ['trucks', 'Load out'], ['void', 'Void']].concat(isMgr ? [['approve', 'Approvals'], ['queue', 'Print queue'],
+                ['plan', 'Print plan'], ['sku', 'Print a SKU'], ['configs', 'SKU configs'], ['reprint', 'Reprint'], ['report', 'Report'], ['dash', 'Dashboard']] : []),
+            in: [['unload', 'Unload']].concat(isMgr ? [['approve', 'Approvals'], ['report', 'Report'], ['dash', 'Dashboard']] : [])
         };
 
         function shell() {
@@ -167,7 +166,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (i && !(a && a.matches && a.matches('input,select,textarea'))) i.focus();
         }
         ACT.side = el => { S.side = el.dataset.v; put('mv_side', S.side); shell(); };
-        ACT.tab = el => { S.tab = el.dataset.v; S.truckId = null; S.unloadId = null; S.recvId = null; renderNav(); };
+        ACT.tab = el => { S.tab = el.dataset.v; S.truckId = null; S.unloadId = null; renderNav(); };
         ACT.clearres = () => { const r = $('scanres'); if (r) r.innerHTML = ''; };
         ACT.typecode = el => { const i = $(el.dataset.v); if (i) { i.setAttribute('inputmode', 'text'); i.focus(); } };
 
@@ -669,143 +668,107 @@ h3{font-size:15px;margin:16px 0 8px}
             $('cfgmsg').innerHTML = flash('green', '✅ Imported ' + all.length + ' configs');
         };
 
-        // ── Inbound: receive ─────────────────────────────────────────────
-        SCREENS.recv = () => (S.recvId ? recvDetail() : recvList());
-        async function recvList() {
+        // ── Inbound: unload (v3) ─────────────────────────────────────────
+        SCREENS.unload = () => (S.unloadId ? unloadDetail() : unloadList());
+        async function unloadList() {
             main('<div class="muted">Loading…</div>');
-            const r = await api('inbound_list');
+            const r = await api('unload_list');
             if (!r.ok) { main(errBox(r.error)); return; }
-            main(r.loads.map(L => '<div class="card bt" data-act="openrecv" data-id="' + L.id + '"><h4>' + esc(L.number) + ' from ' + esc(B.fromName) + ' ' + statusPill(L.status) + '</h4>' +
-                '<div class="muted">' + (L.approvedAt ? 'Shipped ' + esc(L.approvedAt) + ' · ' : '') + L.received + ' of ' + L.pallets + ' in</div></div>').join('') ||
+            main(r.trucks.map(t => '<div class="card bt" data-act="openunload" data-id="' + t.id + '"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' +
+                esc(t.depart ? 'Seal ' + t.depart.seal + ' · Trailer ' + t.depart.trailer : '') + ' · ' + t.received + ' of ' + t.pallets + ' in' + (t.missing ? ' · ' + t.missing + ' missing' : '') + '</div></div>').join('') ||
                 '<div class="muted">No trucks in transit</div>');
         }
-        ACT.openrecv = el => { S.recvId = el.dataset.id; recvDetail(); };
-        ACT.backrecv = () => { S.recvId = null; recvList(); };
-        async function recvDetail() {
-            main('<div class="muted">Loading…</div>');
-            const r = await api('recv_get', { loadId: S.recvId });
+        ACT.openunload = el => { S.unloadId = el.dataset.id; unloadDetail(); };
+        ACT.backunload = () => { S.unloadId = null; unloadList(); };
+        async function unloadDetail() {
+            const r = await api('unload_get', { truckId: S.unloadId });
             if (!r.ok) { main(errBox(r.error)); return; }
-            main('<button class="btn ghost sm" data-act="backrecv">← Inbound loads</button><div class="card bt"><h4>' + esc(r.load.number) + ' from ' + esc(B.fromName) +
-                ' <span id="rstat"></span></h4><div class="muted">' + esc(loadSub(r.load)) + '</div><div class="prog" id="rcount"></div><div class="progress"><div id="rbar"></div></div></div>' +
-                scanBox('rscan') + '<div id="scanres"></div><div class="card plist"><div class="muted"><b>Still expected</b></div><div id="rexp"></div></div><div id="rdone"></div>');
-            paintRecv(r);
-            wireScan('rscan', doRecvScan);
+            main('<button class="btn ghost sm" data-act="backunload">← All trucks</button><div class="card bt"><h4 id="uhead"></h4><div class="muted" id="usub"></div></div>' +
+                scanBox('rscan') + '<div id="scanres"></div><div class="card" id="uifs"></div><div class="card plist" id="uexp"></div><div id="ufoot"></div>');
+            wireScan('rscan', doUnloadScan);
+            paintUnload(r.view);
         }
-        function paintRecv(r) {
-            S.rv = r;
-            $('rstat').innerHTML = statusPill(r.load.status);
-            $('rcount').textContent = r.receivedCount + ' of ' + r.total + ' in';
-            $('rbar').style.width = (r.total ? Math.round(r.receivedCount / r.total * 100) : 0) + '%';
-            $('rexp').innerHTML = r.expected.map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
-                (p.status === 'missing' ? '<span class="pill p-red">missing</span>' : '') + '</div>').join('') || '<div class="muted">All pallets scanned in ✅</div>';
-            $('rdone').innerHTML = r.load.status === 'receiving' ? '<button class="btn teal" data-act="recvready">Unloading done: send for approval</button>'
-                : (r.load.status === 'recv_ready' ? '<div class="muted">⏳ Waiting for a manager to approve the receipt.</div>' : '');
+        function paintUnload(v) {
+            const t = v.truck;
+            $('uhead').innerHTML = esc(t.label) + ' ' + statusPill(t.status);
+            $('usub').textContent = (t.depart ? 'Seal ' + t.depart.seal + ' · Trailer ' + t.depart.trailer + ' · ' : '') + v.counts.in + ' of ' + v.counts.of + ' pallets in';
+            $('uifs').innerHTML = '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' + v.perIf.map(f => '<tr class="' + (f.short ? '' : 'okrow') + '"><td>' + esc(f.ifNum) +
+                '</td><td><b>' + num(f.received) + '</b> / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
+                (v.flagged.length ? flash('amber', '🟠 ' + v.flagged.length + ' never-loaded pallet(s) flagged', esc(v.flagged.map(p => p.code).join(', ')), 'The office will sort these out.') : '');
+            $('uexp').innerHTML = '<h4>Still expected</h4>' + (v.expected.map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div></div>').join('') || '<div class="muted">All in ✅</div>');
+            $('ufoot').innerHTML = (t.error ? errBox(t.error) : '') + '<button class="btn ghost sm" data-act="uundo">↶ Undo last scan</button>' + (S.lastIn ? '<button class="btn ghost sm" data-act="udamaged" data-id="' + S.lastIn + '">Mark last pallet damaged</button>' : '') +
+                '<button class="btn go" data-act="udone">Unloading done: send to manager</button>';
         }
-        function recvResultHtml(r) {
-            const p = r.pallet, id = p ? p.id : '', line = p ? esc(p.code + ' · ' + p.summary) : '';
-            const acts = '<button data-act="rdamaged" data-id="' + id + '">Mark damaged</button><button data-act="rundo" data-id="' + id + '">Undo</button>';
+        function unloadResultHtml(r) {
+            const p = r.pallet, line = p ? esc(p.code + ' · ' + p.summary) : '';
             switch (r.result) {
-                case 'ok': return flash('green', '✅ ' + esc(p.headline), esc(p.pieces + ' pcs · ' + p.code), esc(r.view.receivedCount + ' of ' + r.view.total + ' in'), acts);
-                case 'late': return flash('green', '✅ Late arrival for ' + esc(r.loadNumber), line, 'A manager approves a second receipt for it.', acts);
+                case 'ok': return flash('green', '✅ ' + esc(p.headline), line, r.view.counts.in + ' of ' + r.view.counts.of + ' in');
+                case 'late': return flash('green', '✅ Late arrival', line, 'It goes on a second receipt for this IF (manager OK).');
                 case 'dup': return flash('amber', '🟡 Already scanned in', line, 'No change.');
-                case 'dup_other': return flash('amber', '🟡 Already received on ' + esc(r.otherNumber), line, 'No change.');
-                case 'other_load': return flash('amber', '🟡 Belongs to ' + esc(r.otherNumber), line, '',
-                    '<button data-act="recvother" data-id="' + id + '" data-load="' + esc(r.otherLoadId) + '">Receive on ' + esc(r.otherNumber) + '</button><button data-act="clearres">Set aside</button>');
-                case 'other_load_pending': return flash('red', '❌ ' + esc(r.otherNumber) + ' not approved yet', line, 'A manager must Approve & Ship ' + esc(r.otherNumber) + ' first. Set the pallet aside.');
-                case 'arrived_unshipped': return flash('orange', '🟠 Loaded without scan', line, 'It was never on a shipped load, so NetSuite still counts it at ' + esc(B.fromName) + '. Flagged for a manager catch-up.');
-                case 'dup_catchup': return flash('amber', '🟡 Already flagged for catch-up', line);
-                case 'void': return flash('red', '❌ Label cancelled', line, 'Set it aside and call the supervisor.');
-                default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), 'Not a move label.');
+                case 'dup_other': return flash('amber', '🟡 Already received on ' + esc(r.otherLabel), line, '');
+                case 'other_truck': return flash('amber', '🟡 Belongs to ' + esc(r.otherLabel), line, '', '<button data-act="uother" data-id="' + p.id + '">Receive it there</button><button data-act="clearres">Set aside</button>');
+                case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the office. Set it aside.');
+                case 'locked': return flash('red', '❌ Its truck is still departing', line, 'Wait a minute and scan again.');
+                case 'void': return flash('red', '❌ Label cancelled', line, 'Set aside and call the supervisor.');
+                default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), '');
             }
         }
-        async function doRecvScan(v) {
+        async function doUnloadScan(v) {
             if (!S.who) { tone('bad'); $('scanres').innerHTML = errBox('Pick your name in "I am" first, then scan again.'); return; }
-            const r = await api('scan_recv', { loadId: S.recvId, raw: v });
+            const r = await api('unload_scan', { truckId: S.unloadId, raw: v });
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
             tone(r.tone);
-            $('scanres').innerHTML = recvResultHtml(r);
-            if (r.view) paintRecv(r.view);
+            if (r.result === 'ok' || r.result === 'late') S.lastIn = r.pallet.id;
+            $('scanres').innerHTML = unloadResultHtml(r);
+            if (r.view) paintUnload(r.view);
         }
-        ACT.rdamaged = async el => {
-            const r = await api('recv_damaged', { palletId: el.dataset.id, loadId: S.recvId });
-            if (!r.ok) { alert(r.error); return; }
-            $('scanres').innerHTML = flash('amber', '🟡 Damaged: ' + esc(r.pallet.code), esc(r.pallet.summary), 'Still received (it is here), flagged for review.');
-            if (r.view) paintRecv(r.view);
+        ACT.uother = async el => { const r = await api('unload_other', { palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('green', '✅ Received on its own truck') : errBox(r.error); };
+        ACT.udamaged = async el => { const r = await api('unload_damaged', { palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('amber', 'Marked damaged') : errBox(r.error); };
+        ACT.uundo = async () => { const r = await api('unload_undo', { truckId: S.unloadId }); if (r.ok) paintUnload(r.view); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.udone = async () => { const r = await api('unload_done', { truckId: S.unloadId }); $('scanres').innerHTML = r.ok ? flash('green', 'Sent to the manager for receipt approval') : errBox(r.error); };
+
+        // ── Manager: approvals (v3) ──────────────────────────────────────
+        SCREENS.approve = async (msg) => {
+            main((msg || '') + '<div class="muted">Loading…</div>');
+            const r = await api('approvals');
+            if (!r.ok) { main(errBox(r.error)); return; }
+            const dep = r.departures.map(d => '<div class="card"><h4>🚚 ' + esc(d.truck.label) + ' · departure</h4><div class="muted">' + esc('Trailer ' + d.pending.trailer + ' · Seal ' + d.pending.seal + ' · by ' + d.pending.by) + '</div>' +
+                (d.plan ? planHtml(d.plan) + '<button class="btn go" data-act="apdepart" data-id="' + d.truck.id + '">Approve departure</button>' : errBox(d.error)) + '</div>').join('');
+            const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') + '<button class="btn pri" data-act="apretry" data-id="' + t.id + '">Retry</button></div>').join('');
+            const rec = r.receipts.map(x => {
+                const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
+                if (!x.perIf) return '<div class="card warnc">' + head + errBox(x.error || 'Could not build the receipt') + '</div>';
+                const missing = x.missing || [];
+                return '<div class="card">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + (x.error ? errBox(x.error) : '') +
+                    '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' +
+                    x.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
+                    (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
+                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
+            }).join('');
+            main((msg || '') + (dep + ret + rec || '<div class="muted">Nothing waiting for approval</div>'));
         };
-        ACT.rundo = async el => {
-            const r = await api('recv_undo', { palletId: el.dataset.id, loadId: S.recvId });
-            if (!r.ok) { alert(r.error); return; }
-            $('scanres').innerHTML = flash('amber', '↩ Scan undone');
-            paintRecv(r.view);
-        };
-        ACT.recvother = async el => {
-            const r = await api('recv_other', { palletId: el.dataset.id, otherLoadId: el.dataset.load, loadId: S.recvId });
-            if (!r.ok) { alert(r.error); return; }
-            tone(r.tone);
-            $('scanres').innerHTML = flash('green', '✅ Received on ' + esc(r.loadNumber), esc(r.pallet.code + ' · ' + r.pallet.summary));
-            paintRecv(r.view);
-        };
-        ACT.recvready = async el => {
-            if (!confirm('Done unloading? A manager will approve the receipt.')) return;
+        ACT.apdepart = async el => { busy(el, true); const r = await api('depart_confirm', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
+        ACT.apretry = async el => { busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
+        ACT.aprecv = async el => {
             busy(el, true);
-            const r = await api('recv_ready', { loadId: S.recvId });
-            busy(el, false);
-            if (!r.ok) { alert(r.error); return; }
-            recvDetail();
+            const r = await api('receipt_approve', { truckId: el.dataset.id });
+            tone(r.ok ? 'ok' : 'bad');
+            const w = r.ok ? (r.written || []) : [], m = r.ok ? (r.missing || []) : [];
+            SCREENS.approve(r.ok ? flash('green', '✅ Receipt approved', w.length ? w.length + ' written to NetSuite' : 'Plan saved (no NetSuite write in this mode)', m.length ? m.length + ' pallets stay in transit' : '') : errBox(r.error));
         };
 
-        // ── Inbound: manager "To receive" and catch-ups ──────────────────
-        SCREENS.toreceive = async (msg) => {
+        // ── Manager: shadow report (v3) ──────────────────────────────────
+        SCREENS.report = async () => {
             main('<div class="muted">Loading…</div>');
-            const r = await api('toreceive_list');
+            const r = await api('report');
             if (!r.ok) { main(errBox(r.error)); return; }
-            main('<div id="rmsg">' + (msg || '') + '</div>' + (r.loads.map(L => {
-                const retry = L.status === 'error' || L.status === 'receiving_tx';
-                return '<div class="card bt"><h4>' + esc(L.number) + ' ' + (L.late ? '<span class="pill p-amber">late arrival</span>' : statusPill(L.status)) + '</h4>' +
-                    '<div class="muted">' + L.scanned + ' of ' + L.expected + ' scanned in' + (L.damaged.length ? ' · ' + L.damaged.length + ' damaged' : '') + '</div>' +
-                    (L.missing.length ? '<div class="warnrow"><span>' + (L.late ? 'Still missing' : 'Missing (will stay in transit)') + ': ' + L.missing.map(x => esc(x.code)).join(', ') + '</span></div>' : '') +
-                    (L.damaged.length ? '<div class="warnrow"><span>Damaged: ' + L.damaged.map(x => esc(x.code + ' ' + x.summary)).join(', ') + '</span></div>' : '') +
-                    (L.error ? '<div class="muted warn">Last error: ' + esc(L.error) + '</div>' : '') +
-                    '<button class="btn teal sm" data-act="recvapprove" data-id="' + L.id + '">' + (retry ? 'Retry receipt' : (L.late ? 'Approve late receipt' : 'Approve Receipt')) +
-                    ' (' + num(L.unpostedPieces) + ' pcs)</button></div>';
-            }).join('') || '<div class="muted">Nothing waiting for a receipt</div>') +
-                '<h3>In transit</h3>' + (r.transit.map(L => '<div class="card"><h4>' + esc(L.number) + ' ' + statusPill(L.status) + '</h4><div class="muted">' + L.pallets + ' pallets · ' +
-                    esc(L.approvedAt) + '</div></div>').join('') || '<div class="muted">None</div>'));
-        };
-        ACT.recvapprove = async el => {
-            if (!confirm('Create the item receipt? ' + B.toName + ' inventory goes up now.')) return;
-            busy(el, true);
-            const r = await api('recv_approve', { loadId: el.dataset.id });
-            busy(el, false);
-            if (!r.ok) { tone('bad'); SCREENS.toreceive(errBox(r.error)); return; }
-            tone('ok');
-            SCREENS.toreceive(flash('green', '✅ ' + esc(r.number) + ' received · ' + esc(r.receiptNumber), esc(num(r.pieces) + ' pcs'), r.missing ? r.missing + ' pallets still missing' : ''));
-        };
-
-        SCREENS.catchup = async (msg) => {
-            main('<div class="muted">Loading…</div>');
-            const r = await api('catchup_list');
-            if (!r.ok) { main(errBox(r.error)); return; }
-            main('<div id="cmsg">' + (msg || '') + '</div>' + (r.pallets.map(p => '<div class="card bo"><h4>' + esc(p.code) + ' · ' + esc(p.summary) + '</h4>' +
-                '<div class="muted">Arrived on ' + esc(p.arrivedOnNumber || '?') + ' without an outbound scan · ' + esc(p.arrivedAt) + '</div>' +
-                '<div class="muted">Approving creates a small transfer order, ships it and receives it at once: ' + esc(B.fromName) + ' −' + p.pieces + ', ' + esc(B.toName) + ' +' + p.pieces + '.</div>' +
-                (p.ok ? '' : '<div class="muted warn">⚠ Not enough available at ' + esc(B.fromName) + ': ' + esc(p.short) + '. NetSuite has that stock reserved for customer orders; check with the office.</div>') +
-                '<div class="row2"><button class="dbtn gh" data-act="cureject" data-id="' + p.id + '">Reject</button><button class="dbtn go" data-act="cuapprove" data-id="' + p.id + '"' +
-                (p.ok ? '' : ' disabled') + '>Approve catch-up</button></div></div>').join('') || '<div class="muted">No catch-ups waiting</div>'));
-        };
-        ACT.cuapprove = async el => {
-            if (!confirm('Create the catch-up transfer and receipt?')) return;
-            busy(el, true);
-            const r = await api('catchup_approve', { palletId: el.dataset.id });
-            busy(el, false);
-            if (!r.ok) { tone('bad'); SCREENS.catchup(errBox(r.error)); return; }
-            tone('ok');
-            SCREENS.catchup(flash('green', '✅ Catch-up ' + esc(r.number) + ' done', esc(r.receiptNumber)));
-        };
-        ACT.cureject = async el => {
-            if (!confirm('Reject? The label goes back to "labeled" and the office investigates.')) return;
-            const r = await api('catchup_reject', { palletId: el.dataset.id });
-            SCREENS.catchup(r.ok ? flash('amber', 'Rejected') : errBox(r.error));
+            const mark = ok => (ok === true ? '✅' : ok === false ? '❌' : '⏳');
+            main('<div class="muted">Write mode <b>' + esc(r.writeMode) + '</b>' + (r.pulledAt ? ' · NetSuite data from ' + esc(r.pulledAt) : '') + '</div>' +
+                '<div class="card"><table class="tbl"><tr><th>Day</th><th>Trucks</th><th>Pallets</th><th>Pcs</th><th>Diffs</th></tr>' +
+                r.days.map(d => '<tr><td>' + esc(d.day) + '</td><td>' + d.trucks + '</td><td>' + d.pallets + '</td><td>' + num(d.pieces) + '</td><td>' + (d.diffs ? '❌ ' + d.diffs : '✅') + '</td></tr>').join('') + '</table></div>' +
+                '<div class="card"><table class="tbl"><tr><th></th><th>Truck</th><th>IF</th><th>Check</th><th>Portal</th><th>NetSuite</th></tr>' +
+                r.rows.map(x => '<tr class="' + (x.ok === false ? 'warnrow' : '') + '"><td>' + mark(x.ok) + '</td><td>' + esc(x.truck) + '</td><td>' + esc(x.ifNum) + '</td><td>' + esc(x.check) +
+                    '</td><td>' + esc(x.portal) + '</td><td>' + esc(x.netsuite) + '</td></tr>').join('') + '</table></div>');
         };
 
         // ── Dashboard ────────────────────────────────────────────────────
@@ -842,9 +805,9 @@ h3{font-size:15px;margin:16px 0 8px}
                 k('Projected finish', fin || '—', fin ? (m.onTrack ? '✅ on track for ' + esc(r.target) : '⚠ after ' + esc(r.target)) : 'needs a few days of data', fin ? (m.onTrack ? 'good' : 'bad') : '') +
                 k('In transit', num(r.inTransit), r.exc.missing + ' missing') + '</div>' +
                 '<div class="card"><h4>Pallets moved per day</h4>' + barChart(r.days, m.neededPerDay) + '</div><div class="grid3">' +
-                '<div class="card"><h4>Recent loads</h4>' + (r.loads.map(L => '<div class="warnrow"><span>' + esc(L.number) + ' · ' + L.pallets + ' plt</span>' + statusPill(L.status) + '</div>').join('') ||
+                '<div class="card"><h4>Recent trucks</h4>' + (r.trucks.map(t => '<div class="warnrow"><span>' + esc(t.label) + ' · ' + t.pallets + ' pallets</span>' + statusPill(t.status) + '</div>').join('') ||
                     '<div class="muted">None</div>') + '</div>' +
-                '<div class="card"><h4>Exceptions</h4>' + [['Missing pallets (in transit)', r.exc.missing], ['Waiting for catch-up', r.exc.arrivedUnshipped], ['Catch-ups last 7 days', r.exc.catchups7],
+                '<div class="card"><h4>Exceptions</h4>' + [['Missing pallets (in transit)', r.exc.missing], ['Never loaded', r.exc.neverLoaded],
                     ['Damaged, flagged', r.exc.damaged], ['Edited at dock', r.exc.edited], ['Labeled, never loaded (stale)', r.exc.stale], ['SKUs with stock but no config', r.exc.noConfig]]
                     .map(x => '<div class="warnrow"><span>' + esc(x[0]) + '</span><b>' + x[1] + '</b></div>').join('') +
                     (r.noConfigSkus.length ? '<div class="muted">' + r.noConfigSkus.map(esc).join(', ') + '</div>' : '') + '</div>' +
