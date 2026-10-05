@@ -1384,7 +1384,8 @@ test('truck_correct on mode: the created Packed IF is attached and kept when Net
     assert.deepEqual([r.verify.match, r.view.truck.status], [true, 'ready']);
     const x = ctx.data.getLoad(t.id);
     assert.deepEqual(x.data.ifs.map(f => [f.ifId, !!f.gone]), [['901', false], ['9001', false]]);
-    assert.equal(x.data.correctionWrites['if_create:700'].id, '901');
+    assert.equal(Object.values(x.data.correctionWrites).find(w => w.key === 'if_create:700').id, '901');
+    assert.equal(ctx.tx._t.ops[0].token, '[mv:' + t.id + ':if_create:700:11x120]');
 });
 
 test('truck_correct: a later correction of the same IF item with new numbers is written again', () => {
@@ -1413,4 +1414,37 @@ test('report lists plan-only corrections as IF fix needed until the diff closes'
     ctx.run('truck_remove', { truckId: t.id, palletId: ps[42].id });
     ctx.run('truck_verify', { truckId: t.id });
     assert.deepEqual(ctx.run('report').rows.filter(r => r.check === 'IF fix needed'), []);
+});
+
+test('a dropped add-on IF is not created again: Correct skips it with a reason, approvals and the report show it', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const ps = printLabels(ctx, 42, 'Jf1', [L975]).concat(printLabels(ctx, 1, 'Jf2', [LINE201]));
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    ctx.run('truck_verify', { truckId: t.id });
+    ctx.run('truck_correct', { truckId: t.id });                  // creates IF 901; the fixture doesn't know it, so it reads as gone
+    const again = ctx.run('truck_correct', { truckId: t.id });    // drops the gone 901, then must not create another
+    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_create').length, 1);
+    assert.deepEqual(again.written, []);
+    assert.equal(again.skipped[0].key, 'if_create:700');
+    assert.match(again.skipped[0].reason, /already created as IF 901: add it from the suggestions/);
+    assert.match(ctx.run('approvals').needsFix[0].orphans[0].text, /already created as IF 901/);
+    const row = ctx.run('report').rows.find(r => /Add-on IF 901 was dropped/.test(r.check + ' ' + r.portal));
+    assert.ok(row, 'report row');
+    assert.equal(row.ok, false);
+    assert.match(row.portal, /Add-on IF 901 was dropped: delete or reuse it in NetSuite/);
+});
+
+test('verify to ready clears a stale correctError', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.tx._t.failOn = 'if_qty:9001:975';
+    assert.throws(() => ctx.run('truck_correct', { truckId: t.id }), /Correction refused/);
+    assert.ok(ctx.data.getLoad(t.id).data.correctError);
+    matchIf(ctx, '9001', 480);                                     // the office fixed it in NetSuite
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'ready');
+    assert.equal(ctx.data.getLoad(t.id).data.correctError, '');
 });

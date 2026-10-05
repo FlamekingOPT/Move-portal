@@ -30,7 +30,12 @@ function setup(spec) {
     };
     recs['itemfulfillment:9'] = makeRec({ shipstatus: spec.status || 'B' }, spec.ifLines);
     recs['transferorder:600'] = makeRec({}, spec.to || [{ item: '975', quantity: 600, quantityfulfilled: 0 }]);
-    const tx = loadAmd('move_tx.js', { 'N/record': fakeRecord, 'N/search': {}, './move_verify': loadAmd('move_verify.js') });
+    log.searches = [];
+    const fakeSearch = {
+        Type: { TRANSACTION: 'transaction' },
+        create: o => { log.searches.push(o); return { run: () => ({ getRange: () => (spec.found ? [{ id: spec.found }] : []) }) }; }
+    };
+    const tx = loadAmd('move_tx.js', { 'N/record': fakeRecord, 'N/search': fakeSearch, './move_verify': loadAmd('move_verify.js') });
     return { tx, f: recs['itemfulfillment:9'], log };
 }
 const split = () => [{ item: '975', quantity: 300 }, { item: '975', quantity: 204 }];
@@ -154,4 +159,20 @@ test('if_create with ship:false creates the IF Packed (B) with no trailer, seal 
     assert.equal('custbody7' in r.values, false);
     assert.equal('custbody_rsm_container_no' in r.values, false);
     assert.deepEqual(q(r), [24, 0]);
+});
+
+test('if_create ship:false finds an IF already made with its token instead of creating a second one', () => {
+    const op = { op: 'if_create', toId: '600', lines: { 975: 24 }, ship: false, token: '[mv:5:if_create:600:975x24]' };
+    const f = setup({ ifLines: split(), found: '555' });
+    assert.equal(f.tx.apply(op), '555');
+    assert.equal(f.log.transforms.length, 0);
+    const flt = JSON.stringify(f.log.searches[0].filters);
+    ['"memo","contains","[mv:5:if_create:600:975x24]"', '"mainline","is","T"', '"type","anyof","ItemShip"', '"createdfrom","anyof","600"', '"ItemShip:A","ItemShip:B"']
+        .forEach(x => assert.ok(flt.indexOf(x) !== -1, x + ' in ' + flt));
+    const n = setup({ ifLines: split() });
+    assert.equal(n.tx.apply(op), '888');
+    assert.deepEqual([n.log.last.values.shipstatus, n.log.last.values.memo], ['B', '[mv:5:if_create:600:975x24]']);
+    const shipped = setup({ ifLines: split(), found: '555' });     // a shipped add-on never searches
+    assert.equal(shipped.tx.apply({ op: 'if_create', toId: '600', trailer: 'T5', seal: '1', memo: 'm', lines: { 975: 24 } }), '888');
+    assert.equal(shipped.log.searches.length, 0);
 });

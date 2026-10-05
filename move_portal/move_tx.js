@@ -97,9 +97,24 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         f.setValue({ fieldId: 'shipstatus', value: 'C' });
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
+    // A Packed add-on IF made by an earlier request that died before it was recorded: found by its memo token, never made twice.
+    function findPackedByToken(tok, toId) {
+        const r = search.create({ type: search.Type.TRANSACTION,
+            filters: [['memo', 'contains', tok], 'AND', ['mainline', 'is', 'T'], 'AND', ['type', 'anyof', 'ItemShip'], 'AND',
+                ['createdfrom', 'anyof', String(toId)], 'AND', ['status', 'anyof', ['ItemShip:A', 'ItemShip:B']]],
+            columns: ['internalid'] }).run().getRange({ start: 0, end: 1 });
+        return r && r[0] ? String(r[0].id) : null;
+    }
     function createIf(op) {
+        if (op.ship === false && op.token) {
+            const found = findPackedByToken(op.token, op.toId);
+            if (found) return found;
+        }
         const f = record.transform({ fromType: record.Type.TRANSFER_ORDER, fromId: op.toId, toType: record.Type.ITEM_FULFILLMENT, isDynamic: true });
-        if (op.ship === false) f.setValue({ fieldId: 'shipstatus', value: 'B' });   // a correction add-on: Packed, stamped at departure
+        if (op.ship === false) {                      // a correction add-on: Packed, stamped at departure
+            f.setValue({ fieldId: 'shipstatus', value: 'B' });
+            if (op.token) f.setValue({ fieldId: 'memo', value: op.token });
+        }
         else { f.setValue({ fieldId: 'shipstatus', value: 'C' }); stampOn(f, op); }
         setLines(f, op.lines);
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
@@ -111,7 +126,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         setLines(r, op.lines);
         return String(r.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
-    // if_qty / if_stamp re-read the IF and refuse if it changed; if_create / receipt rely on runOps done-keys
+    // if_qty / if_stamp re-read the IF and refuse if it changed; a Packed if_create is found by its memo token; receipt relies on runOps done-keys
     function apply(op) {
         if (op.op === 'if_qty') return setIfItemQty(op);
         if (op.op === 'if_stamp') return stampShip(op);

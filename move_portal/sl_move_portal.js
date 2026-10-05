@@ -227,8 +227,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // ── Verify Load (spec 2026-10-05) ────────────────────────────────────
     // Each diff plus a floor instruction; pallet counts only when every loaded pallet of that item has the same pcs.
-    function pubDiffs(diffs, loaded) {
-        const items = [...new Set(diffs.filter(d => d.item).map(d => String(d.item)))], sk = skuNames(items), pcs = {};
+    // skAll: SKU names the caller already looked up for several trucks at once (approvals).
+    function pubDiffs(diffs, loaded, skAll) {
+        const items = [...new Set(diffs.filter(d => d.item).map(d => String(d.item)))], sk = skAll || skuNames(items), pcs = {};
         loaded.forEach(p => (p.lines || []).forEach(l => { const k = String(l.item); (pcs[k] = pcs[k] || {})[Number(l.pcs)] = 1; }));
         const one = k => { const v = Object.keys(pcs[k] || {}); return v.length === 1 ? Number(v[0]) : null; };
         return diffs.map(d => Object.assign({}, d, { sku: d.item ? sk[String(d.item)] : '', text: verify.diffText(d, d.item ? sk[String(d.item)] : '', d.item ? one(String(d.item)) : null) }));
@@ -275,7 +276,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const cur = data.getLoad(id);                 // right before the write: never merge over a stale copy
         if (!cur || !isOpen(cur)) throw userErr('This truck is closed for changes (' + (cur ? (cur.data.claim || cur.data.depart ? T.DEPARTING : cur.status) : 'gone') + ')');
         if (ifSig(cur.data.ifs) !== ifSig(x.data.ifs)) throw userErr('This truck changed while it was being checked. Verify again.');
-        data.updateLoad(cur, { status: status, data: { ifs: r.keep, verify: { at: c.now.stamp, by: c.actor, diffs: r.diffs } } });
+        data.updateLoad(cur, { status: status, data: Object.assign({ ifs: r.keep, verify: { at: c.now.stamp, by: c.actor, diffs: r.diffs } },
+            status === T.READY ? { correctError: '' } : {}) });      // a ready truck has nothing left to correct
         out.x = mustTruck(id);
         return out;
     }
@@ -720,6 +722,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         });
         return out;
     }
+    // Add-on IFs a correction created that are no longer on the truck (a manager dropped them): never created again.
+    function orphanCreates(x) {
+        const on = {};
+        (x.data.ifs || []).forEach(f => { on[String(f.ifId)] = 1; });
+        return Object.keys(x.data.correctionWrites || {}).map(k => x.data.correctionWrites[k]).filter(w => w.op === 'if_create' && !on[String(w.id)])
+            .map(w => ({ key: w.key, id: String(w.id), text: 'already created as IF ' + w.id + ': add it from the suggestions' }));
+    }
+    function createToken(truckId, op) {          // short, and unique per truck + TO + lines, so a retry finds its own IF and nothing else
+        return '[mv:' + truckId + ':' + verify.opKey(op) + ':' + Object.keys(op.lines || {}).sort().map(k => k + 'x' + op.lines[k]).join(',') + ']';
+    }
     function stuckCorrect(x) { return !!x.data.claim && x.data.phase === 'correct' && stale(x); }
     function correctGuard(seen) {
         return cur => {
@@ -759,22 +771,31 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             drops.forEach(op => {
                 const f = ifs.find(y => String(y.ifId) === String(op.ifId));
                 if (!f) return;
-                if (!f.gone && verify.liveIfs(ifs).length === 1) { skipped.push(op.key); return; }
+                if (!f.gone && verify.liveIfs(ifs).length === 1) { skipped.push({ key: op.key, reason: 'the last IF on a truck is not dropped: add another IF first' }); return; }
                 ifs = ifs.filter(y => String(y.ifId) !== String(op.ifId));
             });
             assertClaim(id, claim, label, 'correct');
             data.updateLoad(data.getLoad(id), { data: { ifs: ifs } });
         }
-        const ops = mergeCreates(all.filter(op => op.op !== 'drop_if'));
-        const cw = Object.assign({}, cl.Ld.data.correctionWrites), done = {};
-        ops.forEach(op => { const k = verify.opKey(op), w = cw[k]; if (w && w.sig === corrSig(op)) done[k] = w.id; });
+        // A recorded write is done only for the same numbers. A recorded add-on IF counts only while it is on the truck;
+        // once dropped it is never created again (the manager re-adds it from the suggestions).
+        const now = data.getLoad(id), cw = Object.assign({}, now.data.correctionWrites), done = {}, orphan = {};
+        orphanCreates(now).forEach(o => { orphan[o.key] = o; });
+        const ops = mergeCreates(all.filter(op => op.op !== 'drop_if')).filter(op => {
+            const k = verify.opKey(op);
+            if (op.op === 'if_create' && orphan[k]) { skipped.push({ key: k, reason: orphan[k].text }); return false; }
+            const w = cw[k + '|' + corrSig(op)];
+            if (w) done[k] = w.id;
+            return true;
+        }).map(op => op.op === 'if_create' ? Object.assign({}, op, { token: createToken(id, op) }) : op);
         const byKey = {};
         ops.forEach(op => { byKey[verify.opKey(op)] = op; });
         const sk = skuNames([...new Set(ops.filter(op => op.op === 'if_create').reduce((s, op) => s.concat(Object.keys(op.lines)), []))]);
         let res, err = null;
         try {
             res = verify.runOps(ops, writeMode(c), op => { assertClaim(id, claim, label, 'correct'); return tx.apply(op); }, done, (k, newId) => {
-                const op = byKey[k], cur = data.getLoad(id), patch = { correctionWrites: Object.assign({}, cur.data.correctionWrites, { [k]: { id: newId, sig: corrSig(op), at: c.now.stamp, by: c.user } }) };
+                const op = byKey[k], cur = data.getLoad(id), patch = { correctionWrites: Object.assign({}, cur.data.correctionWrites,
+                    { [k + '|' + corrSig(op)]: { key: k, op: op.op, id: String(newId), sig: corrSig(op), at: c.now.stamp, by: c.user } }) };
                 if (op.op === 'if_create') patch.ifs = (cur.data.ifs || []).concat([{ ifId: String(newId), ifNum: 'IF ' + newId, toId: String(op.toId), toNum: op.toNum, status: 'B',
                     lines: Object.keys(op.lines).map(it => ({ item: String(it), sku: sk[String(it)], qty: Number(op.lines[it]) })) }]);
                 data.updateLoad(cur, { data: patch });   // fresh read: the write record and the attached IF land together
@@ -1038,10 +1059,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (fix.length) {
             const loaded = {}, dp = defPcs(c), planned = ns.plannedIfs();
             data.palletsByStatus([VP.LOADED]).forEach(p => { (loaded[String(p.loadId)] = loaded[String(p.loadId)] || []).push(p); });
+            const sk = skuNames([...new Set(fix.reduce((s, x) => s.concat(((x.data.verify || {}).diffs || []).filter(d => d.item).map(d => String(d.item))), []))]);
             needsFix = fix.map(x => {
                 const ps = loaded[String(x.id)] || [], diffs = (x.data.verify || {}).diffs || [];
-                return { truck: truckSummary(x, countsFromPallets(x.id, ps)), diffs: pubDiffs(diffs, ps), suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned),
-                    corrections: x.data.corrections || [], correctError: x.data.correctError || '', stuck: stuckCorrect(x), writeMode: writeMode(c) };
+                return { truck: truckSummary(x, countsFromPallets(x.id, ps)), diffs: pubDiffs(diffs, ps, sk), suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned),
+                    corrections: x.data.corrections || [], correctError: x.data.correctError || '', orphans: orphanCreates(x), stuck: stuckCorrect(x), writeMode: writeMode(c) };
             });
         }
         return {
@@ -1072,8 +1094,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         trucks.forEach(x => (x.data.alloc || []).forEach(al => Object.keys(al.lines).forEach(k => { ids[k] = 1; })));
         const rows = verify.shadowRows({ trucks: trucks, ifInfo: ns.ifInfo(), ifsByTo: ns.ifsByTo(), receipts: ns.receiptsByIf(), sku: skuNames(Object.keys(ids)) });
         // Plan-only corrections on trucks still at the dock (the write mode left them to the office), while the diff is still open.
-        const mode = writeMode(c), pend = [];
-        allTrucks().filter(x => x.status === T.NEEDS_FIX).forEach(x => {
+        const mode = writeMode(c), pend = [], every = allTrucks();
+        every.forEach(x => orphanCreates(x).forEach(o => rows.push({ truck: truckLabel(x), seal: (x.data.depart || {}).seal || '', ifNum: 'IF ' + o.id,
+            check: 'Dropped add-on IF', portal: 'Add-on IF ' + o.id + ' was dropped: delete or reuse it in NetSuite', netsuite: '—', ok: false })));
+        every.filter(x => x.status === T.NEEDS_FIX).forEach(x => {
             const open = {};
             ((x.data.verify || {}).diffs || []).forEach(d => { open[d.key] = 1; });
             (x.data.corrections || []).forEach(k => {
