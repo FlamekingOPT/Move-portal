@@ -907,7 +907,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 (d.kind === 'if_empty' || d.kind === 'if_gone' ? '<button class="dbtn gh" data-act="apdrop" data-id="' + id + '" data-ifid="' + esc(d.ifId) + '" data-label="' + esc(d.ifNum) + '">Drop</button>'
                     : can(d) ? '<button class="dbtn gh" data-act="apcorrect" data-id="' + id + '" data-key="' + esc(d.key) + '" data-label="' + lab + '" data-wm="' + wm + '">Correct</button>' : '') + '</div>').join('');
             const corr = (n.corrections || []).filter(k => live[k.key]).map(k => '<div class="muted">📝 ' + corrLine(k.op || {}) + ' · ' + esc(k.by && typeof k.by === 'object' ? k.by.name : k.by) + ' · ' + esc(k.at) + '</div>').join('');
-            return '<div class="card amberc"><h4>⚠ ' + lab + ' · Needs IF fix</h4><div class="muted">' + num(t.pallets) + ' pallets loaded</div>' +
+            return '<div class="card amberc"><h4>⚠ ' + lab + ' · Needs IF fix</h4><div class="muted">' + num(t.pallets) + ' pallets loaded' +
+                (n.verifiedAt ? ' · checked ' + esc(n.verifiedAt) + (n.verifiedBy ? ' by ' + esc(n.verifiedBy) : '') : '') + '</div>' +
                 (n.stuck ? '<div class="muted warn">⚠ A correction stalled. Press Correct the IF again to free it.</div>' : '') +
                 (n.correctError ? errBox('Correction refused: ' + n.correctError + ' — fix it in NetSuite') : '') +
                 '<div class="diffs">' + rows + '</div>' + corr +

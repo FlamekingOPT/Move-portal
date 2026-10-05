@@ -1354,6 +1354,21 @@ test('approvals lists needs_fix trucks with instruction text', () => {
     assert.match(a.needsFix[0].diffs[0].text, /IF needs −24/);
 });
 
+test('approvals needs_fix entry says who verified and when (name, never an object)', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    const v = ctx.data.getLoad(t.id).data.verify;
+    let e = ctx.run('approvals').needsFix[0];
+    assert.equal(typeof e.verifiedBy, 'string');
+    assert.ok(e.verifiedBy);
+    assert.deepEqual([e.verifiedBy, e.verifiedAt], [String(v.by), v.at]);
+    const L = ctx.data.getLoad(t.id);
+    ctx.data.updateLoad(L, { data: { verify: Object.assign({}, L.data.verify, { by: { id: '7', name: 'Ann Mgr' } }) } });
+    e = ctx.run('approvals').needsFix[0];
+    assert.equal(e.verifiedBy, 'Ann Mgr');
+});
+
 test('truck_correct: a refused write surfaces correctError, keeps the truck needs_fix and frees the claim', () => {
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'qty';

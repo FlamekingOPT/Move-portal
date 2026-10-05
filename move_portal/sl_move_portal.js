@@ -1048,6 +1048,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     // ── v3 manager approvals and shadow report ───────────────────────────
+    function whoName(w) { return w && typeof w === 'object' ? String(w.name || w.id || '') : String(w == null ? '' : w); }
     act('approvals', true, (a, c) => {
         const trucks = allTrucks();
         const stuck = x => !!(x.data.error || stale(x));
@@ -1063,7 +1064,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             needsFix = fix.map(x => {
                 const ps = loaded[String(x.id)] || [], diffs = (x.data.verify || {}).diffs || [];
                 return { truck: truckSummary(x, countsFromPallets(x.id, ps)), diffs: pubDiffs(diffs, ps, sk), suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned),
-                    corrections: x.data.corrections || [], correctError: x.data.correctError || '', orphans: orphanCreates(x), stuck: stuckCorrect(x), writeMode: writeMode(c) };
+                    corrections: x.data.corrections || [], correctError: x.data.correctError || '', orphans: orphanCreates(x), stuck: stuckCorrect(x), writeMode: writeMode(c), verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '' };
             });
         }
         return {

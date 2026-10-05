@@ -104,7 +104,7 @@ test('verify-load UI: needs-fix message depends on what changed', () => {
 test('verify-load UI: approvals needs-fix cards, write-mode wording, release, skipped and orphans', () => {
     const src = ui._clientMain.toString();
     ['Plan only: fix in NetSuite', 'Changes IF quantities in NetSuite (add-on IFs: office creates them)', 'Changes IF quantities and creates add-on IFs in NetSuite',
-        'Release to Needs IF fix', "api('depart_release'", 'canRelease', 'r.needsFix', '.orphans', '.skipped', 'correctError', 'data-act="apcorrect"', 'data-act="apdrop"']
+        'Release to Needs IF fix', 'n.verifiedBy', 'n.verifiedAt', "api('depart_release'", 'canRelease', 'r.needsFix', '.orphans', '.skipped', 'correctError', 'data-act="apcorrect"', 'data-act="apdrop"']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     ['apcorrect', 'aprelease', 'apdrop'].forEach(n => {
         const i = src.indexOf('ACT.' + n + ' =');
