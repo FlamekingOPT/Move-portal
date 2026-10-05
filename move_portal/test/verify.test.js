@@ -224,3 +224,34 @@ test('shadowRows compares string quantities numerically', () => {
     assert.equal(rows.find(r => r.check === 'IF qty 975').ok, true);
     assert.equal(rows.find(r => r.check === 'Receipt qty 975').ok, true);
 });
+
+const raw = require('./fixtures/snapshot_sample.json');
+
+test('buildReads: planned IFs (A/B), merged lines, TO remaining after every IF, open TOs only', () => {
+    const r = v.buildReads(raw);
+    assert.deepEqual(r.plannedIfs().map(f => [f.ifId, f.status, f.toNum, f.lines]), [
+        ['9001', 'B', 'TO500', [{ item: '975', sku: 'YSN100', qty: 504 }]],
+        ['9002', 'A', 'TO500', [{ item: '975', sku: 'YSN100', qty: 504 }]]]);
+    assert.deepEqual(r.openToLines().map(t => [t.toId, t.item, t.remaining]), [['500', '975', 48], ['600', '975', 504], ['700', '11', 1200]]);
+    assert.deepEqual(r.ifsByTo(), { 500: ['9000', '9001', '9002'], 800: ['9050'] });
+    assert.deepEqual(r.receiptsByIf(), { 9000: [{ id: '7000', tranid: 'IR7000', trailer: '537224', seal: 'SEAL: 5249300', lines: { 975: 504 } }] });
+    assert.equal(r.ifInfo()['9000'].status, 'C');
+    assert.deepEqual(r.items()[0], { item: '975', sku: 'YSN100', desc: '100# LP cylinder', upc: '0975' });
+    assert.equal(r.pulledAt(), '2026-10-05T14:00:00-07:00');
+});
+
+test('SQL builds location-specific queries', () => {
+    const q = v.SQL('35', '46');
+    assert.match(q.toLines, /t\.transferlocation = 46/);
+    assert.match(q.toLines, /x\.location = 35/);
+    assert.match(q.ifLines, /tl\.location = 35/);
+    assert.match(q.links, /linktype = 'TOrdCost'/);
+    assert.match(q.receipts, /\{IDS\}/);
+});
+
+test('local snapshot_ns reads a file path', () => {
+    const { makeSnapshotNs } = require('../local/snapshot_ns');
+    const ns = makeSnapshotNs(v, require('path').join(__dirname, 'fixtures', 'snapshot_sample.json'));
+    assert.equal(ns.plannedIfs().length, 2);
+    ns.resetCache();
+});

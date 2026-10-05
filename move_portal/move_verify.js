@@ -258,7 +258,72 @@ define([], function () {
         return rows;
     }
 
+    // ── NetSuite reads: SuiteQL text + a builder shared by the live module and the snapshot ──
+    function SQL(locFrom, locTo) {
+        const F = Number(locFrom), T = Number(locTo);
+        const moveTos = "SELECT t.id FROM transaction t WHERE t.type = 'TrnfrOrd' AND t.transferlocation = " + T;
+        return {
+            toLines: "SELECT t.id AS toid, t.tranid AS tonum, t.status AS tostatus, TO_CHAR(t.trandate, 'YYYY-MM-DD') AS trandate, " +
+                "tl.item AS item, BUILTIN.DF(tl.item) AS sku, tl.quantity AS qty FROM transaction t JOIN transactionline tl ON tl.transaction = t.id " +
+                "WHERE t.type = 'TrnfrOrd' AND t.transferlocation = " + T + " AND tl.location = " + T + " AND tl.quantity > 0 " +
+                "AND t.id IN (SELECT x.transaction FROM transactionline x WHERE x.mainline = 'T' AND x.location = " + F + ")",
+            ifLines: "SELECT f.id AS ifid, f.tranid AS ifnum, f.status AS status, TO_CHAR(f.trandate, 'YYYY-MM-DD') AS trandate, tl.createdfrom AS toid, " +
+                "tl.item AS item, BUILTIN.DF(tl.item) AS sku, tl.quantity AS qty FROM transaction f JOIN transactionline tl ON tl.transaction = f.id " +
+                "WHERE f.type = 'ItemShip' AND tl.mainline = 'F' AND tl.location = " + F + " AND tl.quantity > 0 AND tl.createdfrom IN (" + moveTos + ")",
+            links: "SELECT ptl.previousdoc AS ifid, ptl.nextdoc AS rcptid FROM previoustransactionlink ptl WHERE ptl.linktype = 'TOrdCost' AND ptl.previousdoc IN ({IDS})",
+            receipts: "SELECT r.id AS rcptid, r.tranid AS tranid, r.custbody_rsm_container_no AS trailer, r.custbody7 AS seal, tl.item AS item, tl.quantity AS qty " +
+                "FROM transaction r JOIN transactionline tl ON tl.transaction = r.id WHERE r.type = 'ItemRcpt' AND tl.location = " + T + " AND tl.quantity > 0 AND r.id IN ({IDS})",
+            items: "SELECT i.id AS item, i.itemid AS sku, i.displayname AS descr, i.upccode AS upc FROM item i WHERE i.id IN ({IDS})"
+        };
+    }
+
+    function buildReads(raw) {
+        raw = raw || {};
+        const S = x => String(x == null ? '' : x);
+        const toQty = {}, toMeta = {}, used = {}, ifs = {}, byTo = {};
+        (raw.toLines || []).forEach(r => {
+            const key = S(r.toid) + '|' + S(r.item);
+            toQty[key] = (toQty[key] || 0) + Number(r.qty || 0);
+            toMeta[S(r.toid)] = { toNum: S(r.tonum), trandate: S(r.trandate), toStatus: S(r.tostatus) };
+            toMeta[key] = { sku: S(r.sku) };
+        });
+        (raw.ifLines || []).forEach(r => {
+            const id = S(r.ifid), to = S(r.toid), it = S(r.item);
+            const f = ifs[id] = ifs[id] || { ifId: id, ifNum: S(r.ifnum), status: S(r.status), trandate: S(r.trandate), toId: to, toNum: (toMeta[to] || {}).toNum || '', lines: [] };
+            const l = f.lines.find(x => x.item === it);
+            if (l) l.qty += Number(r.qty || 0); else f.lines.push({ item: it, sku: S(r.sku), qty: Number(r.qty || 0) });
+            used[to + '|' + it] = (used[to + '|' + it] || 0) + Number(r.qty || 0);
+            if ((byTo[to] = byTo[to] || []).indexOf(id) === -1) byTo[to].push(id);
+        });
+        Object.keys(byTo).forEach(k => byTo[k].sort((a, b) => Number(a) - Number(b)));
+        const rcptIf = {};
+        (raw.links || []).forEach(l => { if (ifs[S(l.ifid)]) rcptIf[S(l.rcptid)] = S(l.ifid); });
+        const recs = {};
+        (raw.receipts || []).forEach(r => {
+            const ifId = rcptIf[S(r.rcptid)];
+            if (!ifId) return;
+            const list = recs[ifId] = recs[ifId] || [];
+            let x = list.find(y => y.id === S(r.rcptid));
+            if (!x) { x = { id: S(r.rcptid), tranid: S(r.tranid), trailer: S(r.trailer), seal: S(r.seal), lines: {} }; list.push(x); }
+            x.lines[S(r.item)] = (x.lines[S(r.item)] || 0) + Number(r.qty || 0);
+        });
+        const byNum = (a, b) => Number(a.ifId) - Number(b.ifId);
+        return {
+            plannedIfs: () => Object.values(ifs).filter(f => PLANNED_IF_STATUS.indexOf(f.status) !== -1 && toMeta[f.toId]).sort(byNum).map(f => JSON.parse(JSON.stringify(f))),
+            openToLines: () => Object.keys(toQty).map(key => {
+                const p = key.split('|'), m = toMeta[p[0]];
+                return { toId: p[0], toNum: m.toNum, trandate: m.trandate, toStatus: m.toStatus, item: p[1], sku: toMeta[key].sku, qty: toQty[key], remaining: toQty[key] - (used[key] || 0) };
+            }).filter(r => OPEN_TO_STATUS.indexOf(r.toStatus) !== -1 && r.remaining > 0).sort((a, b) => Number(a.toId) - Number(b.toId)),
+            ifInfo: () => { const o = {}; Object.values(ifs).forEach(f => { o[f.ifId] = { ifNum: f.ifNum, status: f.status, toId: f.toId, lines: f.lines.map(l => Object.assign({}, l)) }; }); return o; },
+            ifsByTo: () => JSON.parse(JSON.stringify(byTo)),
+            receiptsByIf: () => JSON.parse(JSON.stringify(recs)),
+            items: () => (raw.items || []).map(i => ({ item: S(i.item), sku: S(i.sku), desc: S(i.descr), upc: S(i.upc) })),
+            pulledAt: () => S(raw.pulledAt),
+            resetCache: () => {}
+        };
+    }
+
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture,
-        classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows };
+        classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });

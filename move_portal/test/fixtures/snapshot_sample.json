@@ -1,0 +1,19 @@
+{
+  "pulledAt": "2026-10-05T14:00:00-07:00", "locFrom": "35", "locTo": "46",
+  "toLines": [
+    { "toid": 500, "tonum": "TO500", "tostatus": "D", "trandate": "2026-10-01", "item": 975, "sku": "YSN100", "qty": 1560 },
+    { "toid": 600, "tonum": "TO600", "tostatus": "B", "trandate": "2026-09-29", "item": 975, "sku": "YSN100", "qty": 504 },
+    { "toid": 700, "tonum": "TO700", "tostatus": "B", "trandate": "2026-09-28", "item": 11, "sku": "YSN201", "qty": 1200 },
+    { "toid": 800, "tonum": "TO800", "tostatus": "G", "trandate": "2026-09-20", "item": 11, "sku": "YSN201", "qty": 100 }
+  ],
+  "ifLines": [
+    { "ifid": 9000, "ifnum": "IF9000", "status": "C", "trandate": "2026-10-03", "toid": 500, "item": 975, "sku": "YSN100", "qty": 504 },
+    { "ifid": 9001, "ifnum": "IF9001", "status": "B", "trandate": "2026-10-05", "toid": 500, "item": 975, "sku": "YSN100", "qty": 504 },
+    { "ifid": 9002, "ifnum": "IF9002", "status": "A", "trandate": "2026-10-05", "toid": 500, "item": 975, "sku": "YSN100", "qty": 288 },
+    { "ifid": 9002, "ifnum": "IF9002", "status": "A", "trandate": "2026-10-05", "toid": 500, "item": 975, "sku": "YSN100", "qty": 216 },
+    { "ifid": 9050, "ifnum": "IF9050", "status": "C", "trandate": "2026-09-21", "toid": 800, "item": 11, "sku": "YSN201", "qty": 100 }
+  ],
+  "links": [{ "ifid": 9000, "rcptid": 7000 }, { "ifid": 1234, "rcptid": 7999 }],
+  "receipts": [{ "rcptid": 7000, "tranid": "IR7000", "trailer": "537224", "seal": "SEAL: 5249300", "item": 975, "qty": 504 }],
+  "items": [{ "item": 975, "sku": "YSN100", "descr": "100# LP cylinder", "upc": "0975" }, { "item": 11, "sku": "YSN201", "descr": "20# LP cylinder", "upc": "111" }]
+}
