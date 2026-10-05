@@ -81,7 +81,7 @@ define(['N/record', 'N/search'], function (record, search) {
         return String(r.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
 
-    // v3 write ops (spec 6). Each re-reads NetSuite and refuses if it changed since the plan.
+    // v3 write ops (spec 6). if_qty and if_stamp re-read NetSuite and refuse if the IF changed since the plan; if_create and receipt transform the TO.
     function changed(msg) { return new Error('IF changed in NetSuite, review: ' + msg); }
     function stampOn(rec, op) {
         rec.setValue({ fieldId: 'custbody_rsm_container_no', value: op.trailer });
@@ -109,16 +109,22 @@ define(['N/record', 'N/search'], function (record, search) {
         const lines = itemLines(f, op.item);
         const cur = lines.reduce((a, i) => a + (Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0), 0);
         if (cur !== Number(op.from)) throw changed(op.ifNum + ' item ' + op.item + ' is ' + cur + ', expected ' + op.from);
-        if (op.to > op.from && op.to - op.from > toRemaining(op.toId, op.item)) throw changed('TO ' + op.toId + ' has no room to raise ' + op.ifNum + ' to ' + op.to);
+        if (Number(op.to) > Number(op.from) && Number(op.to) - Number(op.from) > toRemaining(op.toId, op.item)) throw changed('TO ' + op.toId + ' has no room to raise ' + op.ifNum + ' to ' + op.to);
+        if (Number(op.to) <= 0) {
+            const others = f.getLineCount({ sublistId: 'item' }) - lines.length;
+            const ticked = [];
+            for (let i = 0; i < f.getLineCount({ sublistId: 'item' }); i++)
+                if (lines.indexOf(i) === -1 && f.getSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i }) !== false) ticked.push(i);
+            if (!others || !ticked.length) throw changed(op.ifNum + ' would be emptied by taking item ' + op.item + ' to 0');
+        }
         let left = Number(op.to);
         const caps = lines.map(i => Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0);
         const want = lines.map((i, n) => { const last = n === lines.length - 1; const g = last ? left : Math.min(left, caps[n]); left -= g; return g; });
         for (let n = lines.length - 1; n >= 0; n--) {
-            if (want[n] > 0) {
-                f.selectLine({ sublistId: 'item', line: lines[n] });
-                f.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: want[n] });
-                f.commitLine({ sublistId: 'item' });
-            } else f.removeLine({ sublistId: 'item', line: lines[n] });
+            f.selectLine({ sublistId: 'item', line: lines[n] });
+            if (want[n] > 0) f.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: want[n] });
+            else f.setCurrentSublistValue({ sublistId: 'item', fieldId: 'itemreceive', value: false });
+            f.commitLine({ sublistId: 'item' });
         }
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
