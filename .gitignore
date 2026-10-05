@@ -1,3 +1,5 @@
 node_modules/
 .claude/settings.local.json
 .superpowers/
+move_portal/local/store.json
+move_portal/snapshot/

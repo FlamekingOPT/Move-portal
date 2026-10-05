@@ -31,3 +31,16 @@ test('fake data: loads keep string ids and merge data', () => {
     L = d.getLoad(id);
     assert.deepEqual([L.status, L.receipts, L.data.door, L.data.readyBy], ['ready', ['9'], '4', 'M']);
 });
+
+test('local store round-trips db to a file', () => {
+    const os = require('os'), path = require('path'), fs = require('fs');
+    const { makeLocalStore } = require('../local/local_store');
+    const core = require('./amd').loadAmd('move_core.js');
+    const f = path.join(os.tmpdir(), 'mv-store-' + Date.now() + '.json');
+    const a = makeLocalStore(core, f);
+    a.data.createLoad({ number: 'X', status: 'loading', data: { v3: true } });
+    a.save();
+    const b = makeLocalStore(core, f);
+    assert.equal(b.data.loadsByStatus(['loading']).length, 1);
+    fs.unlinkSync(f);
+});
