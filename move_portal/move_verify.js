@@ -19,6 +19,8 @@ define([], function () {
         (pallets || []).forEach(p => (p.lines || []).forEach(l => { const k = String(l.item); out[k] = (out[k] || 0) + (Number(l.pcs) || 0); }));
         return out;
     }
+    // IFs flagged gone (no longer Picked/Packed in NetSuite) stay on a truck until a manager drops them, but cover nothing.
+    function liveIfs(ifs) { return (ifs || []).filter(f => !f.gone); }
     function byIfOrder(ifs) { return (ifs || []).slice().sort((a, b) => Number(a.ifId) - Number(b.ifId)); }
     function ifQty(f, item) { return (f.lines || []).filter(l => String(l.item) === String(item)).reduce((a, l) => a + (Number(l.qty) || 0), 0); }
     function oldestFirst(a, b) { return a.trandate < b.trandate ? -1 : a.trandate > b.trandate ? 1 : Number(a.toId) - Number(b.toId); }
@@ -202,9 +204,10 @@ define([], function () {
         // so adding them would double-count. Once a qty write lands, the IF qty covers it and the surplus drops to 0.
         const room = reserveToLines(o.toLines, res), out = Object.assign({}, res);
         others.filter(t => [TRUCK.LOADING, TRUCK.NEEDS_FIX, TRUCK.READY].indexOf(t.status) !== -1).forEach(t => {
-            const fill = fillExpected(t.data.ifs || [], (o.loadedByTruck || {})[String(t.id)] || {});
-            const sp = placeSurplus(t.data.ifs || [], fill.left, room), byIf = {};
-            (t.data.ifs || []).forEach(f => { byIf[String(f.ifId)] = f; });
+            const ifs = liveIfs(t.data.ifs);
+            const fill = fillExpected(ifs, (o.loadedByTruck || {})[String(t.id)] || {});
+            const sp = placeSurplus(ifs, fill.left, room), byIf = {};
+            ifs.forEach(f => { byIf[String(f.ifId)] = f; });
             Object.keys(sp.raises).forEach(id => Object.keys(sp.raises[id]).forEach(k => addRes(out, byIf[id].toId, k, sp.raises[id][k])));
             Object.keys(sp.addOns).forEach(to => Object.keys(sp.addOns[to].lines).forEach(k => addRes(out, to, k, sp.addOns[to].lines[k])));
         });
@@ -415,7 +418,11 @@ define([], function () {
             const to = (o.toLines || []).filter(r => String(r.item) === k && Number(r.remaining) > 0).sort(oldestFirst)[0];
             diffs.push({ key: 'no_if:' + k, kind: 'no_if', item: k, qty: left, toId: to ? String(to.toId) : null, toNum: to ? to.toNum : null });
         });
-        return { match: diffs.length === 0, diffs: diffs, ifs: ifs };
+        // keep: what the truck saves: the fresh IFs plus the last saved copy of each gone IF, flagged, so if_gone repeats until dropped.
+        const savedById = {};
+        (o.savedIfs || []).forEach(f => { savedById[String(f.ifId)] = f; });
+        const keep = ifs.concat(fr.gone.map(g => Object.assign({}, savedById[String(g.ifId)], { gone: true })));
+        return { match: diffs.length === 0, diffs: diffs, ifs: ifs, keep: keep };
     }
 
     function fmt(n) { return Number(n).toLocaleString('en-US'); }
@@ -448,6 +455,6 @@ define([], function () {
 
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
-        verifyLoad, diffText, ifSuggestions, correctionOps,
+        verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });

@@ -1134,3 +1134,101 @@ test('verify saves the fresh NetSuite IFs; refuses when the truck changed meanwh
     ctx.data.palletsByLoad = orig;
     assert.throws(() => ctx.run('truck_drop_if', { truckId: t.id, ifId: '9001' }), /at least one IF/);
 });
+
+// ── Verify Load review fixes (I1, I2, M4) ──
+function goneIf(ctx, ifId) { const real = ctx.ns.plannedIfs; ctx.ns.plannedIfs = () => real().filter(f => f.ifId !== ifId); }
+
+test('I1: a gone IF persists across verifies and a recheck until a manager drops it', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 43);
+    ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' });                // manager
+    goneIf(ctx, '9002');
+    const kinds = r => r.diffs.map(d => d.kind);
+    assert.ok(kinds(ctx.run('truck_verify', { truckId: t.id }, false)).includes('if_gone'));
+    assert.ok(kinds(ctx.run('truck_verify', { truckId: t.id }, false)).includes('if_gone'));
+    ctx.run('trucks_recheck', {}, false);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.ifs.map(f => [f.ifId, !!f.gone]), x.data.verify.diffs.some(d => d.kind === 'if_gone')], ['needs_fix', [['9001', false], ['9002', true]], true]);
+    assert.equal(ctx.run('truck_get', { truckId: t.id }).view.truck.label, 'IF9001 + IF9002');
+    const r = ctx.run('truck_drop_if', { truckId: t.id, ifId: '9002' });
+    assert.deepEqual([r.diffs.some(d => d.kind === 'if_gone'), r.view.truck.label], [false, 'IF9001']);
+});
+
+test('I1: a truck whose only IF is gone keeps its label; the manager drops it; then no IFs and no_if for the load', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    goneIf(ctx, '9001');
+    const v = ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.deepEqual(v.diffs.map(d => d.kind).sort(), ['if_gone', 'no_if']);
+    assert.equal(v.view.truck.label, 'IF9001');
+    assert.equal(v.view.lines.length, 0);                                    // a gone IF expects nothing
+    const r = ctx.run('truck_drop_if', { truckId: t.id, ifId: '9001' });
+    assert.deepEqual([r.view.truck.label, r.diffs.map(d => d.kind)], ['No IFs: add one', ['no_if']]);
+    assert.deepEqual(ctx.data.getLoad(t.id).data.ifs, []);
+});
+
+test('I1: the last IF can be dropped only when it is gone', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    assert.throws(() => ctx.run('truck_drop_if', { truckId: t.id, ifId: '9001' }), /at least one IF/);
+});
+
+test('I2: a recheck with no change writes nothing and keeps verify at/by', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Ana' }, false);
+    const before = ctx.data.getLoad(t.id).data.verify;
+    const n = countCalls(ctx, 'updateLoad');
+    const reads = countCalls(ctx, 'palletsByStatus');
+    const r = ctx.run('trucks_recheck', { actor: 'Poller' }, false);
+    assert.deepEqual([r.nowReady, n.n, reads.n], [[], 0, 1]);
+    assert.deepEqual(ctx.data.getLoad(t.id).data.verify, before);
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Bo' }, false);          // a manual verify always records
+    assert.equal(ctx.data.getLoad(t.id).data.verify.by, 'Bo');
+});
+
+test('I2: recheck reads planned IFs and TO lines once for all trucks', () => {
+    const ctx = setup();
+    const a = truckWith(ctx, 40).t, b = truckWith(ctx, 40, '9002').t;
+    ctx.run('truck_verify', { truckId: a.id }, false); ctx.run('truck_verify', { truckId: b.id }, false);
+    const calls = { p: 0, o: 0 }, rp = ctx.ns.plannedIfs, ro = ctx.ns.openToLines;
+    ctx.ns.plannedIfs = () => { calls.p++; return rp(); };
+    ctx.ns.openToLines = () => { calls.o++; return ro(); };
+    ctx.run('trucks_recheck', {}, false);
+    assert.deepEqual(calls, { p: 1, o: 1 });
+});
+
+test('M4: recheck skips a truck that throws a user error and still returns the others', () => {
+    const ctx = setup();
+    const a = truckWith(ctx, 40).t, b = truckWith(ctx, 40, '9002').t;
+    ctx.run('truck_verify', { truckId: a.id }, false); ctx.run('truck_verify', { truckId: b.id }, false);
+    const real = ctx.ns.plannedIfs;
+    ctx.ns.plannedIfs = () => real().map(f => Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: 480 })] }));
+    const getLoad = ctx.data.getLoad;
+    ctx.data.getLoad = id => { const x = getLoad(id); if (x && String(id) === String(a.id)) x.data.claim = 'departing'; return x; };   // a departure claimed A mid-recheck
+    const r = ctx.run('trucks_recheck', {}, false);
+    ctx.data.getLoad = getLoad;
+    assert.deepEqual(r.nowReady.map(x => x.id), [b.id]);
+    assert.equal(ctx.data.getLoad(a.id).status, 'needs_fix');
+});
+
+test('M4: a manager adds a non-suggested eligible IF; an IF on another truck is refused for floor and manager', () => {
+    const ctx = setup();
+    const [ifX] = extraIfs(ctx, 1);                                           // TO600: never suggested for a TO500 truck
+    const { t } = truckWith(ctx, 43);
+    const v = ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.ok(!v.suggestions.some(f => f.ifId === ifX));
+    assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: ifX }, false), /not a suggested IF/);
+    assert.ok(ctx.run('truck_add_if', { truckId: t.id, ifId: ifX }).view.truck.label.includes('IF' + ifX));
+    ctx.run('truck_start', { ifIds: ['9002'] });
+    assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' }, false), /on another truck/);
+    assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' }), /on another truck/);
+});
+
+test('M4: take-off reads no TO lines', () => {
+    const ctx = setup();
+    const { t, ps } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.ns.openToLines = () => { throw new Error('openToLines must not be read'); };
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code, mode: 'off' }, false).result, 'taken_off');
+});

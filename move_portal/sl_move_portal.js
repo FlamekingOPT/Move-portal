@@ -136,7 +136,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function mustTruck(id) { const x = data.getLoad(id); if (!x || !x.data || !x.data.v3) throw userErr('Truck not found'); return x; }
     function truckLabel(x) {
         const d = x.data || {};
-        return d.depart ? verify.memoFor(d.depart.truckNo, d.depart.day) : (d.ifs || []).map(f => f.ifNum).join(' + ');
+        if (d.depart) return verify.memoFor(d.depart.truckNo, d.depart.day);
+        return (d.ifs || []).length ? d.ifs.map(f => f.ifNum).join(' + ') : 'No IFs: add one';     // gone IFs keep their number until dropped
     }
     function truckMap(list) { const o = {}; list.forEach(x => { o[x.id] = { status: x.status, label: truckLabel(x) }; }); return o; }
     function skuNames(items) { const info = data.itemInfo(items.map(String)); const o = {}; items.forEach(k => { o[k] = info[k] ? info[k].sku : String(k); }); return o; }
@@ -166,17 +167,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (!x.data.recvSeq) return cnt(counts || data.palletStatusCounts([x.id]), x.id, VP.RECEIVED);
         return data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).length;
     }
-    function truckView(x, c) {
-        const d = x.data || {}, dp = defPcs(c);
+    // opt.planned / opt.trucks: reads the caller already made, so a needs_fix view doesn't read them again.
+    function truckView(x, c, opt) {
+        const d = x.data || {}, dp = defPcs(c), live = verify.liveIfs(d.ifs);
         const ps = data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
-        const fill = verify.fillExpected(d.ifs || [], verify.sumLines(ps));
+        const fill = verify.fillExpected(live, verify.sumLines(ps));
         const lines = [];
-        (d.ifs || []).forEach(f => f.lines.forEach(l => lines.push({ ifNum: f.ifNum, item: l.item, sku: l.sku, expected: l.qty,
+        live.forEach(f => f.lines.forEach(l => lines.push({ ifNum: f.ifNum, item: l.item, sku: l.sku, expected: l.qty,
             scanned: fill.alloc[f.ifId] ? fill.alloc[f.ifId][l.item] || 0 : 0, estPallets: dp[l.item] ? Math.ceil(l.qty / dp[l.item]) : null })));
         const extraIds = Object.keys(fill.left).filter(k => fill.left[k] > 0), sk = skuNames(extraIds);
         const vd = d.verify ? pubDiffs(d.verify.diffs || [], ps.filter(p => p.status === VP.LOADED)) : null;
         return { stage: x.status, verify: d.verify ? Object.assign({}, d.verify, { diffs: vd }) : null,
-            suggestions: x.status === T.NEEDS_FIX && d.verify ? suggestionsFor(x, d.ifs, d.verify.diffs || [], dp) : [],   // only needs_fix reads NetSuite here
+            suggestions: x.status === T.NEEDS_FIX && d.verify ? suggestionsFor(x, d.ifs, d.verify.diffs || [], dp, (opt || {}).trucks, (opt || {}).planned) : [],   // only needs_fix reads NetSuite here
             truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
@@ -205,15 +207,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return o;
     }
     // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons).
-    function reservedToLines(exceptId, trucks, loadedAll, c) {
-        const byTruck = {}, toLines = ns.openToLines();
+    function reservedToLines(exceptId, trucks, loadedAll, c, openTo) {
+        const byTruck = {}, toLines = openTo || ns.openToLines();
         (loadedAll || data.palletsByStatus([VP.LOADED])).forEach(p => { (byTruck[p.loadId] = byTruck[p.loadId] || []).push(p); });
         Object.keys(byTruck).forEach(k => { byTruck[k] = verify.sumLines(byTruck[k]); });
         return verify.reserveToLines(toLines, verify.reservationsFromTrucks({ trucks: trucks, loadedByTruck: byTruck, toLines: toLines, mode: writeMode(c), exceptId: exceptId }));
     }
     function scanCtx(x, c) {
         const trucks = allTrucks(), loadedAll = data.palletsByStatus([VP.LOADED]);
-        return { truckId: x.id, trucks: scanTruckMap(trucks), ifs: x.data.ifs, toLines: reservedToLines(x.id, trucks, loadedAll, c),
+        return { truckId: x.id, trucks: scanTruckMap(trucks), ifs: verify.liveIfs(x.data.ifs), toLines: reservedToLines(x.id, trucks, loadedAll, c),
             loadedByItem: verify.sumLines(loadedAll.filter(p => p.loadId === String(x.id))) };
     }
     // Called at the start and again right before a pallet changes, so a scan never lands on a truck that is departing.
@@ -241,29 +243,38 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const list = verify.ifSuggestions({ truckIfs: ifs || [], diffs: diffs, planned: planned || ns.plannedIfs(), takenIfIds: takenByOthers(trucks || allTrucks(), x.id) });
         return list.map(f => pubIf(f, dp));
     }
-    function ifKey(ifs) { return (ifs || []).map(f => String(f.ifId)).sort().join(','); }
+    // What a verify result depends on: IF ids, gone flags and line qtys; the diffs as saved.
+    function ifSig(ifs) { return JSON.stringify((ifs || []).map(f => [String(f.ifId), !!f.gone, (f.lines || []).map(l => [String(l.item), Number(l.qty)])]).sort()); }
+    function diffSig(diffs) { return JSON.stringify(diffs || null); }
     function palletKey(ps) { return ps.map(p => String(p.id)).sort().join(','); }
     // Shared by truck_verify, trucks_recheck, truck_add_if, truck_drop_if (and departure in Task 3).
-    // newIfs(x) gives the IF list to check (default: the saved one). Fresh NetSuite IFs are saved back to data.ifs,
-    // so reservations never use a stale IF qty. Refuses if the truck closed, or its IFs or pallets changed meanwhile.
+    // opt.newIfs(x, planned, trucks): the IF list to check (default: the saved one). Saves the fresh NetSuite IFs plus the
+    // gone ones (flagged) as data.ifs, so reservations never use a stale IF qty and if_gone repeats until a manager drops it.
+    // opt.truck/trucks/planned/openTo/loadedAll: reads the caller already made (recheck reads them once per request).
+    // opt.poll: write only when the status, the diffs or the IFs changed, so at/by stay those of the last real change.
+    // Refuses if the truck closed, or its IFs or pallets changed while it was being checked.
     function verifyTruck(id, c, opt) {
         opt = opt || {};
-        const x = mustTruck(id);
+        const x = opt.truck || mustTruck(id);
         if (!isOpen(x)) throw userErr('This truck is closed for changes (' + (x.data.claim || x.data.depart ? T.DEPARTING : x.status) + ')');
         const trucks = opt.trucks || allTrucks(), planned = opt.planned || ns.plannedIfs();
         const ifs = opt.newIfs ? opt.newIfs(x, planned, trucks) : (x.data.ifs || []);
-        const ps = data.palletsByLoad(x.id, [VP.LOADED]);
-        const r = verify.verifyLoad({ savedIfs: ifs, freshIfs: planned, pallets: ps, toLines: reservedToLines(x.id, trucks, null, c) });
-        const cur = data.getLoad(id);
-        if (!cur || !isOpen(cur)) throw userErr('This truck is closed for changes (' + (cur ? cur.status : 'gone') + ')');
-        if (ifKey(cur.data.ifs) !== ifKey(x.data.ifs) || palletKey(data.palletsByLoad(x.id, [VP.LOADED])) !== palletKey(ps)) {
-            throw userErr('This truck changed while it was being checked. Verify again.');
-        }
-        data.updateLoad(cur, { status: r.match ? T.READY : T.NEEDS_FIX, data: { ifs: r.ifs, verify: { at: c.now.stamp, by: c.actor, diffs: r.diffs } } });
-        return { r: r, x: mustTruck(id), ps: ps, trucks: trucks, planned: planned };
+        const ps = opt.loadedAll ? opt.loadedAll.filter(p => String(p.loadId) === String(x.id)) : data.palletsByLoad(x.id, [VP.LOADED]);
+        const r = verify.verifyLoad({ savedIfs: ifs, freshIfs: planned, pallets: ps, toLines: reservedToLines(x.id, trucks, opt.loadedAll, c, opt.openTo) });
+        const status = r.match ? T.READY : T.NEEDS_FIX;
+        const changed = status !== x.status || ifSig(r.keep) !== ifSig(x.data.ifs) || diffSig(r.diffs) !== diffSig((x.data.verify || {}).diffs);
+        const out = { r: r, x: x, ps: ps, trucks: trucks, planned: planned, changed: changed };
+        if (opt.poll && !changed) return out;
+        if (palletKey(data.palletsByLoad(x.id, [VP.LOADED])) !== palletKey(ps)) throw userErr('This truck changed while it was being checked. Verify again.');
+        const cur = data.getLoad(id);                 // right before the write: never merge over a stale copy
+        if (!cur || !isOpen(cur)) throw userErr('This truck is closed for changes (' + (cur ? (cur.data.claim || cur.data.depart ? T.DEPARTING : cur.status) : 'gone') + ')');
+        if (ifSig(cur.data.ifs) !== ifSig(x.data.ifs)) throw userErr('This truck changed while it was being checked. Verify again.');
+        data.updateLoad(cur, { status: status, data: { ifs: r.keep, verify: { at: c.now.stamp, by: c.actor, diffs: r.diffs } } });
+        out.x = mustTruck(id);
+        return out;
     }
     function verifyOut(v, c) {
-        const view = truckView(v.x, c);              // lists suggestions when the truck is needs_fix
+        const view = truckView(v.x, c, { planned: v.planned, trucks: v.trucks });   // lists suggestions when the truck is needs_fix
         return { match: v.r.match, diffs: pubDiffs(v.r.diffs, v.ps), suggestions: view.suggestions, view: view };
     }
     function pubPlan(p) {
@@ -636,10 +647,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // An office fix in NetSuite (IF qty edited, IF added) can turn a needs_fix truck ready without anyone scanning.
     act('trucks_recheck', false, (a, c) => {
-        const trucks = allTrucks(), planned = ns.plannedIfs(), nowReady = [];
-        trucks.filter(x => x.status === T.NEEDS_FIX && isOpen(x)).forEach(x => {
+        const trucks = allTrucks(), nowReady = [];
+        const fix = trucks.filter(x => x.status === T.NEEDS_FIX && isOpen(x));
+        if (!fix.length) return { nowReady: nowReady };
+        const shared = { trucks: trucks, planned: ns.plannedIfs(), openTo: ns.openToLines(), loadedAll: data.palletsByStatus([VP.LOADED]), poll: true };
+        fix.forEach(x => {
             let v;
-            try { v = verifyTruck(x.id, c, { trucks: trucks, planned: planned }); } catch (e) { if (e.user) return; throw e; }
+            try { v = verifyTruck(x.id, c, Object.assign({ truck: x }, shared)); } catch (e) { if (e.user) return; throw e; }
             if (v.r.match) nowReady.push({ id: v.x.id, label: truckLabel(v.x) });
         });
         return { nowReady: nowReady };
@@ -667,9 +681,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_drop_if', true, (a, c) => {
         const ifId = String(a.ifId || '');
         const v = verifyTruck(a.truckId, c, { newIfs: x => {
-            const ifs = x.data.ifs || [];
-            if (!ifs.some(f => String(f.ifId) === ifId)) throw userErr('That IF is not on this truck');
-            if (ifs.length === 1) throw userErr('A truck needs at least one IF');
+            const ifs = x.data.ifs || [], f = ifs.find(y => String(y.ifId) === ifId);
+            if (!f) throw userErr('That IF is not on this truck');
+            if (ifs.length === 1 && !f.gone) throw userErr('A truck needs at least one IF (only one no longer Packed can be dropped)');
             return ifs.filter(f => String(f.ifId) !== ifId);
         } });
         return verifyOut(v, c);

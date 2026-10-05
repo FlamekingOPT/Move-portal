@@ -365,3 +365,21 @@ test('reservationsFromTrucks: needs_fix/ready reserve loaded surplus like loadin
     assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', trucks: [fixing], toLines: TOS, loadedByTruck: loadedFix }), base);
     assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', exceptId: '2', trucks: [fixing], toLines: TOS, loadedByTruck: loadedFix }), {});
 });
+
+test('verifyLoad keeps a gone IF (flagged) in keep; a gone IF stays gone on the next verify', () => {
+    const r1 = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504), VIF(9002, 500, 504)], freshIfs: [VIF(9002, 500, 504)], pallets: onTruck(42), toLines: TOS });
+    assert.deepEqual(r1.keep.map(f => [f.ifId, !!f.gone]), [['9002', false], ['9001', true]]);
+    assert.deepEqual(r1.keep[1].lines, VIF(9001, 500, 504).lines);
+    const r2 = v.verifyLoad({ savedIfs: r1.keep, freshIfs: [VIF(9002, 500, 504)], pallets: onTruck(42), toLines: TOS });
+    assert.deepEqual([r2.match, r2.diffs.map(d => d.kind)], [false, ['if_gone']]);
+    assert.deepEqual(r2.keep.map(f => [f.ifId, !!f.gone]), [['9002', false], ['9001', true]]);
+    assert.deepEqual(v.liveIfs(r2.keep).map(f => f.ifId), ['9002']);
+});
+
+test('reservationsFromTrucks skips a gone IF on an open truck', () => {
+    const live = { id: '1', status: T.NEEDS_FIX, data: { v3: true, ifs: [VIF(9001, 500, 504)] } };
+    const gone = { id: '1', status: T.NEEDS_FIX, data: { v3: true, ifs: [Object.assign(VIF(9001, 500, 504), { gone: true })] } };
+    const o = { loadedByTruck: { 1: { 975: 504 } }, toLines: TOS, mode: 'off' };
+    assert.deepEqual(v.reservationsFromTrucks(Object.assign({ trucks: [live] }, o)), {});        // the IF covers the load
+    assert.notDeepEqual(v.reservationsFromTrucks(Object.assign({ trucks: [gone] }, o)), {});     // a gone IF covers nothing: surplus takes TO room
+});
