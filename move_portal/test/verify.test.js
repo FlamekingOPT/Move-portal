@@ -288,3 +288,9 @@ test('reservationsFromTrucks: loading surplus, and unwritten raises/add-ons of d
     assert.deepEqual(v.reservationsFromTrucks(Object.assign({ mode: 'on' }, o)), { '500|975': 12 + 12, '700|11': 120, '600|975': 24 + 48 });   // written key 7 is in NetSuite; a skipped one is not
     assert.deepEqual(v.reservationsFromTrucks(Object.assign({ mode: 'off', exceptId: '1' }, o)), { '500|975': 12, '700|11': 120, '600|975': 36 });
 });
+
+test('planReceipts: the cumulative never drops below an earlier approved qty', () => {
+    const pallets = [{ status: VP.RECEIVED, lines: [{ item: '9', pcs: 12 }] }];
+    const r = v.planReceipts({ alloc: [{ ifId: '1', ifNum: 'IF1', toId: '5', lines: { 9: 24 } }], pallets: pallets, received: { 1: { 9: 24 } }, stamp: {}, seq: 2 });
+    assert.deepEqual([r.ops, r.cumulative], [[], { 1: { 9: 24 } }]);
+});

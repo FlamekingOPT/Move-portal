@@ -44,7 +44,7 @@ test('every client api() action exists on the server and every data-act has an A
     const reAct = /data-act="([a-z]+)"/g;
     while ((m = reAct.exec(src))) acts.add(m[1]);
     assert.ok(acts.size > 10);
-    acts.forEach(a => assert.ok(new RegExp('ACT\.' + a + ' =').test(src), 'no ACT handler for ' + a));
+    acts.forEach(a => assert.ok(new RegExp('ACT\\.' + a + ' =').test(src), 'no ACT handler for ' + a));
 });
 
 test('departing state, confirm prompts, null-screen guards', () => {
@@ -66,4 +66,11 @@ test('fix1: approvals retry card offers Depart without this edit', () => {
 
 test('fix4: the plan view shows IFs changed in NetSuite', () => {
     assert.ok(ui._clientMain.toString().indexOf('changed in NetSuite: ') !== -1);
+});
+
+test('fix11: departure confirm text, stuck receipt button, scrollable report', () => {
+    const src = ui._clientMain.toString();
+    ['Send this departure to a manager for approval?', 'Confirm departure? (plan only — NetSuite is updated by the office)', 'Confirm departure? Trailer and seal go on the IFs.', 'overflow-x:auto']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    assert.equal(src.split("x.stuck ? 'Re-approve receipt'").length - 1, 2);
 });

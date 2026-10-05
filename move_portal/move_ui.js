@@ -480,12 +480,15 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, true);
             const r = await api('depart_preview', departBody());
             busy(el, false);
-            if (!r.ok) { $('dmsg').innerHTML = errBox(r.error); return; }
+            if (!r.ok) { S.dplan = null; $('dmsg').innerHTML = errBox(r.error); return; }
+            S.dplan = r.plan;
             $('dmsg').innerHTML = flash(r.plan.needsManager ? 'amber' : 'green', 'Truck ' + r.truckNo + ' of the day', r.plan.needsManager ? r.plan.corrections + ' correction(s): a manager must approve' : 'Matches the IFs') +
                 planHtml(r.plan) + '<button class="btn go" data-act="dconfirm">' + (r.plan.needsManager && !isMgr ? 'Send to manager' : 'Confirm departure') + '</button>';
         };
         ACT.dconfirm = async el => {
-            if (!confirm('Confirm departure of ' + (S.tv ? S.tv.truck.label : 'this truck') + '? Trailer and seal go on the IFs.')) return;
+            const toMgr = S.dplan && S.dplan.needsManager && !isMgr, wm = S.tv ? S.tv.writeMode : 'off';
+            if (!confirm(toMgr ? 'Send this departure to a manager for approval?' : wm === 'on' ? 'Confirm departure? Trailer and seal go on the IFs.'
+                : 'Confirm departure? (plan only — NetSuite is updated by the office)')) return;
             busy(el, true);
             const r = await api('depart_confirm', departBody());
             busy(el, false);
@@ -760,7 +763,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const rec = r.receipts.map(x => {
                 const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
                 if (!x.perIf) return '<div class="card warnc">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + errBox(x.error || 'Could not build the receipt') +
-                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '" data-label="' + esc(x.truck.label) + '">Approve receipt</button></div>';
+                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : 'Approve receipt') + '</button></div>';
                 const missing = x.missing || [];
                 return '<div class="card">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + (x.error ? errBox(x.error) : '') +
                     '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' +
@@ -797,9 +800,9 @@ h3{font-size:15px;margin:16px 0 8px}
             main('<div class="muted">Write mode <b>' + esc(r.writeMode) + '</b>' + (r.pulledAt ? ' · NetSuite data from ' + esc(r.pulledAt) : '') + '</div>' +
                 '<div class="card"><table class="tbl"><tr><th>Day</th><th>Trucks</th><th>Pallets</th><th>Pcs</th><th>Diffs</th></tr>' +
                 r.days.map(d => '<tr><td>' + esc(d.day) + '</td><td>' + d.trucks + '</td><td>' + d.pallets + '</td><td>' + num(d.pieces) + '</td><td>' + (d.diffs ? '❌ ' + d.diffs : '✅') + '</td></tr>').join('') + '</table></div>' +
-                '<div class="card"><table class="tbl"><tr><th></th><th>Truck</th><th>IF</th><th>Check</th><th>Portal</th><th>NetSuite</th></tr>' +
+                '<div class="card"><div style="overflow-x:auto"><table class="tbl"><tr><th></th><th>Truck</th><th>IF</th><th>Check</th><th>Portal</th><th>NetSuite</th></tr>' +
                 r.rows.map(x => '<tr class="' + (x.ok === false ? 'warnrow' : '') + '"><td>' + mark(x.ok) + '</td><td>' + esc(x.truck) + '</td><td>' + esc(x.ifNum) + '</td><td>' + esc(x.check) +
-                    '</td><td>' + esc(x.portal) + '</td><td>' + esc(x.netsuite) + '</td></tr>').join('') + '</table></div>');
+                    '</td><td>' + esc(x.portal) + '</td><td>' + esc(x.netsuite) + '</td></tr>').join('') + '</table></div></div>');
         };
 
         // ── Dashboard ────────────────────────────────────────────────────

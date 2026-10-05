@@ -238,7 +238,7 @@ define([], function () {
                 left[k] = (left[k] || 0) - g;
                 const before = Number(((o.received || {})[a.ifId] || {})[k]) || 0;
                 if (g > before) lines[k] = g - before;
-                cum[k] = g;
+                cum[k] = Math.max(g, before);                  // never below what an earlier receipt already posted
                 shipped += Number(a.lines[k]) || 0;
                 got += g;
             });

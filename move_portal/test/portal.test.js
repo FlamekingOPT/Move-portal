@@ -978,3 +978,24 @@ test('fix10: a truck emptied right after the claim goes back to loading', () => 
     const d = ctx.data.getLoad(t.id);
     assert.deepEqual([d.status, d.data.claim, d.data.depart, d.data.pending], ['loading', '', null, null]);
 });
+
+test('fix11: a load scan that is not a labeled pallet reads no TO lines and no truck list', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 3, 'Jcls', [L975]);
+    const a = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    ctx.run('truck_scan', { truckId: a.id, raw: ps[0].code });
+    ctx.run('pallet_void', { palletId: ps[1].id }, false);
+    const to = { n: 0 }, origTo = ctx.ns.openToLines;
+    ctx.ns.openToLines = () => { to.n++; return origTo(); };
+    const lists = countCalls(ctx, 'loadsByStatus');
+    const res = raw => ctx.run('truck_scan', { truckId: a.id, raw: raw });
+    assert.equal(res(ps[0].code).result, 'dup');
+    assert.equal(res(ps[1].code).result, 'void');
+    assert.equal(res('PLT99999').result, 'unknown');
+    const o = ctx.run('truck_scan', { truckId: b.id, raw: ps[0].code });
+    assert.deepEqual([o.result, o.otherLabel], ['other_truck', 'IF9001']);
+    assert.deepEqual([to.n, lists.n], [0, 0]);
+    assert.equal(res(ps[2].code).result, 'ok');
+    assert.ok(to.n === 1 && lists.n >= 1);
+});

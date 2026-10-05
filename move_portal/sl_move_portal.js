@@ -497,7 +497,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustOpenTruck(a.truckId);
         const s = core.parseScan(a.raw);
         const p = s.palletId ? data.getPallet(s.palletId) : null;
-        const r = verify.classifyLoadScan(Object.assign({ pallet: p }, scanCtx(x, c)));
+        let sc;                                       // capacity data (TO lines, all trucks) only for a pallet that can actually load
+        if (p && p.status === VP.LABELED) sc = scanCtx(x, c);
+        else {
+            const o = p && p.loadId ? data.getLoad(p.loadId) : null;
+            sc = { truckId: x.id, trucks: o ? { [o.id]: { status: o.status, label: truckLabel(o) } } : {} };
+        }
+        const r = verify.classifyLoadScan(Object.assign({ pallet: p }, sc));
         if (r.set) {
             mustOpenTruck(x.id);
             data.updatePallet(p, { status: r.set.status, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
