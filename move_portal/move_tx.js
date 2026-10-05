@@ -81,5 +81,76 @@ define(['N/record', 'N/search'], function (record, search) {
         return String(r.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
 
-    return { findByToken, createTransferOrder, committedShortfalls, fulfillTransferOrder, receiveTransferOrder };
+    // v3 write ops (spec 6). Each re-reads NetSuite and refuses if it changed since the plan.
+    function changed(msg) { return new Error('IF changed in NetSuite, review: ' + msg); }
+    function stampOn(rec, op) {
+        rec.setValue({ fieldId: 'custbody_rsm_container_no', value: op.trailer });
+        rec.setValue({ fieldId: 'custbody7', value: 'SEAL: ' + op.seal });
+        rec.setValue({ fieldId: 'memo', value: op.memo });
+    }
+    function itemLines(rec, item) {
+        const out = [], n = rec.getLineCount({ sublistId: 'item' });
+        for (let i = 0; i < n; i++) if (String(rec.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i })) === String(item)) out.push(i);
+        return out;
+    }
+    function toRemaining(toId, item) {
+        const to = record.load({ type: record.Type.TRANSFER_ORDER, id: toId });
+        let left = 0;
+        itemLines(to, item).forEach(i => {
+            left += (Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0) -
+                (Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantityfulfilled', line: i })) || 0);
+        });
+        return left;
+    }
+    function setIfItemQty(op) {
+        const f = record.load({ type: record.Type.ITEM_FULFILLMENT, id: op.ifId, isDynamic: true });
+        const st = String(f.getValue({ fieldId: 'shipstatus' }));
+        if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
+        const lines = itemLines(f, op.item);
+        const cur = lines.reduce((a, i) => a + (Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0), 0);
+        if (cur !== Number(op.from)) throw changed(op.ifNum + ' item ' + op.item + ' is ' + cur + ', expected ' + op.from);
+        if (op.to > op.from && op.to - op.from > toRemaining(op.toId, op.item)) throw changed('TO ' + op.toId + ' has no room to raise ' + op.ifNum + ' to ' + op.to);
+        let left = Number(op.to);
+        const caps = lines.map(i => Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0);
+        const want = lines.map((i, n) => { const last = n === lines.length - 1; const g = last ? left : Math.min(left, caps[n]); left -= g; return g; });
+        for (let n = lines.length - 1; n >= 0; n--) {
+            if (want[n] > 0) {
+                f.selectLine({ sublistId: 'item', line: lines[n] });
+                f.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: want[n] });
+                f.commitLine({ sublistId: 'item' });
+            } else f.removeLine({ sublistId: 'item', line: lines[n] });
+        }
+        return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
+    }
+    function stampShip(op) {
+        const f = record.load({ type: record.Type.ITEM_FULFILLMENT, id: op.ifId, isDynamic: true });
+        const st = String(f.getValue({ fieldId: 'shipstatus' }));
+        if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
+        stampOn(f, op);
+        f.setValue({ fieldId: 'shipstatus', value: 'C' });
+        return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
+    }
+    function createIf(op) {
+        const f = record.transform({ fromType: record.Type.TRANSFER_ORDER, fromId: op.toId, toType: record.Type.ITEM_FULFILLMENT, isDynamic: true });
+        f.setValue({ fieldId: 'shipstatus', value: 'C' });
+        stampOn(f, op);
+        setLines(f, op.lines);
+        return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
+    }
+    function createReceipt(op) {
+        const r = record.transform({ fromType: record.Type.TRANSFER_ORDER, fromId: op.toId, toType: record.Type.ITEM_RECEIPT, isDynamic: true,
+            defaultValues: { itemfulfillment: op.ifId } });
+        stampOn(r, Object.assign({ memo: 'Move receipt · ' + op.ifNum }, op));
+        setLines(r, op.lines);
+        return String(r.save({ enableSourcing: true, ignoreMandatoryFields: true }));
+    }
+    function apply(op) {
+        if (op.op === 'if_qty') return setIfItemQty(op);
+        if (op.op === 'if_stamp') return stampShip(op);
+        if (op.op === 'if_create') return createIf(op);
+        if (op.op === 'receipt') return createReceipt(op);
+        throw new Error('Unknown op ' + op.op);
+    }
+
+    return { apply, findByToken, createTransferOrder, committedShortfalls, fulfillTransferOrder, receiveTransferOrder };
 });
