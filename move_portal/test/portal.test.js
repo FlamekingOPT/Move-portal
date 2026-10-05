@@ -1535,3 +1535,24 @@ test('final2: a poll flip records Auto re-check, not the polling device', () => 
     const x = ctx.data.getLoad(t.id);
     assert.deepEqual([x.status, x.data.verify.by], ['ready', { id: 0, name: 'Auto re-check' }]);
 });
+
+test('final3: every action resets the ns cache; truck_correct resets it again after a write, before the re-verify', () => {
+    const ctx = setup();
+    let n = 0;
+    ctx.ns.resetCache = () => { n++; };
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = truckWith(ctx, 40);
+    n = 0;
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.equal(n, 1);
+    n = 0;
+    ctx.tx._t.failOn = 'if_qty:9001:975';
+    assert.throws(() => ctx.run('truck_correct', { truckId: t.id }), /Correction refused/);
+    assert.equal(n, 1);                                                         // nothing written: no extra reset
+    n = 0;
+    const real = ctx.ns.plannedIfs;
+    let atVerify = null;
+    ctx.ns.plannedIfs = () => { if (ctx.tx._t.ops.length && atVerify === null) atVerify = n; return real(); };
+    ctx.run('truck_correct', { truckId: t.id });
+    assert.deepEqual([n, atVerify], [2, 2]);                                    // runAction + after the write, before the re-verify read
+});

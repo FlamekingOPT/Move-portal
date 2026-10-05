@@ -798,9 +798,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const byKey = {};
         ops.forEach(op => { byKey[verify.opKey(op)] = op; });
         const sk = skuNames([...new Set(ops.filter(op => op.op === 'if_create').reduce((s, op) => s.concat(Object.keys(op.lines)), []))]);
-        let res, err = null;
+        let res, err = null, wrote = false;
         try {
             res = verify.runOps(ops, writeMode(c), op => { assertClaim(id, claim, label, 'correct'); return tx.apply(op); }, done, (k, newId) => {
+                wrote = true;
                 const op = byKey[k], cur = data.getLoad(id), patch = { correctionWrites: Object.assign({}, cur.data.correctionWrites,
                     { [k + '|' + corrSig(op)]: { key: k, op: op.op, id: String(newId), sig: corrSig(op), at: c.now.stamp, by: c.user } }) };
                 if (op.op === 'if_create') patch.ifs = (cur.data.ifs || []).concat([{ ifId: String(newId), ifNum: 'IF ' + newId, toId: String(op.toId), toNum: op.toNum, status: 'B',
@@ -813,6 +814,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             err = e.message || String(e);
         }
         release({ correctError: err || '' });
+        if (wrote && ns.resetCache) ns.resetCache();   // the re-verify must read the IFs as written, not this request's cached copy
         let vv = null;
         try { vv = verifyTruck(id, c); } catch (e) { if (!e.user || !err) throw e; }
         if (err) throw userErr('Correction refused: ' + err + ' — fix it in NetSuite');
@@ -1144,6 +1146,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (onFloorDeploy()) mgr = false;
         if (def.m && !mgr) throw userErr('Managers only');
         data.resetCache();
+        if (ns.resetCache) ns.resetCache();
         const body = a || {};
         const u = runtime.getCurrentUser();
         const c = { mgr: !!mgr, S: settings(), now: nowInfo(), user: { id: String(u.id), name: u.name },
