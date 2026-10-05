@@ -135,3 +135,14 @@ test('final fixes: manager add-any-IF picker on the needs-fix card; ids escaped;
     ['data-id="\' + p.id + \'"', 'data-id="\' + x.truck.id + \'"'].forEach(t => assert.equal(src.indexOf(t), -1, 'unescaped ' + t));
     assert.ok(src.indexOf("typeof vf.by === 'object'") !== -1, 'verify by object shown by name');
 });
+
+test('a refused departure (preview or confirm) refetches the truck and repaints, error above the stage', () => {
+    const src = ui._clientMain.toString();
+    assert.ok(src.indexOf('The truck changed on another device: verify again') !== -1);
+    ['ACT.dpreview =', 'ACT.dconfirm ='].forEach(n => {
+        const i = src.indexOf(n);
+        assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('departRefused(r)') !== -1, 'no departRefused in ' + n);
+    });
+    const i = src.indexOf('async function departRefused');
+    assert.ok(i !== -1 && /api\('truck_get'[\s\S]*paintTruck\(g\.view, true\)/.test(src.slice(i, i + 800)));
+});

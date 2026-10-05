@@ -628,13 +628,24 @@ h3{font-size:15px;margin:16px 0 8px}
             $('scanres').innerHTML = flash('red', ifChanged(r.diffs, prev) ? '❌ IF changed in NetSuite: needs a fix again' : '❌ The load changed: verify again',
                 (r.diffs || []).map(d => esc(d.text)).join('<br>'));
         }
+        // A refused departure: the truck may have changed on another device, so refetch and repaint (the form keeps what was typed
+        // while the truck is still Ready). The error goes in scanres, above the repainted stage card.
+        async function departRefused(r) {
+            S.dplan = null;
+            tone('bad');
+            const g = await api('truck_get', { truckId: S.truckId });
+            if (!g.ok || !$('tfoot')) { if ($('dmsg')) $('dmsg').innerHTML = errBox(r.error); return; }
+            paintTruck(g.view, true);
+            $('scanres').innerHTML = errBox(r.error) +
+                (['loading', 'needs_fix'].indexOf(g.view.truck.status) !== -1 ?flash('amber', 'The truck changed on another device: verify again') : '');
+        }
         ACT.dpreview = async el => {
             if (needWho()) return;
             busy(el, true);
             const r = await api('depart_preview', departBody());
             busy(el, false);
             if (!$('tfoot')) return;
-            if (!r.ok) { S.dplan = null; $('dmsg').innerHTML = errBox(r.error); return; }
+            if (!r.ok) { await departRefused(r); return; }
             markSeen(r.view);
             if (r.needsFix) { needsFixAgain(r); return; }
             S.dplan = r.plan;
@@ -649,12 +660,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = await api('depart_confirm', departBody());
             busy(el, false);
             if (!$('tfoot')) return;
-            if (!r.ok) {
-                tone('bad');
-                const g = await api('truck_get', { truckId: S.truckId });
-                if (g.ok && $('tfoot')) { paintTruck(g.view, true); $('scanres').innerHTML = errBox(r.error); } else if ($('dmsg')) $('dmsg').innerHTML = errBox(r.error);
-                return;
-            }
+            if (!r.ok) { await departRefused(r); return; }
             if (r.needsFix) { needsFixAgain(r); return; }
             tone('ok');
             paintTruck(r.view, true);
