@@ -87,6 +87,66 @@ define([], function () {
     const TONE = { ok: 'ok', late: 'ok', over: 'warn', addon: 'warn', dup: 'warn', other_truck: 'warn', dup_other: 'warn' };
     function toneFor(result) { return TONE[result] || 'bad'; }
 
+    // ── departure ────────────────────────────────────────────────────────
+    function memoFor(truckNo, dayIso) { return 'Truck ' + truckNo + ' · ' + String(dayIso).slice(5, 7) + '/' + String(dayIso).slice(8, 10); }
+    function normSeal(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
+    function departOf(t) { return (t && t.data && t.data.depart) || null; }
+    function sealUsed(trucks, seal, exceptId) {
+        const n = normSeal(seal);
+        return !!n && (trucks || []).some(t => String(t.id) !== String(exceptId) && departOf(t) && normSeal(departOf(t).seal) === n);
+    }
+    function truckNoForDay(trucks, dayIso, exceptId) {
+        return 1 + (trucks || []).filter(t => String(t.id) !== String(exceptId) && departOf(t) && departOf(t).day === dayIso).length;
+    }
+
+    function planDeparture(o) {
+        const ifs = byIfOrder(o.ifs), scanned = sumLines(o.pallets);
+        const fill = fillExpected(ifs, scanned), alloc = fill.alloc;
+        const toLeft = {};
+        (o.toLines || []).forEach(r => { toLeft[String(r.toId) + '|' + String(r.item)] = Number(r.remaining) || 0; });
+        const addOns = {};
+        Object.keys(fill.left).forEach(k => {
+            let left = fill.left[k];
+            if (!(left > 0)) return;
+            const carriers = ifs.filter(f => ifQty(f, k) > 0), own = {};
+            carriers.forEach(f => {                                   // raise: the IF's own TO still has qty
+                own[String(f.toId)] = true;
+                const key = String(f.toId) + '|' + k, g = Math.min(left, toLeft[key] || 0);
+                if (g) { alloc[String(f.ifId)][k] += g; toLeft[key] -= g; left -= g; }
+            });
+            (o.toLines || []).filter(r => String(r.item) === k && !own[String(r.toId)]).sort(oldestFirst).forEach(r => {
+                const key = String(r.toId) + '|' + k, g = Math.min(left, toLeft[key] || 0);
+                if (!g) return;
+                const a = addOns[String(r.toId)] = addOns[String(r.toId)] || { toId: String(r.toId), toNum: r.toNum, lines: {} };
+                a.lines[k] = (a.lines[k] || 0) + g; toLeft[key] -= g; left -= g;
+            });
+            if (left > 0) throw new Error('No open transfer order covers ' + left + ' pcs of item ' + k);
+        });
+
+        const st = { trailer: o.stamp.trailer, seal: o.stamp.seal, memo: memoFor(o.stamp.truckNo, o.stamp.dayIso) };
+        const ops = [], allocOut = [], unplanned = [], kept = [];
+        ifs.forEach(f => {
+            const a = alloc[String(f.ifId)];
+            if (!Object.keys(a).some(k => a[k] > 0)) { unplanned.push({ ifId: String(f.ifId), ifNum: f.ifNum }); return; }
+            kept.push(f);
+            Object.keys(a).forEach(k => {
+                const from = ifQty(f, k);
+                if (a[k] !== from) ops.push({ op: 'if_qty', ifId: String(f.ifId), ifNum: f.ifNum, toId: String(f.toId), item: k, from: from, to: a[k] });
+            });
+            ops.push(Object.assign({ op: 'if_stamp', ifId: String(f.ifId), ifNum: f.ifNum }, st));
+            allocOut.push({ ifId: String(f.ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: f.toNum, lines: a, addOn: false });
+        });
+        Object.keys(addOns).sort((x, y) => Number(x) - Number(y)).forEach(t => {
+            const a = addOns[t];
+            ops.push(Object.assign({ op: 'if_create', toId: a.toId, toNum: a.toNum, lines: a.lines }, st));
+            allocOut.push({ ifId: 'new:' + a.toId, ifNum: '(new)', toId: a.toId, toNum: a.toNum, lines: a.lines, addOn: true });
+        });
+        const corrections = ops.filter(x => x.op !== 'if_stamp');
+        return { ops, alloc: allocOut, unplanned, corrections, needsManager: corrections.length > 0 || unplanned.length > 0,
+            bol: { number: kept[0] ? kept[0].toNum : '', changed: corrections.length > 0 || unplanned.length > 0,
+                ifNums: kept.map(f => f.ifNum).concat(Object.keys(addOns).sort((x, y) => Number(x) - Number(y)).map(t => '(new from ' + addOns[t].toNum + ')')) } };
+    }
+
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
-        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst };
+        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealUsed, truckNoForDay, planDeparture };
 });

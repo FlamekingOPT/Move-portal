@@ -60,3 +60,48 @@ test('toneFor', () => {
     ['over', 'addon', 'dup', 'other_truck', 'dup_other', 'late'].forEach(r => assert.equal(v.toneFor(r), r === 'late' ? 'ok' : 'warn'));
     ['no_to', 'void', 'unknown', 'locked', 'shipped', 'never_loaded'].forEach(r => assert.equal(v.toneFor(r), 'bad'));
 });
+
+const stamp = { trailer: '537224', seal: '5249330', truckNo: 3, dayIso: '2026-10-05' };
+const loaded = (n, item, pcs) => Array.from({ length: n }, (_, i) => pal(100 + i, VP.LOADED, '1', [{ item: item || '975', sku: 'YSN100', pcs: pcs || 12 }]));
+
+test('memoFor, sealUsed, truckNoForDay', () => {
+    assert.equal(v.memoFor(3, '2026-10-05'), 'Truck 3 · 10/05');
+    const trucks = [{ id: '1', data: { depart: { seal: '5249330 ', day: '2026-10-05', truckNo: 1 } } }, { id: '2', data: {} },
+        { id: '4', data: { depart: { seal: 'X1', day: '2026-10-04', truckNo: 7 } } }];
+    assert.equal(v.sealUsed(trucks, ' 5249330', '9'), true);
+    assert.equal(v.sealUsed(trucks, '5249330', '1'), false);   // its own seal
+    assert.equal(v.sealUsed(trucks, '', '9'), false);
+    assert.equal(v.truckNoForDay(trucks, '2026-10-05', '9'), 2);
+    assert.equal(v.truckNoForDay(trucks, '2026-10-06', '9'), 1);
+});
+
+test('planDeparture: exact match → only stamps, no manager', () => {
+    const p = v.planDeparture({ ifs: IFS, pallets: loaded(42), toLines: TOS, stamp });
+    assert.deepEqual(p.ops, [{ op: 'if_stamp', ifId: '9001', ifNum: 'IF9001', trailer: '537224', seal: '5249330', memo: 'Truck 3 · 10/05' }]);
+    assert.equal(p.needsManager, false);
+    assert.deepEqual(p.bol, { number: 'TO500', changed: false, ifNums: ['IF9001'] });
+    assert.deepEqual(p.alloc, [{ ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', lines: { 975: 504 }, addOn: false }]);
+});
+
+test('planDeparture: short lowers, over raises within TO, beyond goes to add-on from the oldest other TO', () => {
+    const short = v.planDeparture({ ifs: IFS, pallets: loaded(40), toLines: TOS, stamp });
+    assert.deepEqual(short.ops[0], { op: 'if_qty', ifId: '9001', ifNum: 'IF9001', toId: '500', item: '975', from: 504, to: 480 });
+    assert.equal(short.needsManager, true);
+    assert.equal(short.bol.changed, true);
+    const over = v.planDeparture({ ifs: IFS, pallets: loaded(44), toLines: TOS, stamp });          // 528 = 504 + 24 raise
+    assert.deepEqual(over.ops.map(o => [o.op, o.to]), [['if_qty', 528], ['if_stamp', undefined]]);
+    const addon = v.planDeparture({ ifs: IFS, pallets: loaded(46), toLines: TOS, stamp });         // 552 = 504 + 24 + 24 add-on
+    assert.deepEqual(addon.ops.map(o => o.op), ['if_qty', 'if_stamp', 'if_create']);
+    assert.deepEqual(addon.ops[2], { op: 'if_create', toId: '600', toNum: 'TO600', lines: { 975: 24 }, trailer: '537224', seal: '5249330', memo: 'Truck 3 · 10/05' });
+    assert.deepEqual(addon.alloc[1], { ifId: 'new:600', ifNum: '(new)', toId: '600', toNum: 'TO600', lines: { 975: 24 }, addOn: true });
+    assert.deepEqual(addon.bol.ifNums, ['IF9001', '(new from TO600)']);
+});
+
+test('planDeparture: extra SKU → add-on; empty IF → unplanned; over capacity throws', () => {
+    const two = IFS.concat([{ ifId: '9002', ifNum: 'IF9002', toId: '500', toNum: 'TO500', lines: [{ item: '975', qty: 504 }] }]);
+    const p = v.planDeparture({ ifs: two, pallets: loaded(42).concat(loaded(1, '11', 120)), toLines: TOS, stamp });
+    assert.deepEqual(p.unplanned, [{ ifId: '9002', ifNum: 'IF9002' }]);
+    assert.deepEqual(p.ops.map(o => o.op + ':' + (o.ifId || o.toId)), ['if_stamp:9001', 'if_create:700']);
+    assert.equal(p.needsManager, true);
+    assert.throws(() => v.planDeparture({ ifs: IFS, pallets: loaded(1, '999', 1), toLines: TOS, stamp }), /No open transfer order covers 1 pcs of item 999/);
+});
