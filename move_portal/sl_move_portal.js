@@ -265,10 +265,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { r: r, ps: ps, trucks: trucks, planned: planned };
     }
     const AUTO_BY = { id: 0, name: 'Auto re-check' };
+    // Why verify can't run: a manager's correction holds the claim only briefly, so say so instead of "departing".
+    function closedErr(x) {
+        if (x && x.data.claim && x.data.phase === 'correct' && !x.data.depart) return userErr('This truck is being corrected by a manager, try again in a moment');
+        return userErr('This truck is closed for changes (' + (x ? (x.data.claim || x.data.depart ? T.DEPARTING : x.status) : 'gone') + ')');
+    }
     function verifyTruck(id, c, opt) {
         opt = opt || {};
         const x = opt.truck || mustTruck(id);
-        if (!isOpen(x)) throw userErr('This truck is closed for changes (' + (x.data.claim || x.data.depart ? T.DEPARTING : x.status) + ')');
+        if (!isOpen(x)) throw closedErr(x);
         const chk = checkTruck(x, c, opt), r = chk.r, ps = chk.ps, trucks = chk.trucks, planned = chk.planned;
         const status = r.match ? T.READY : T.NEEDS_FIX;
         const changed = status !== x.status || ifSig(r.keep) !== ifSig(x.data.ifs) || diffSig(r.diffs) !== diffSig((x.data.verify || {}).diffs);
@@ -276,7 +281,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (opt.poll && !changed) return out;
         if (palletKey(data.palletsByLoad(x.id, [VP.LOADED])) !== palletKey(ps)) throw userErr('This truck changed while it was being checked. Verify again.');
         const cur = data.getLoad(id);                 // right before the write: never merge over a stale copy
-        if (!cur || !isOpen(cur)) throw userErr('This truck is closed for changes (' + (cur ? (cur.data.claim || cur.data.depart ? T.DEPARTING : cur.status) : 'gone') + ')');
+        if (!cur || !isOpen(cur)) throw closedErr(cur);
         if (ifSig(cur.data.ifs) !== ifSig(x.data.ifs)) throw userErr('This truck changed while it was being checked. Verify again.');
         // Unchanged: keep at/by, so a re-pressed Verify never raises a second ready alert. A poll-driven change is the auto re-check's.
         const old = x.data.verify || {}, by = !changed && old.at ? old.by : opt.auto ? AUTO_BY : c.actor;

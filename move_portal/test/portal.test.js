@@ -1568,3 +1568,11 @@ test('final4: approvals lists every Picked/Packed IF no truck has, for the manag
     ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' });                // still needs_fix (short on IF9002)
     assert.deepEqual(ctx.run('approvals').freeIfs.map(f => f.ifId), [ifX]);
 });
+
+test('final5: verify while a manager correction holds the claim says it is being corrected', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'c1', phase: 'correct', workingAt: Date.now() } });
+    assert.throws(() => ctx.run('truck_verify', { truckId: t.id }, false), /being corrected by a manager, try again in a moment/);
+});
