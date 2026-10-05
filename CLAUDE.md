@@ -13,13 +13,22 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - `move_portal/local/`: node-only `snapshot_ns.js` (reads a prod snapshot) and `local_store.js` (persists to `local/store.json`, gitignored).
 - `move_portal/snapshot/` (gitignored): `prod-<date>.json` snapshots pulled read-only via the SuiteQL connector.
 - `move_portal/test/`: node tests with in-memory fakes, plus `preview_server.js` = the **local beta** on port 8765 (launch config `move-preview` / `move-preview-beta`). Manager view `http://localhost:8765/`, floor view `/?floor=1`. It serves the newest `snapshot/prod-*.json` (else the test fixture) and saves to `local/store.json`.
-- **Tests:** `node --test "move_portal/test/*.test.js"` → **141/141 pass** (2026-10-05, v3 + fix wave + local labels). A bare folder path fails on Windows.
+- **Tests:** `node --test "move_portal/test/*.test.js"` → **203/203 pass** (2026-10-05, v3 + Verify Load). A bare folder path fails on Windows.
 - **Spec:** `docs/superpowers/specs/2026-09-27-move-portal-design.md`. **D2 is SUPERSEDED** by `docs/superpowers/specs/2026-09-28-move-portal-bulk-to-design.md`.
 - **Plan:** `docs/superpowers/plans/2026-09-27-move-portal.md` (Tasks 0–15).
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
 - **SDD ledger, with every ruling:** `docs/sdd-ledger/progress.md`, plus the task briefs and reports. The review diffs were left out (the history covers them).
 
-## 🧭 READ FIRST — HANDOFF (2026-10-05, late): v3 LOCAL BETA BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
+## 🧭 READ FIRST — HANDOFF (2026-10-05, night): VERIFY LOAD BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
+- **Verify Load** (spec `docs/superpowers/specs/2026-10-05-move-portal-verify-load-design.md`, plan `docs/superpowers/plans/2026-10-05-move-portal-verify-load.md`) is built on `feat/v3-verification`, with every task reviewed plus a final review (verdict: ready for the beta). Tests: 203/203.
+- **Floor flow:** scan → **Verify load** → ✅ Ready to ship (only then trailer/seal) or ⚠ Needs IF fix (instructions; the truck stays open; take pallets off with ➖ **Take off** mode). A 30 s re-check, and a bottom banner on every floor device when a waiting truck matches. New office IFs show as "Add to this truck".
+- **Manager:** Approvals → Needs IF fix cards: **Correct the IF** (`off` = plan only; `qty` = IF qty edit; `on` = also a Packed add-on IF with find-before-create), Drop IF, add any free IF, Re-check. Departure needs no manager. A stuck departure has **Retry** or **Release to Needs IF fix**.
+- **Removed:** pending departures, manager departure approval, "Depart without this edit".
+- **Local beta limits:** the snapshot is static and write mode is `off`. So the office-fix → ready → alert loop only happens after "refresh the move snapshot" plus a server restart. Don't set the local beta to `qty` (`fake_tx` doesn't update the snapshot).
+- **Smoke-test config:** `move-preview-smoke` runs on :8798 with `move_portal/local/smoke-store.json` (gitignored); delete that file afterwards.
+- **Task 15 must-dos:** lazy `move_ns` reads plus an SQL status filter (recheck cost); prod check of the ItemShip search filters (status A/B plus createdfrom). The ON-MODE GATE list is in the SDD ledger (VL3/VL4) and doesn't affect `qty`.
+
+## (previous) HANDOFF (2026-10-05, late): v3 LOCAL BETA BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
 - **Branch `feat/v3-verification`** (pushed; not merged to main). Plan `docs/superpowers/plans/2026-10-05-move-portal-verification.md`: Tasks 1–14 done, every task reviewed. The SDD ledger with every review finding and minor is in `docs/sdd-ledger/progress.md` (v3 section).
 - **Final-review fix wave done (items 1–11)** on `feat/v3-verification` (not pushed): skip a refused IF edit (`depart_skip_write`), grouped pallet counts, stale-copy guards, IF re-read at departure, TO room reservations, floor deploy gate (`customdeploy_move_portal_floor`), NetSuite-user approvers, full-length truck JSON reads, flagged list on the truck, no empty departures, minors. Report: `.superpowers/sdd/final-fix-report.md`.
 - **Run the beta:** `node move_portal/test/preview_server.js` → manager `http://localhost:8765/`, floor `http://localhost:8765/?floor=1` (scanners on the same wifi: `http://<pc-ip>:8765/?floor=1`). Write mode is `off`. Delete `move_portal/local/store.json` to start clean.

@@ -102,3 +102,22 @@ Minor (T11-12): no fake-DOM render tests; handler regex 'ACT\.' unescaped dot; s
 Task 13: complete (commits 719a588..8e6cf80 + gitignore tmp, review clean after fix round 1: atomic store, save decoupled, item/trailer merge incl 543804/487491). Snapshot pulled by controller: move_portal/snapshot/prod-2026-10-05.json (12 planned IFs, 6 open TO lines, 38 receipts).
 Minor (T13): save failure not surfaced to client; partial in-memory mutation after failed action could persist on next save.
 ```
+
+
+## Verify Load (2026-10-05 night)
+
+```
+# Verify Load plan (docs/superpowers/plans/2026-10-05-move-portal-verify-load.md), start 2cd8a85
+VL Task 1: complete (commits 2cd8a85..bfdf23b, review clean). Ruling: corrections do NOT reserve TO room (needs_fix surplus already placed).
+Minor (VL1): untested oldest-TO pick w/ 2 TOs, if_over routing w/ multiple carriers, diffText non-whole pallets; if_over has no TO-room check (Task 4 must handle refused raise); verifyTruck must save fresh data.ifs (Task 2) so reservations aren't stale.
+VL Task 2: complete (commits bfdf23b..3da942d, review clean after fix round: gone IFs persist until manager drop; recheck reads once, writes only on change)
+Minor (VL2): empty truck (no IFs, no pallets) verifies ready → Task 3 must keep no-empty-departure guard (better: verify diff 'no_ifs'); recheck later trucks use pre-loop data; keep order; M2 suggestions from saved diffs.
+VL Task 3: complete (commits 3da942d..1879cb6, review clean incl. follow-ups: stamp expected-lines + idempotent (seal digits), depart_release, toNeedsFix guard, preview poll). move_tx now depends on ./move_verify.
+ON-MODE GATE (VL3): (1) depart_release after a landed-but-unrecorded stamp → shows if_gone/no_if → manager could double-fulfil; probe IF before release or allow release only on changed() error. (2) partly stamped truck with a refused stamp has no exit. (3) failed re-verify after release leaves stale verify diffs. Task 5 must add Release button (confirm) next to Retry; client needsFix message should be worded from diff kinds.
+VL Task 4: complete (commits 1879cb6..72c3ae4, review clean incl follow-ups: Packed if_create w/ memo token find-before-create, correctionWrites keyed opKey|sig, orphan skip+report row, correctError cleared on ready, batched skuNames).
+ON-MODE GATE (VL4): orphan block per TO is too broad (block only overlapping items); orphan row/block should reflect live IF state (still A/B and on no truck); token-find must refuse an IF another truck holds. Stage 2: verify ItemShip search filters (status A/B + createdfrom) in prod.
+VL Task 5: complete (commits 72c3ae4..7abe305, review clean after fix round: alert reaches every device via ready list + id|at key, wording, banner at bottom, verifiedBy/At on approvals, no self-alert).
+Minor (VL5): new device alerts for every already-ready truck; re-pressing Verify on a ready truck re-alerts all devices; UI tests string-only; departure needsFix path not run in browser.
+Final review (VL): done. Fixes d9f4727..e16319c (release restores in-transit pallets + clears verify; unchanged re-verify keeps at/by, poll = Auto re-check; ns.resetCache per action + after correct writes; manager add-any-IF picker; correction wording; if_qty no done-skip; smoke config; esc ids). Re-review: ready for beta. Browser smoke: Release path OK; stale Ready card after refused preview fixed in 65bc520. Tests 203/203.
+TASK 15 MUST-DO: lazy move_ns reads + SQL status filter (30s recheck cost); prod check of ItemShip search filters.
+```
