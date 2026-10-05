@@ -925,3 +925,20 @@ test('unload_other and unload_damaged log scans; flagged, undo-skips-posted, dam
     assert.equal(ctx.run('unload_undo', { truckId: A.t.id }, false).view.counts.in, 2);   // posted pallets are not undone
     assert.throws(() => ctx.run('unload_damaged', { palletId: stray[0].id }, false), /Scan the pallet in first/);
 });
+
+test('a stuck approving truck is listed and previewable; prevStatus is saved with the claim', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 2, 'SS1');
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { status: 'approving', data: { claim: 'old', workingAt: Date.now(), phase: 'receive' } });
+    assert.deepEqual(ctx.run('unload_list', {}, false).trucks, []);            // fresh claim: still running
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { workingAt: Date.now() - 11 * 60 * 1000 } });
+    assert.deepEqual(ctx.run('unload_list', {}, false).trucks.map(x => x.id), [t.id]);
+    assert.equal(ctx.run('receipt_preview', { truckId: t.id }).perIf.length, 1);
+    let seen;
+    const realApply = ctx.tx.apply;
+    ctx.data.db.settings.writeMode = 'on';
+    ctx.tx.apply = op => { seen = ctx.data.getLoad(t.id).data.prevStatus; return realApply(op); };
+    ctx.run('receipt_approve', { truckId: t.id });
+    assert.equal(seen, 'receiving');
+});

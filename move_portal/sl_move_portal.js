@@ -68,13 +68,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // Flips the load to a working status under a fresh claim token, then re-reads it to confirm
     // no other request's write interleaved. Returns the fresh load and the claim to re-check later.
-    function claimLoad(Ld, status, phase, mustBe) {
+    function claimLoad(Ld, status, phase, mustBe, extraData) {
         const cur = data.getLoad(Ld.id);               // never merge over a stale copy: re-read, then guard, then claim
         if (!cur) throw userErr('Load not found');
         if (mustBe) mustBe(cur);
         Ld = cur;
         const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
-        data.updateLoad(Ld, { status: status, data: { workingAt: Date.now(), error: '', phase: phase, claim: claim } });
+        data.updateLoad(Ld, { status: status, data: Object.assign({ workingAt: Date.now(), error: '', phase: phase, claim: claim }, extraData || {}) });
         const fresh = data.getLoad(Ld.id);
         if (fresh.data.claim !== claim) throw userErr((Ld.number || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
         return { Ld: fresh, claim: claim };
@@ -979,7 +979,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (cur.status === T.DEPARTED) data.updateLoad(cur, { status: T.RECEIVING });
     }
 
-    act('unload_list', false, () => ({ trucks: allTrucks().filter(x => x.status === T.DEPARTED || x.status === T.RECEIVING ||
+    act('unload_list', false, () => ({ trucks: allTrucks().filter(x => x.status === T.DEPARTED || x.status === T.RECEIVING || (x.status === T.APPROVING && (x.data.error || stale(x))) ||
         (x.status === T.RECEIVED && (truckSummary(x).missing > 0 || data.palletsByLoad(x.id, [VP.RECEIVED]).some(p => !p.data.postedSeq)))).map(truckSummary) }));
 
     act('unload_get', false, (a, c) => ({ view: unloadView(mustViewable(a.truckId), c) }));
@@ -1039,7 +1039,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
 
     act('receipt_preview', true, (a) => {
-        const x = mustUnloadable(a.truckId), rp = receiptPlan(x);
+        const x = mustViewable(a.truckId), rp = receiptPlan(x);
         return { perIf: rp.perIf, missing: rp.missing, ops: rp.ops };
     });
 
@@ -1051,11 +1051,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const prevStatus = x0.status === T.APPROVING ? (x0.data.prevStatus || T.RECEIVING) : x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
         const cl = claimLoad(x0, T.APPROVING, 'receive', cur => {
             if (!canApprove(cur)) throw userErr('This truck is ' + cur.status + ', not ready to approve');
-        });
+        }, { prevStatus: prevStatus });
         const x = cl.Ld, claim = cl.claim, label = truckLabel(x);
         const rp = receiptPlan(x), seq = (Number(x.data.recvSeq) || 0) + 1;
         const writes = Object.assign({}, x.data.writes);
-        data.updateLoad(data.getLoad(x.id), { data: { prevStatus: prevStatus, recvApprovedBy: c.actor, recvApprovedAt: c.now.stamp } });
+        data.updateLoad(data.getLoad(x.id), { data: { recvApprovedBy: c.actor, recvApprovedAt: c.now.stamp } });
         let res;
         try {
             res = verify.runOps(rp.ops, writeMode(c), op => { assertClaim(x.id, claim, label, 'receive'); return tx.apply(verify.resolveNew(op, writes)); }, writes,
