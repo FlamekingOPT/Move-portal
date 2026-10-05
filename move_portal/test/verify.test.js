@@ -265,3 +265,26 @@ test('refreshIfs: fresh lines win; a missing IF is gone; changes are listed', ()
     assert.deepEqual(r.changes.map(x => [x.ifNum, x.wasPcs, x.nowPcs, x.now === 'not Packed']), [['IF1', 10, 8, false], ['IF2', 5, null, true]]);
     assert.deepEqual(v.refreshIfs(saved.slice(2), fresh).changes, []);
 });
+
+test('reserveToLines subtracts reservations per TO and item, never below 0', () => {
+    const r = v.reserveToLines(TOS, { '500|975': 10, '600|975': 900 });
+    assert.deepEqual(r.map(x => x.remaining), [14, 0, 1200]);
+    assert.equal(TOS[0].remaining, 24);                                  // input untouched
+});
+
+test('reservationsFromTrucks: loading surplus, and unwritten raises/add-ons of departed trucks', () => {
+    const loading = { id: '1', status: T.LOADING, data: { v3: true, ifs: IFS } };
+    const departedOff = { id: '2', status: T.DEPARTED, data: { v3: true, writes: {}, plan: [
+        { op: 'if_qty', ifId: '8', toId: '500', item: '975', from: 100, to: 112 },
+        { op: 'if_qty', ifId: '8', toId: '500', item: '11', from: 50, to: 40 },
+        { op: 'if_create', toId: '700', lines: { 11: 120 } }, { op: 'if_stamp', ifId: '8' }] } };
+    const departedOn = { id: '3', status: T.RECEIVING, data: { v3: true, writes: { 'if_qty:7:975': '7', 'if_qty:6:975': 'skipped:boom' }, plan: [
+        { op: 'if_qty', ifId: '7', toId: '600', item: '975', from: 12, to: 24 }, { op: 'if_qty', ifId: '6', toId: '600', item: '975', from: 12, to: 36 }] } };
+    const received = { id: '4', status: T.RECEIVED, data: { v3: true, writes: {}, plan: [{ op: 'if_create', toId: '700', lines: { 11: 5 } }] } };
+    // Truck 1 has 60 pcs over IF9001. Departed reservations come first, so TO500 has 24 - 12 = 12 left to raise; the other 48 is an add-on from TO600.
+    const loadedByTruck = { 1: { 975: 504 + 60 } };
+    const o = { trucks: [loading, departedOff, departedOn, received], loadedByTruck: loadedByTruck, toLines: TOS };
+    assert.deepEqual(v.reservationsFromTrucks(Object.assign({ mode: 'off' }, o)), { '500|975': 12 + 12, '700|11': 120, '600|975': 12 + 24 + 48 });
+    assert.deepEqual(v.reservationsFromTrucks(Object.assign({ mode: 'on' }, o)), { '500|975': 12 + 12, '700|11': 120, '600|975': 24 + 48 });   // written key 7 is in NetSuite; a skipped one is not
+    assert.deepEqual(v.reservationsFromTrucks(Object.assign({ mode: 'off', exceptId: '1' }, o)), { '500|975': 12, '700|11': 120, '600|975': 36 });
+});

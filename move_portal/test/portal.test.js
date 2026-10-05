@@ -877,3 +877,18 @@ test('fix4: an IF the office shipped meanwhile drops out of the plan as unplanne
     assert.equal(ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'I2' }).departed, true);
     assert.deepEqual(ctx.data.getLoad(t.id).data.ifs.map(f => f.ifId), ['9002']);
 });
+
+test('fix5: two trucks want the last 48 pcs of TO room; the second gets no_to, before and after the first departs', () => {
+    const ctx = setup();
+    const orig = ctx.ns.openToLines;
+    ctx.ns.openToLines = () => orig().filter(r => r.toId === '500');              // TO500 has 48 left; no other TO for YSN100
+    const a = truckWith(ctx, 46, '9001');                                          // 4 pallets (48 pcs) over IF9001: a raise on TO500
+    assert.equal(ctx.data.palletsByLoad(a.t.id, ['loaded']).length, 46);
+    const b = truckWith(ctx, 42, '9002');
+    const extra = printLabels(ctx, 1, 'Jlast', [L975]);
+    const r = ctx.run('truck_scan', { truckId: b.t.id, raw: extra[0].code });
+    assert.deepEqual([r.result, r.sku], ['no_to', 'YSN100']);
+    ctx.run('depart_confirm', { truckId: a.t.id, trailer: '537224', seal: 'R5' });   // off mode: the raise is not in NetSuite yet
+    assert.equal(ctx.data.getLoad(a.t.id).status, 'departed');
+    assert.equal(ctx.run('truck_scan', { truckId: b.t.id, raw: extra[0].code }).result, 'no_to');
+});

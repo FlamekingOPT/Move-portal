@@ -100,29 +100,37 @@ define([], function () {
         return 1 + (trucks || []).filter(t => String(t.id) !== String(exceptId) && departOf(t) && departOf(t).day === dayIso).length;
     }
 
-    function planDeparture(o) {
-        const ifs = byIfOrder(o.ifs), scanned = sumLines(o.pallets);
-        const fill = fillExpected(ifs, scanned), alloc = fill.alloc;
-        const toLeft = {};
-        (o.toLines || []).forEach(r => { toLeft[String(r.toId) + '|' + String(r.item)] = Number(r.remaining) || 0; });
-        const addOns = {};
-        Object.keys(fill.left).forEach(k => {
-            let left = fill.left[k];
+    // Place what didn't fit on the IFs: raise on the IFs' own TOs first, then add-ons from the oldest other open TOs. Never throws.
+    function placeSurplus(ifsIn, leftByItem, toLines) {
+        const ifs = byIfOrder(ifsIn), toLeft = {}, raises = {}, addOns = {}, uncovered = {};
+        (toLines || []).forEach(r => { toLeft[String(r.toId) + '|' + String(r.item)] = Number(r.remaining) || 0; });
+        Object.keys(leftByItem || {}).forEach(k => {
+            let left = leftByItem[k];
             if (!(left > 0)) return;
-            const carriers = ifs.filter(f => ifQty(f, k) > 0), own = {};
-            carriers.forEach(f => {                                   // raise: the IF's own TO still has qty
+            const own = {};
+            ifs.filter(f => ifQty(f, k) > 0).forEach(f => {
                 own[String(f.toId)] = true;
                 const key = String(f.toId) + '|' + k, g = Math.min(left, toLeft[key] || 0);
-                if (g) { alloc[String(f.ifId)][k] += g; toLeft[key] -= g; left -= g; }
+                if (g) { const r = raises[String(f.ifId)] = raises[String(f.ifId)] || {}; r[k] = (r[k] || 0) + g; toLeft[key] -= g; left -= g; }
             });
-            (o.toLines || []).filter(r => String(r.item) === k && !own[String(r.toId)]).sort(oldestFirst).forEach(r => {
+            (toLines || []).filter(r => String(r.item) === k && !own[String(r.toId)]).sort(oldestFirst).forEach(r => {
                 const key = String(r.toId) + '|' + k, g = Math.min(left, toLeft[key] || 0);
                 if (!g) return;
                 const a = addOns[String(r.toId)] = addOns[String(r.toId)] || { toId: String(r.toId), toNum: r.toNum, lines: {} };
                 a.lines[k] = (a.lines[k] || 0) + g; toLeft[key] -= g; left -= g;
             });
-            if (left > 0) throw new Error('No open transfer order covers ' + left + ' pcs of item ' + k);
+            if (left > 0) uncovered[k] = left;
         });
+        return { raises, addOns, uncovered };
+    }
+
+    function planDeparture(o) {
+        const ifs = byIfOrder(o.ifs), scanned = sumLines(o.pallets);
+        const fill = fillExpected(ifs, scanned), alloc = fill.alloc;
+        const sp = placeSurplus(ifs, fill.left, o.toLines), addOns = sp.addOns;
+        const bad = Object.keys(sp.uncovered)[0];
+        if (bad) throw new Error('No open transfer order covers ' + sp.uncovered[bad] + ' pcs of item ' + bad);
+        Object.keys(sp.raises).forEach(id => Object.keys(sp.raises[id]).forEach(k => { alloc[id][k] += sp.raises[id][k]; }));
 
         const st = { trailer: o.stamp.trailer, seal: o.stamp.seal, memo: memoFor(o.stamp.truckNo, o.stamp.dayIso) };
         const ops = [], allocOut = [], unplanned = [], kept = [];
@@ -169,6 +177,36 @@ define([], function () {
             ifs.push(f);
         });
         return { ifs, gone, changes };
+    }
+
+    // ── TO room reserved by other trucks ─────────────────────────────────
+    // NetSuite's TO "remaining" doesn't yet know about raises/add-ons that other trucks will need (loading) or
+    // planned but haven't written (departed in off/qty mode, or a key not in writes). Reserve them first.
+    const RESERVING = [TRUCK.DEPARTING, TRUCK.DEPARTED, TRUCK.RECEIVING, TRUCK.APPROVING];
+    function addRes(res, toId, item, q) { if (q > 0) { const k = String(toId) + '|' + String(item); res[k] = (res[k] || 0) + q; } }
+    function reserveToLines(toLines, res) {
+        return (toLines || []).map(r => Object.assign({}, r, { remaining: Math.max(0, (Number(r.remaining) || 0) - ((res || {})[String(r.toId) + '|' + String(r.item)] || 0)) }));
+    }
+    function inNetSuite(op, mode, writes) {
+        const w = writes && writes[opKey(op)];
+        return opAllowed(op, mode) && !!w && String(w).indexOf('skipped:') !== 0;
+    }
+    function reservationsFromTrucks(o) {
+        const res = {}, others = (o.trucks || []).filter(t => String(t.id) !== String(o.exceptId) && t.data && t.data.v3);
+        others.filter(t => RESERVING.indexOf(t.status) !== -1 && t.data.plan).forEach(t => t.data.plan.forEach(op => {
+            if (inNetSuite(op, o.mode, t.data.writes)) return;
+            if (op.op === 'if_qty') addRes(res, op.toId, op.item, Number(op.to) - Number(op.from));
+            if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => addRes(res, op.toId, k, Number(op.lines[k]) || 0));
+        }));
+        const room = reserveToLines(o.toLines, res), out = Object.assign({}, res);
+        others.filter(t => t.status === TRUCK.LOADING).forEach(t => {
+            const fill = fillExpected(t.data.ifs || [], (o.loadedByTruck || {})[String(t.id)] || {});
+            const sp = placeSurplus(t.data.ifs || [], fill.left, room), byIf = {};
+            (t.data.ifs || []).forEach(f => { byIf[String(f.ifId)] = f; });
+            Object.keys(sp.raises).forEach(id => Object.keys(sp.raises[id]).forEach(k => addRes(out, byIf[id].toId, k, sp.raises[id][k])));
+            Object.keys(sp.addOns).forEach(to => Object.keys(sp.addOns[to].lines).forEach(k => addRes(out, to, k, sp.addOns[to].lines[k])));
+        });
+        return out;
     }
 
     // ── unload and receipts ──────────────────────────────────────────────
@@ -351,6 +389,6 @@ define([], function () {
     }
 
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
-        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture, refreshIfs,
+        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });

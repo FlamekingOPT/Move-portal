@@ -177,9 +177,17 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (!cur || !isOpen(cur)) return;
         data.updateLoad(cur, { data: { stack: (cur.data.stack || []).concat([entry]).slice(-STACK_MAX) } });
     }
-    function scanCtx(x) {
-        return { truckId: x.id, trucks: truckMap(allTrucks()), ifs: x.data.ifs, toLines: ns.openToLines(),
-            loadedByItem: verify.sumLines(data.palletsByLoad(x.id, [VP.LOADED])) };
+    // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons).
+    function reservedToLines(exceptId, trucks, loadedAll, c) {
+        const byTruck = {}, toLines = ns.openToLines();
+        (loadedAll || data.palletsByStatus([VP.LOADED])).forEach(p => { (byTruck[p.loadId] = byTruck[p.loadId] || []).push(p); });
+        Object.keys(byTruck).forEach(k => { byTruck[k] = verify.sumLines(byTruck[k]); });
+        return verify.reserveToLines(toLines, verify.reservationsFromTrucks({ trucks: trucks, loadedByTruck: byTruck, toLines: toLines, mode: writeMode(c), exceptId: exceptId }));
+    }
+    function scanCtx(x, c) {
+        const trucks = allTrucks(), loadedAll = data.palletsByStatus([VP.LOADED]);
+        return { truckId: x.id, trucks: truckMap(trucks), ifs: x.data.ifs, toLines: reservedToLines(x.id, trucks, loadedAll, c),
+            loadedByItem: verify.sumLines(loadedAll.filter(p => p.loadId === String(x.id))) };
     }
     // Called at the start and again right before a pallet changes, so a scan never lands on a truck that is departing.
     function mustOpenTruck(id) {
@@ -205,12 +213,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     // baseIfs: the truck's IFs before any claim (a claim write already drops unplanned IFs from x.data.ifs).
     function departPlan(x, inp, c, baseIfs) {
-        const truckNo = verify.truckNoForDay(allTrucks(), c.now.dayIso, x.id);
+        const trucks = allTrucks(), truckNo = verify.truckNoForDay(trucks, c.now.dayIso, x.id);
         const ps = data.palletsByLoad(x.id, [VP.LOADED]);
         const fresh = verify.refreshIfs(baseIfs || x.data.ifs, ns.plannedIfs());   // plan from NetSuite's current IFs, not the copy saved at start
         let plan;
         try {
-            plan = verify.planDeparture({ ifs: fresh.ifs, pallets: ps, toLines: ns.openToLines(),
+            plan = verify.planDeparture({ ifs: fresh.ifs, pallets: ps, toLines: reservedToLines(x.id, trucks, null, c),
                 stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } });
         } catch (e) { if (/^No open transfer order covers/.test(e.message || '')) throw userErr(e.message); throw e; }
         plan.unplanned = fresh.gone.concat(plan.unplanned);
@@ -485,7 +493,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustOpenTruck(a.truckId);
         const s = core.parseScan(a.raw);
         const p = s.palletId ? data.getPallet(s.palletId) : null;
-        const r = verify.classifyLoadScan(Object.assign({ pallet: p }, scanCtx(x)));
+        const r = verify.classifyLoadScan(Object.assign({ pallet: p }, scanCtx(x, c)));
         if (r.set) {
             mustOpenTruck(x.id);
             data.updatePallet(p, { status: r.set.status, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
@@ -499,7 +507,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustOpenTruck(a.truckId), p = mustPallet(a.palletId);
         const from = p.loadId ? data.getLoad(p.loadId) : null;
         if (p.status !== VP.LOADED || !from || from.status !== T.LOADING || from.data.pending) throw userErr('That pallet can no longer be moved');
-        const r = verify.fitOnTruck(p, scanCtx(x));
+        const r = verify.fitOnTruck(p, scanCtx(x, c));
         if (r.result === 'no_to') throw userErr('No open transfer order for ' + r.sku + ' on this truck. Set it aside and call the office.');
         mustOpenTruck(x.id);
         data.updatePallet(p, { load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
