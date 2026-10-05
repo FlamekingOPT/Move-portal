@@ -192,10 +192,18 @@ h3{font-size:15px;margin:16px 0 8px}
         function alerted() { try { return JSON.parse(get('mv_alerted') || '[]'); } catch (e) { return []; } }
         function paintBanner() {
             let b = $('rbanner');
-            if (!S.banner.length) { if (b) b.remove(); return; }
+            const m = $('main');
+            if (!S.banner.length) { if (b) b.remove(); if (m) m.style.paddingBottom = ''; return; }
             if (!b) { b = document.createElement('div'); b.id = 'rbanner'; b.className = 'banner'; document.body.appendChild(b); }
             b.innerHTML = S.banner.map(t => '<div><span>✅ ' + esc(t.label) + ' now matches its IF: ready to ship</span>' +
                 '<button data-act="opentruck" data-id="' + esc(t.id) + '">Open</button><button data-act="bannerx" data-id="' + esc(t.id) + '" aria-label="Dismiss">✕</button></div>').join('');
+            if (m) m.style.paddingBottom = (b.offsetHeight + 16) + 'px';     // the fixed banner never covers the last controls
+        }
+        // This device just verified a ready truck: its own ready event needs no banner.
+        function markSeen(view) {
+            if (!view || !view.truck || view.truck.status !== 'ready' || !view.verify) return;
+            const k = String(view.truck.id + '|' + view.verify.at), seen = alerted();
+            if (seen.indexOf(k) === -1) put('mv_alerted', JSON.stringify(seen.concat([k]).slice(-300)));
         }
         function dropBanner(id) { S.banner = S.banner.filter(t => String(t.id) !== String(id)); paintBanner(); }
         ACT.bannerx = el => dropBanner(el.dataset.id);
@@ -575,6 +583,7 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, false);
             if (!$('scanres')) return;
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
+            markSeen(r.view);
             tone(r.match ? 'ok' : 'warn');
             paintTruck(r.view, false);
             $('scanres').innerHTML = r.match ? flash('green', '✅ Ready to ship', 'The load matches its IFs')
@@ -587,6 +596,7 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, false);
             if (!$('scanres')) return;
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
+            markSeen(r.view);
             tone(r.match ? 'ok' : 'warn');
             paintTruck(r.view, false);
             $('scanres').innerHTML = flash(r.match ? 'green' : 'amber', '➕ ' + esc(el.dataset.label) + ' added',
@@ -625,6 +635,7 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, false);
             if (!$('tfoot')) return;
             if (!r.ok) { S.dplan = null; $('dmsg').innerHTML = errBox(r.error); return; }
+            markSeen(r.view);
             if (r.needsFix) { needsFixAgain(r); return; }
             S.dplan = r.plan;
             $('dmsg').innerHTML = flash('green', 'Truck ' + r.truckNo + ' of the day', 'Matches the IFs') +

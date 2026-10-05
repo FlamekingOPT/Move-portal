@@ -119,3 +119,12 @@ test('review fixes: ready alert per ready event on every device; confirm and ban
     const css = ui.buildPage({ url: '/x?a=1', mode: 'floor', me: 'X', roster: [], fromName: 'R', toName: 'T', maxPrint: 1 });
     assert.match(css, /\.banner\{position:fixed;bottom:0/);
 });
+
+test('polish: no self-alert after Verify; banner pads main so it cannot cover controls', () => {
+    const src = ui._clientMain.toString();
+    ["view.truck.id + '|' + view.verify.at", 'markSeen(r.view)', 'paddingBottom'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    ['ACT.tverify =', 'ACT.taddif =', 'ACT.dpreview ='].forEach(n => {
+        const i = src.indexOf(n);
+        assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('markSeen(r.view)') !== -1, 'no markSeen in ' + n);
+    });
+});
