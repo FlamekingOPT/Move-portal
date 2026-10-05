@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "move-preview", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js"], "port": 8765 }
+    { "name": "move-preview", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js"], "port": 8765 },
+    { "name": "move-preview-beta", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js"], "port": 8765 }
   ]
 }

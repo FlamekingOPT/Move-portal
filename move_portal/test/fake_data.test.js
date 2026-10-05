@@ -37,10 +37,18 @@ test('local store round-trips db to a file', () => {
     const { makeLocalStore } = require('../local/local_store');
     const core = require('./amd').loadAmd('move_core.js');
     const f = path.join(os.tmpdir(), 'mv-store-' + Date.now() + '.json');
-    const a = makeLocalStore(core, f);
-    a.data.createLoad({ number: 'X', status: 'loading', data: { v3: true } });
-    a.save();
-    const b = makeLocalStore(core, f);
-    assert.equal(b.data.loadsByStatus(['loading']).length, 1);
-    fs.unlinkSync(f);
+    try {
+        const a = makeLocalStore(core, f);
+        a.data.createLoad({ number: 'X', status: 'loading', data: { v3: true } });
+        a.data.db.settings.writeMode = 'off';
+        const seq = a.data.db.seq;
+        a.save();
+        assert.equal(fs.existsSync(f + '.tmp'), false);
+        const b = makeLocalStore(core, f);
+        assert.equal(b.data.loadsByStatus(['loading']).length, 1);
+        assert.equal(b.data.db.settings.writeMode, 'off');
+        assert.equal(b.data.db.seq, seq);
+        fs.writeFileSync(f, '{ not json');
+        assert.throws(() => makeLocalStore(core, f), /corrupted.*mv-store-/);
+    } finally { try { fs.unlinkSync(f); } catch (e) {} try { fs.unlinkSync(f + '.tmp'); } catch (e) {} }
 });

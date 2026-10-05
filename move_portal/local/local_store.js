@@ -4,8 +4,13 @@ const { makeFakeData } = require('../test/fake_data');
 
 function makeLocalStore(core, file) {
     const data = makeFakeData(core);
-    if (fs.existsSync(file)) Object.assign(data.db, JSON.parse(fs.readFileSync(file, 'utf8')));
-    return { data, save: () => fs.writeFileSync(file, JSON.stringify(data.db, null, 1)) };
+    if (fs.existsSync(file)) {
+        let parsed;
+        try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); }
+        catch (e) { throw new Error('Local store file is corrupted and was not loaded: ' + file + ' (' + e.message + ')'); }
+        Object.assign(data.db, parsed);
+    }
+    return { data, save: () => { const tmp = file + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(data.db, null, 1)); fs.renameSync(tmp, file); } };
 }
 
 module.exports = { makeLocalStore };

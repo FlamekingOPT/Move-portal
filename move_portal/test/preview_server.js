@@ -23,13 +23,16 @@ const data = store.data;
 const ns = makeSnapshotNs(verify, snapFile);
 const snap = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
 
-// Seed settings and items from the snapshot the first time the store is created.
+// Seed settings the first time the store is created; merge items and trailers on every start.
+const TRAILERS = ['537224', '416460', '105488', '522051', '211659', '543804', '487491'];
 if (!data.db.settings.v3seeded) {
     Object.assign(data.db.settings, { locFrom: String(snap.locFrom || '35'), locTo: String(snap.locTo || '46'), labelCode: 'qr', writeMode: 'off',
-        defaultCarrier: 'Armstrong Group', trailers: ['537224', '416460', '105488', '522051', '211659'], v3seeded: true });
-    ns.items().forEach(i => { if (!data.db.items.some(x => x.item === i.item)) data.db.items.push(i); });
-    store.save();
+        defaultCarrier: 'Armstrong Group', trailers: TRAILERS.slice(), v3seeded: true });
 }
+data.db.settings.trailers = data.db.settings.trailers || [];
+TRAILERS.forEach(t => { if (data.db.settings.trailers.indexOf(t) < 0) data.db.settings.trailers.push(t); });
+ns.items().forEach(i => { if (!data.db.items.some(x => String(x.sku).toUpperCase() === String(i.sku).toUpperCase())) data.db.items.push(i); });
+store.save();
 
 let mgrNow = true;
 const nowStamp = () => {
@@ -48,7 +51,6 @@ const sl = loadAmd('sl_move_portal.js', {
 http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     const floor = u.searchParams.get('floor') === '1';
-    mgrNow = !floor;
     const action = u.searchParams.get('action');
     if (!action) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -61,8 +63,10 @@ http.createServer((req, res) => {
     req.on('data', c => { body += c; });
     req.on('end', () => {
         let out;
-        try { out = Object.assign({ ok: true }, sl._runAction(action, JSON.parse(body || '{}'), !floor)); store.save(); }
+        mgrNow = !floor;
+        try { out = Object.assign({ ok: true }, sl._runAction(action, JSON.parse(body || '{}'), !floor)); }
         catch (e) { out = { ok: false, error: e.message }; if (!e.user) console.error(e); }
+        if (out.ok) { try { store.save(); } catch (e) { console.error('STORE SAVE FAILED', e); } }
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(out));
     });
