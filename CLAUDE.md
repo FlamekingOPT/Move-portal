@@ -13,7 +13,7 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - `move_portal/local/`: node-only `snapshot_ns.js` (reads a prod snapshot) and `local_store.js` (persists to `local/store.json`, gitignored).
 - `move_portal/snapshot/` (gitignored): `prod-<date>.json` snapshots pulled read-only via the SuiteQL connector.
 - `move_portal/test/`: node tests with in-memory fakes, plus `preview_server.js` = the **local beta** on port 8765 (launch config `move-preview` / `move-preview-beta`). Manager view `http://localhost:8765/`, floor view `/?floor=1`. It serves the newest `snapshot/prod-*.json` (else the test fixture) and saves to `local/store.json`.
-- **Tests:** `node --test "move_portal/test/*.test.js"` → **103/103 pass** (2026-10-05, v3). A bare folder path fails on Windows.
+- **Tests:** `node --test "move_portal/test/*.test.js"` → **133/133 pass** (2026-10-05, v3 + final-review fix wave). A bare folder path fails on Windows.
 - **Spec:** `docs/superpowers/specs/2026-09-27-move-portal-design.md`. **D2 is SUPERSEDED** by `docs/superpowers/specs/2026-09-28-move-portal-bulk-to-design.md`.
 - **Plan:** `docs/superpowers/plans/2026-09-27-move-portal.md` (Tasks 0–15).
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
@@ -21,6 +21,7 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 
 ## 🧭 READ FIRST — HANDOFF (2026-10-05, late): v3 LOCAL BETA BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
 - **Branch `feat/v3-verification`** (pushed; not merged to main). Plan `docs/superpowers/plans/2026-10-05-move-portal-verification.md`: Tasks 1–14 done, every task reviewed. The SDD ledger with every review finding and minor is in `docs/sdd-ledger/progress.md` (v3 section).
+- **Final-review fix wave done (items 1–11)** on `feat/v3-verification` (not pushed): skip a refused IF edit (`depart_skip_write`), grouped pallet counts, stale-copy guards, IF re-read at departure, TO room reservations, floor deploy gate (`customdeploy_move_portal_floor`), NetSuite-user approvers, full-length truck JSON reads, flagged list on the truck, no empty departures, minors. Report: `.superpowers/sdd/final-fix-report.md`.
 - **Run the beta:** `node move_portal/test/preview_server.js` → manager `http://localhost:8765/`, floor `http://localhost:8765/?floor=1` (scanners on the same wifi: `http://<pc-ip>:8765/?floor=1`). Write mode is `off`. Delete `move_portal/local/store.json` to start clean.
 - **Refresh the snapshot:** ask Claude to "refresh the move snapshot". It runs `v.SQL('35','46')` queries (toLines, ifLines, then links/receipts on those ids, items) read-only and writes `move_portal/snapshot/prod-<date>.json`, as in plan Task 13 Step 5. The first one is `prod-2026-10-05.json`: 12 planned IFs, 6 open TO lines.
 - **Smoke-tested 2026-10-05 against that snapshot:** load out IF72287 (short + YSN301 add-on from TO11710, YSN335-ALM blocked: TO11716 has no qty left) → floor request → manager approve → unload 21/23 + never-loaded flag → short receipt approved → report rows ⏳ (office hasn't acted yet). No console/server errors; no horizontal scroll at 375px.
