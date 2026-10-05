@@ -1556,3 +1556,15 @@ test('final3: every action resets the ns cache; truck_correct resets it again af
     ctx.run('truck_correct', { truckId: t.id });
     assert.deepEqual([n, atVerify], [2, 2]);                                    // runAction + after the write, before the re-verify read
 });
+
+test('final4: approvals lists every Picked/Packed IF no truck has, for the manager add-any picker', () => {
+    const ctx = setup();
+    const [ifX] = extraIfs(ctx, 1);
+    const { t } = truckWith(ctx, 43);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    const a = ctx.run('approvals');
+    assert.deepEqual(a.freeIfs.map(f => f.ifId).sort(), ['9002', ifX].sort());
+    assert.deepEqual(Object.keys(a.freeIfs[0]).sort(), ['ifId', 'ifNum', 'lines', 'toNum'].sort());
+    ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' });                // still needs_fix (short on IF9002)
+    assert.deepEqual(ctx.run('approvals').freeIfs.map(f => f.ifId), [ifX]);
+});

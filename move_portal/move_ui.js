@@ -377,8 +377,8 @@ h3{font-size:15px;margin:16px 0 8px}
             return '<div class="card"><h4>' + esc(q.summary) + ' ×' + q.count + ' <span class="pill ' + pill + '">' +
                 esc(q.status === 'printed' ? 'Printed · on its way' : q.status) + '</span></h4><div class="muted">' + esc(q.at) + ' · ' + esc(q.requester) +
                 (q.via === 'radio' ? ' (radio)' : '') + (q.note ? ' · ' + esc(q.note) : '') + '</div>' +
-                (acts && q.status === 'queued' ? '<div class="row2"><button class="dbtn pri" data-act="reqprint" data-id="' + q.id + '">Print</button>' +
-                    '<button class="dbtn gh" data-act="reqcancel" data-id="' + q.id + '">Cancel</button></div>' : '') + '</div>';
+                (acts && q.status === 'queued' ? '<div class="row2"><button class="dbtn pri" data-act="reqprint" data-id="' + esc(q.id) + '">Print</button>' +
+                    '<button class="dbtn gh" data-act="reqcancel" data-id="' + esc(q.id) + '">Cancel</button></div>' : '') + '</div>';
         }
         async function loadMyReqs() {
             const r = await api('req_list', { mine: true });
@@ -469,7 +469,7 @@ h3{font-size:15px;margin:16px 0 8px}
             main('<div class="muted">Loading…</div>');
             const r = await api('truck_planned');
             if (!r.ok) { main(errBox(r.error)); return; }
-            main((r.open.length ? '<h3>Trucks loading</h3>' + r.open.map(t => '<div class="card bl" data-act="opentruck" data-id="' + t.id + '"><h4>' + esc(t.label) + ' ' +
+            main((r.open.length ? '<h3>Trucks loading</h3>' + r.open.map(t => '<div class="card bl" data-act="opentruck" data-id="' + esc(t.id) + '"><h4>' + esc(t.label) + ' ' +
                 statusPill(t.status) + '</h4><div class="muted">' + t.pallets + ' pallets</div></div>').join('') : '') +
                 '<h3>Planned trucks · Picked/Packed IFs</h3><div class="card plist">' + (r.planned.map(f => ifRow(f, true)).join('') || '<div class="muted">No planned IFs. The office creates them in NetSuite.</div>') + '</div>' +
                 '<div id="tmsg"></div><button class="btn pri" data-act="starttruck">Start truck with selected IFs</button>' +
@@ -566,7 +566,7 @@ h3{font-size:15px;margin:16px 0 8px}
                     '</td><td><b>' + num(l.scanned) + '</b> / ' + num(l.expected) + (l.estPallets ? ' <span class="muted">(' + l.estPallets + ' plt)</span>' : '') + '</td></tr>').join('') +
                 v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td><b>' + num(x.scanned) + '</b> extra</td></tr>').join('') + '</table>';
             $('plist').innerHTML = v.pallets.slice().reverse().map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
-                (open ? '<div class="ac"><button data-act="tremove" data-id="' + p.id + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
+                (open ? '<div class="ac"><button data-act="tremove" data-id="' + esc(p.id) + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
             const keep = { d_trailer: ($('d_trailer') || {}).value, d_trailer2: ($('d_trailer2') || {}).value, d_seal: ($('d_seal') || {}).value, d_carrier: ($('d_carrier') || {}).value };
             $('tfoot').innerHTML = stageHtml(v);
             const sel = $('d_trailer');
@@ -672,7 +672,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'addon': return flash('amber', '🟡 Not on this truck\'s IFs', line, 'Needs an add-on IF from ' + esc(r.addonTo ? r.addonTo.toNum : 'an office TO') + '. Verify will ask for it.');
                 case 'no_to': return flash('red', '❌ No open TO for ' + esc(r.sku), line, 'Set it aside and call the office.');
                 case 'dup': return flash('amber', '🟡 Already on this truck', line, 'No change.');
-                case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + p.id + '">Move here</button><button data-act="clearres">Leave it</button>');
+                case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + esc(p.id) + '">Move here</button><button data-act="clearres">Leave it</button>');
                 case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + ', departing', line, 'Check with the supervisor.');
                 case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
@@ -852,7 +852,7 @@ h3{font-size:15px;margin:16px 0 8px}
             main('<div class="muted">Loading…</div>');
             const r = await api('unload_list');
             if (!r.ok) { main(errBox(r.error)); return; }
-            main(r.trucks.map(t => '<div class="card bt" data-act="openunload" data-id="' + t.id + '"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' +
+            main(r.trucks.map(t => '<div class="card bt" data-act="openunload" data-id="' + esc(t.id) + '"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' +
                 esc(t.depart ? 'Seal ' + t.depart.seal + ' · Trailer ' + t.depart.trailer : '') + ' · ' + t.received + ' of ' + t.pallets + ' in' + (t.missing ? ' · ' + t.missing + ' missing' : '') + '</div></div>').join('') ||
                 '<div class="muted">No trucks in transit</div>');
         }
@@ -874,7 +874,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 '</td><td><b>' + num(f.received) + '</b> / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
                 (v.flagged.length ? flash('amber', '🟠 ' + v.flagged.length + ' never-loaded pallet(s) flagged', esc(v.flagged.map(p => p.code).join(', ')), 'The office will sort these out.') : '');
             $('uexp').innerHTML = '<h4>Still expected</h4>' + (v.expected.map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div></div>').join('') || '<div class="muted">All in ✅</div>');
-            $('ufoot').innerHTML = (t.error ? errBox(t.error) : '') + '<button class="btn ghost sm" data-act="uundo">↶ Undo last scan</button>' + (S.lastIn ? '<button class="btn ghost sm" data-act="udamaged" data-id="' + S.lastIn + '">Mark last pallet damaged</button>' : '') +
+            $('ufoot').innerHTML = (t.error ? errBox(t.error) : '') + '<button class="btn ghost sm" data-act="uundo">↶ Undo last scan</button>' + (S.lastIn ? '<button class="btn ghost sm" data-act="udamaged" data-id="' + esc(S.lastIn) + '">Mark last pallet damaged</button>' : '') +
                 '<button class="btn go" data-act="udone">Unloading done: send to manager</button>';
         }
         function unloadResultHtml(r) {
@@ -884,7 +884,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'late': return flash('green', '✅ Late arrival', line, 'It goes on a second receipt for this IF (manager OK).');
                 case 'dup': return flash('amber', '🟡 Already scanned in', line, 'No change.');
                 case 'dup_other': return flash('amber', '🟡 Already received on ' + esc(r.otherLabel), line, '');
-                case 'other_truck': return flash('amber', '🟡 Belongs to ' + esc(r.otherLabel), line, '', '<button data-act="uother" data-id="' + p.id + '">Receive it there</button><button data-act="clearres">Set aside</button>');
+                case 'other_truck': return flash('amber', '🟡 Belongs to ' + esc(r.otherLabel), line, '', '<button data-act="uother" data-id="' + esc(p.id) + '">Receive it there</button><button data-act="clearres">Set aside</button>');
                 case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the office. Set it aside.');
                 case 'locked': return flash('red', '❌ Its truck is still departing', line, 'Wait a minute and scan again.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Set aside and call the supervisor.');
@@ -912,7 +912,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 : o.op === 'if_create' ? '➕ Add-on IF from ' + esc(o.toNum || 'TO ' + o.toId) : o.op === 'drop_if' ? '✕ Take ' + esc(o.ifNum) + ' off the truck' : esc(o.op);
         }
         // One card per needs_fix truck: diffs (Drop for a gone/empty IF, Correct for a qty or add-on fix), suggestions, Correct all, Re-check.
-        function fixCard(n) {
+        function fixCard(n, free) {
             const t = n.truck, id = esc(t.id), lab = esc(t.label), wm = esc(n.writeMode), diffs = n.diffs || [], live = {};
             diffs.forEach(d => { live[d.key] = 1; });
             const can = d => d.kind === 'if_short' || d.kind === 'if_over' || (d.kind === 'no_if' && d.toId);
@@ -927,30 +927,37 @@ h3{font-size:15px;margin:16px 0 8px}
                 (n.correctError ? errBox('Correction refused: ' + n.correctError + ' — fix it in NetSuite') : '') +
                 '<div class="diffs">' + rows + '</div>' + corr +
                 (n.orphans || []).map(o => '<div class="muted warn">⚠ Add-on ' + esc(o.text) + '</div>').join('') +
-                sugHtml(n.suggestions, true, t.id) +
+                sugHtml(n.suggestions, true, t.id) + anyIfHtml(free, t.id) +
                 '<div class="muted">Correct the IF: ' + esc(wmText(n.writeMode)) + '</div>' +
                 '<div class="row2">' + (diffs.some(can) || drops ? '<button class="dbtn pri" data-act="apcorrect" data-id="' + id + '" data-label="' + lab + '" data-wm="' + wm + '" data-drops="' + drops + '">Correct the IF</button>' : '') +
                 '<button class="dbtn gh" data-act="apverify" data-id="' + id + '" data-label="' + lab + '">Re-check</button>' +
                 '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">Open truck</button></div></div>';
         }
+        // Manager only (spec §7): any Picked/Packed IF no truck has, not just the suggested ones.
+        function anyIfHtml(free, truckId) {
+            if (!free || !free.length) return '';
+            return '<label class="f">Add any Packed IF</label><div class="row2"><select class="inp" id="apfree_' + esc(truckId) + '"><option value="">Pick an IF…</option>' +
+                free.map(f => '<option value="' + esc(f.ifId) + '">' + esc(f.ifNum + ' · ' + f.toNum + ' · ' + (f.lines || []).map(l => l.sku + ' ' + l.qty).join(', ')) + '</option>').join('') +
+                '</select><button class="dbtn gh" data-act="apaddany" data-id="' + esc(truckId) + '">Add</button></div>';
+        }
         SCREENS.approve = async (msg) => {
             main((msg || '') + '<div class="muted">Loading…</div>');
             const r = await api('approvals');
             if (!r.ok) { main(errBox(r.error)); return; }
-            const fix = (r.needsFix || []).length ? '<h3>Needs IF fix</h3>' + r.needsFix.map(fixCard).join('') : '';
+            const fix = (r.needsFix || []).length ? '<h3>Needs IF fix</h3>' + r.needsFix.map(n => fixCard(n, r.freeIfs)).join('') : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
                 (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');
             const rec = r.receipts.map(x => {
                 const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
                 if (!x.perIf) return '<div class="card warnc">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + errBox(x.error || 'Could not build the receipt') +
-                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : 'Approve receipt') + '</button></div>';
+                    '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : 'Approve receipt') + '</button></div>';
                 const missing = x.missing || [];
                 return '<div class="card">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + (x.error ? errBox(x.error) : '') +
                     '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' +
                     x.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
                     (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
-                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
+                    '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
             }).join('');
             main((msg || '') + (fix + ret + rec || '<div class="muted">Nothing waiting for approval</div>'));
         };
@@ -994,6 +1001,15 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = await api('truck_add_if', { truckId: el.dataset.id, ifId: el.dataset.ifid });
             tone(r.ok ? 'ok' : 'bad');
             SCREENS.approve(r.ok ? verifyMsg(r, r.view.truck.label, (el.dataset.label || 'IF') + ' added') : errBox(r.error));
+        };
+        ACT.apaddany = async el => {
+            const sel = $('apfree_' + el.dataset.id);
+            if (!sel || !sel.value) { tone('bad'); return; }
+            const label = sel.options[sel.selectedIndex].text.split(' · ')[0];
+            busy(el, true);
+            const r = await api('truck_add_if', { truckId: el.dataset.id, ifId: sel.value });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? verifyMsg(r, r.view.truck.label, label + ' added') : errBox(r.error));
         };
         ACT.apverify = async el => {
             busy(el, true);

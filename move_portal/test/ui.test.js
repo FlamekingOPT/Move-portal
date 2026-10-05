@@ -128,3 +128,10 @@ test('polish: no self-alert after Verify; banner pads main so it cannot cover co
         assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('markSeen(r.view)') !== -1, 'no markSeen in ' + n);
     });
 });
+
+test('final fixes: manager add-any-IF picker on the needs-fix card; ids escaped; verify by may be an object', () => {
+    const src = ui._clientMain.toString();
+    ['r.freeIfs', 'data-act="apaddany"', "api('truck_add_if'"].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    ['data-id="\' + p.id + \'"', 'data-id="\' + x.truck.id + \'"'].forEach(t => assert.equal(src.indexOf(t), -1, 'unescaped ' + t));
+    assert.ok(src.indexOf("typeof vf.by === 'object'") !== -1, 'verify by object shown by name');
+});

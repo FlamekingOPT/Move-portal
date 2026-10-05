@@ -1071,9 +1071,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const sum = x => truckSummary(x, counts);
         // needs_fix: the stored diffs (only the manager's Re-check calls truck_verify again); one grouped read of loaded pallets.
         const fix = trucks.filter(x => x.status === T.NEEDS_FIX);
-        let needsFix = [];
+        let needsFix = [], freeIfs = [];
         if (fix.length) {
-            const loaded = {}, dp = defPcs(c), planned = ns.plannedIfs();
+            const loaded = {}, dp = defPcs(c), planned = ns.plannedIfs(), taken = takenByOthers(trucks, null);
+            // Spec §7: a manager may add any Picked/Packed IF that no truck has (the card's picker), not only the suggested ones.
+            freeIfs = planned.filter(f => !taken[String(f.ifId)]).map(f => ({ ifId: f.ifId, ifNum: f.ifNum, toNum: f.toNum, lines: f.lines }));
             data.palletsByStatus([VP.LOADED]).forEach(p => { (loaded[String(p.loadId)] = loaded[String(p.loadId)] || []).push(p); });
             const sk = skuNames([...new Set(fix.reduce((s, x) => s.concat(((x.data.verify || {}).diffs || []).filter(d => d.item).map(d => String(d.item))), []))]);
             needsFix = fix.map(x => {
@@ -1084,6 +1086,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         }
         return {
             needsFix: needsFix,
+            freeIfs: freeIfs,
             retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { canRelease: !stampWritten(x) })),
             receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;
