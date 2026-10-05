@@ -1044,3 +1044,93 @@ test('receipt_approve re-checks its claim right before the final write', () => {
     assert.deepEqual([d.status, d.data.recvSeq, d.data.claim], ['approving', undefined, 'other']);
     assert.throws(() => ctx.run('unload_scan', { truckId: t.id, raw: ps[1].code }, false), /not ready to unload/);   // receiveOn refuses while approving
 });
+
+// ── Verify Load (Task 2) ──
+
+test('verify: exact → ready; short → needs_fix with instructions; scanning after ready drops back to loading', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    const r = ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.deepEqual([r.match, r.view.truck.status], [true, 'ready']);
+    const extra = printLabels(ctx, 1, 'Jx1', [L975]);
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: extra[0].code }, false).view.truck.status, 'loading');
+    const v2 = ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.deepEqual([v2.match, v2.view.truck.status, v2.diffs[0].kind], [false, 'needs_fix', 'if_over']);
+    assert.match(v2.diffs[0].text, /IF9001 YSN100: IF 504 · loaded 516 → IF needs \+12 \(1 pallet\)/);
+});
+
+test('take off mode: pallet back to labeled, logged; not on truck → refused; ready → loading', () => {
+    const ctx = setup();
+    const { t, ps } = truckWith(ctx, 42);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code, mode: 'off' }, false);
+    assert.deepEqual([r.result, r.tone, r.view.truck.status], ['taken_off', 'warn', 'loading']);
+    assert.deepEqual([ctx.data.getPallet(ps[0].id).status, ctx.data.getPallet(ps[0].id).loadId], ['labeled', '']);
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code, mode: 'off' }, false).result, 'not_on_truck');
+    assert.equal(ctx.data.db.scans.filter(s => s.result === 'taken_off').length, 1);
+});
+
+test('recheck: an office fix in NetSuite turns a needs_fix truck ready', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'needs_fix');
+    const real = ctx.ns.plannedIfs;
+    ctx.ns.plannedIfs = () => real().map(f => f.ifId === '9001' ? Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: 480 })] }) : f);
+    const r = ctx.run('trucks_recheck', {}, false);
+    assert.deepEqual(r.nowReady.map(x => x.id), [t.id]);
+    assert.equal(ctx.data.getLoad(t.id).status, 'ready');
+});
+
+test('new IF suggestion: floor can add a suggested IF; not an IF on another truck', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 43);                                         // 516 on a 504 IF → over
+    const v1 = ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.deepEqual(v1.suggestions.map(f => f.ifId), ['9002']);              // same TO500, not on a truck
+    const r = ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' }, false);
+    assert.deepEqual(r.view.truck.status, 'needs_fix');                       // now 516 vs 1008 → short on IF9002
+    assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: '9000' }, false), /not a suggested IF/);
+    assert.throws(() => ctx.run('truck_drop_if', { truckId: t.id, ifId: '9002' }, false), /Managers only/);
+    assert.equal(ctx.run('truck_drop_if', { truckId: t.id, ifId: '9002' }).view.truck.status, 'needs_fix');
+});
+
+test('scans and verify are refused on a departing truck', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    const x = ctx.data.getLoad(t.id);
+    ctx.data.updateLoad(x, { data: { claim: 'other', workingAt: Date.now() } });
+    assert.throws(() => ctx.run('truck_verify', { truckId: t.id }, false), /closed|departing/);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: 'PLT1', mode: 'off' }, false), /closed/);
+});
+
+test('a pallet on a ready truck reads other_truck; move here sends both trucks to loading; remove and undo flip ready too', () => {
+    const ctx = setup();
+    const { t: a, ps } = truckWith(ctx, 42);
+    assert.equal(ctx.run('truck_verify', { truckId: a.id }, false).view.truck.status, 'ready');
+    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    const r = ctx.run('truck_scan', { truckId: b.id, raw: ps[0].code }, false);
+    assert.deepEqual([r.result, r.otherLabel], ['other_truck', 'IF9001']);
+    ctx.run('truck_move_here', { truckId: b.id, palletId: ps[0].id }, false);
+    assert.equal(ctx.data.getLoad(a.id).status, 'loading');
+    ctx.data.updateLoad(ctx.data.getLoad(a.id), { status: 'ready' });
+    ctx.run('truck_remove', { truckId: a.id, palletId: ps[1].id }, false);
+    assert.equal(ctx.data.getLoad(a.id).status, 'loading');
+    ctx.data.updateLoad(ctx.data.getLoad(a.id), { status: 'ready' });
+    ctx.run('truck_undo', { truckId: a.id }, false);
+    assert.equal(ctx.data.getLoad(a.id).status, 'loading');
+});
+
+test('verify saves the fresh NetSuite IFs; refuses when the truck changed meanwhile; drop_if keeps one IF', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    const real = ctx.ns.plannedIfs;
+    ctx.ns.plannedIfs = () => real().map(f => f.ifId === '9001' ? Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: 480 })] }) : f);
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'ready');
+    assert.equal(ctx.data.getLoad(t.id).data.ifs[0].lines[0].qty, 480);
+    const orig = ctx.data.palletsByLoad;
+    let n = 0;
+    ctx.data.palletsByLoad = (id, st) => { const r = orig(id, st); return ++n === 2 ? r.slice(1) : r; };
+    assert.throws(() => ctx.run('truck_verify', { truckId: t.id }, false), /changed while/);
+    ctx.data.palletsByLoad = orig;
+    assert.throws(() => ctx.run('truck_drop_if', { truckId: t.id, ifId: '9001' }), /at least one IF/);
+});
