@@ -68,7 +68,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // Flips the load to a working status under a fresh claim token, then re-reads it to confirm
     // no other request's write interleaved. Returns the fresh load and the claim to re-check later.
-    function claimLoad(Ld, status, phase) {
+    function claimLoad(Ld, status, phase, mustBe) {
+        const cur = data.getLoad(Ld.id);               // never merge over a stale copy: re-read, then guard, then claim
+        if (!cur) throw userErr('Load not found');
+        if (mustBe) mustBe(cur);
+        Ld = cur;
         const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
         data.updateLoad(Ld, { status: status, data: { workingAt: Date.now(), error: '', phase: phase, claim: claim } });
         const fresh = data.getLoad(Ld.id);
@@ -211,7 +215,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });  // fresh read so a stale copy never rewrites the claim
         } catch (e) {
             if (e.user) throw e;                      // claim lost: another request owns the truck now, leave its state alone
-            if (!e.user) log.error({ title: 'move depart ' + x.id, details: (e && e.stack) || String(e) });
+            log.error({ title: 'move depart ' + x.id, details: (e && e.stack) || String(e) });
             data.updateLoad(data.getLoad(x.id), { data: { error: e.message || String(e), writes: writes } });
             throw userErr('Departure saved but a NetSuite write failed: ' + (e.message || e) + '. A manager can press Retry.');
         }
@@ -919,8 +923,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             data.updateLoad(x0, { data: { pending: Object.assign({ by: c.actor, at: c.now.stamp }, inp) } });
             return { waiting: true, plan: pubPlan(d.plan), view: truckView(mustTruck(x0.id), c) };
         }
-        const cl = claimLoad(x0, T.DEPARTING, 'depart'), x = cl.Ld;
-        if (x.data.depart) throw userErr('This truck is already departing');
+        const cl = claimLoad(x0, T.DEPARTING, 'depart', cur => {
+            if (cur.status !== T.LOADING || cur.data.depart) throw userErr('This truck is already departing');
+        }), x = cl.Ld;
         const gone = {};
         d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
         data.updateLoad(x, { data: { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
@@ -940,7 +945,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustTruck(a.truckId);
         if (x.status !== T.DEPARTING || !x.data.depart) throw userErr('Nothing to retry on this truck');
         if (!x.data.error && !stale(x)) throw userErr('This departure is still running. Wait a minute, then Retry.');
-        const cl = claimLoad(x, T.DEPARTING, 'depart');
+        const cl = claimLoad(x, T.DEPARTING, 'depart', cur => {
+            if (cur.status !== T.DEPARTING || !cur.data.depart || (!cur.data.error && !stale(cur))) throw userErr('This departure is still running. Wait a minute, then Retry.');
+        });
         return finishDepart(cl.Ld, c, cl.claim);
     });
 

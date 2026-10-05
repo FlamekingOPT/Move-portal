@@ -691,3 +691,34 @@ test('depart_cancel reopens scanning; move_here is refused from a pending truck'
     ctx.run('depart_cancel', { truckId: a.id });
     assert.equal(ctx.run('truck_scan', { truckId: a.id, raw: ps[1].code }).result, 'ok');
 });
+
+// ── v3 trucks: review round 2 ──
+test('double-tap confirm: a second confirm that sees a departed record is refused and changes nothing', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = truckWith(ctx, 42);
+    const realGet = ctx.data.getLoad;
+    let armed = true;
+    // After the confirm's first read, the "other request" has already claimed and saved its plan.
+    ctx.data.getLoad = id => {
+        const r = realGet(id);
+        if (armed && String(id) === String(t.id) && r.status === 'loading') {
+            armed = false;
+            ctx.data.updateLoad(r, { status: 'departing', data: { depart: { truckNo: 1, day: '2026-10-14', seal: '5249350', trailer: '1' }, writes: { 'if_create:500': '777' }, claim: 'first', workingAt: Date.now() } });
+        }
+        return r;
+    };
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '1', seal: '5249351' }), /already departing/);
+    ctx.data.getLoad = realGet;
+    const d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.status, d.data.claim, d.data.depart.seal, d.data.writes], ['departing', 'first', '5249350', { 'if_create:500': '777' }]);
+    assert.equal(ctx.tx._t.ops.length, 0);
+});
+
+test('a finished departure clears claim, workingAt and phase', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249352' });
+    const d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.status, d.data.claim, d.data.workingAt, d.data.phase], ['departed', '', 0, '']);
+});
