@@ -612,3 +612,82 @@ test('depart: a failed write leaves the truck departing with an error; a manager
     assert.equal(ctx.run('depart_retry', { truckId: t.id }).departed, true);
     assert.deepEqual(ctx.tx._t.ops.map(o => o.op), ['if_stamp']);
 });
+
+// ── v3 trucks: review round 1 ──
+test('retry skips keys already written; pallets stay loaded until the retry finishes', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t, ps } = truckWith(ctx, 40);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249340' }), /NetSuite write failed/);
+    const ld = ctx.data.getLoad(t.id);
+    assert.ok(ld.data.error);
+    assert.deepEqual(Object.keys(ld.data.writes), ['if_qty:9001:975']);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'loaded');
+    assert.equal(ctx.run('depart_retry', { truckId: t.id }).departed, true);
+    assert.deepEqual(ctx.tx._t.ops.map(o => o.op), ['if_qty', 'if_stamp']);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'in_transit');
+    assert.equal(ctx.data.getLoad(t.id).data.error, '');
+});
+
+test('retry is refused while the departure is still running, and on a loading truck', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = truckWith(ctx, 42);
+    assert.throws(() => ctx.run('depart_retry', { truckId: t.id }), /Nothing to retry/);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '1', seal: '5249341' }), /NetSuite write failed/);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { error: '', workingAt: Date.now() } });
+    assert.throws(() => ctx.run('depart_retry', { truckId: t.id }), /still running/);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { workingAt: 1 } });
+    assert.equal(ctx.run('depart_retry', { truckId: t.id }).departed, true);
+});
+
+test('a claim stolen mid-write stops the next op and leaves pallets loaded', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t, ps } = truckWith(ctx, 40);
+    ctx.tx._t.onApply = () => { ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'stolen' } }); };
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249342' }), /already being/);
+    assert.equal(ctx.tx._t.ops.length, 1);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'loaded');
+});
+
+test('unplanned IF on a departed truck is released back to the planned list', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Junp', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'] }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    assert.equal(ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249343' }, true).departed, true);
+    assert.deepEqual(ctx.run('truck_planned').planned.map(f => f.ifNum), ['IF9002']);
+});
+
+test('off mode saves the would-write plan and allocation', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249344' }, false);
+    const d = ctx.data.getLoad(t.id).data;
+    assert.ok(d.plan.some(o => o.op === 'if_stamp'));
+    assert.equal(d.alloc.find(a => a.ifId === '9001').lines['975'], 504);
+});
+
+test('manager approval can override the trailer; the requester is kept', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249345', actor: 'Floor Guy' }, false);
+    const r = ctx.run('depart_confirm', { truckId: t.id, trailer: '416460', actor: 'Boss' }, true);
+    assert.deepEqual([r.view.truck.depart.trailer, r.view.truck.depart.requestedBy, r.view.truck.depart.approvedBy], ['416460', 'Floor Guy', 'Boss']);
+});
+
+test('depart_cancel reopens scanning; move_here is refused from a pending truck', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 3, 'Jcan', [L975]);
+    const a = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    ctx.run('truck_scan', { truckId: a.id, raw: ps[0].code });
+    ctx.run('depart_confirm', { truckId: a.id, trailer: '1', seal: '5249346' }, false);
+    assert.throws(() => ctx.run('truck_scan', { truckId: a.id, raw: ps[1].code }), /Scanning is closed/);
+    assert.throws(() => ctx.run('truck_move_here', { truckId: b.id, palletId: ps[0].id }), /can no longer be moved/);
+    ctx.run('depart_cancel', { truckId: a.id });
+    assert.equal(ctx.run('truck_scan', { truckId: a.id, raw: ps[1].code }).result, 'ok');
+});

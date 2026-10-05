@@ -80,7 +80,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // at the initial flip) still stops the create instead of racing another request's own create.
     function assertClaim(loadId, claim, number, phase) {
         const fresh = data.getLoad(loadId);
-        if (!fresh || fresh.data.claim !== claim) throw userErr(number + ' is already being ' + (phase === 'ship' ? 'shipped' : 'received') + ' by someone else. Refresh in a minute.');
+        if (!fresh || fresh.data.claim !== claim) throw userErr((number || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
     }
 
     // Client lines are only trusted for item, cfg and pcs; SKU and description come from NetSuite.
@@ -202,19 +202,22 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         try {
             return { truckNo: truckNo, plan: verify.planDeparture({ ifs: x.data.ifs, pallets: data.palletsByLoad(x.id, [VP.LOADED]), toLines: ns.openToLines(),
                 stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } }) };
-        } catch (e) { throw userErr(e.message); }
+        } catch (e) { if (/^No open transfer order covers/.test(e.message || '')) throw userErr(e.message); throw e; }
     }
-    function finishDepart(x, c) {
+    function finishDepart(x, c, claim) {
         const writes = Object.assign({}, x.data.writes);
         try {
-            verify.runOps(x.data.plan, writeMode(c), op => tx.apply(verify.resolveNew(op, writes)), writes,
-                (k, id) => { writes[k] = id; data.updateLoad(x, { data: { writes: writes } }); });
+            verify.runOps(x.data.plan, writeMode(c), op => { assertClaim(x.id, claim, truckLabel(x), 'depart'); return tx.apply(verify.resolveNew(op, writes)); }, writes,
+                (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });  // fresh read so a stale copy never rewrites the claim
         } catch (e) {
-            data.updateLoad(x, { data: { error: e.message || String(e), writes: writes } });
+            if (e.user) throw e;                      // claim lost: another request owns the truck now, leave its state alone
+            if (!e.user) log.error({ title: 'move depart ' + x.id, details: (e && e.stack) || String(e) });
+            data.updateLoad(data.getLoad(x.id), { data: { error: e.message || String(e), writes: writes } });
             throw userErr('Departure saved but a NetSuite write failed: ' + (e.message || e) + '. A manager can press Retry.');
         }
+        assertClaim(x.id, claim, truckLabel(x), 'depart');
         data.palletsByLoad(x.id, [VP.LOADED]).forEach(p => data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day }));
-        data.updateLoad(x, { status: T.DEPARTED, data: { error: '', writes: writes } });
+        data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
         return { departed: true, view: truckView(mustTruck(x.id), c) };
     }
 
@@ -916,13 +919,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             data.updateLoad(x0, { data: { pending: Object.assign({ by: c.actor, at: c.now.stamp }, inp) } });
             return { waiting: true, plan: pubPlan(d.plan), view: truckView(mustTruck(x0.id), c) };
         }
-        const x = claimLoad(x0, T.DEPARTING, 'depart').Ld;
+        const cl = claimLoad(x0, T.DEPARTING, 'depart'), x = cl.Ld;
+        if (x.data.depart) throw userErr('This truck is already departing');
         const gone = {};
         d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
         data.updateLoad(x, { data: { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
-            approvedBy: d.plan.needsManager ? c.actor : '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
+            approvedBy: d.plan.needsManager ? c.actor : '', requestedBy: (x0.data.pending || {}).by || '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
             bol: d.plan.bol, ifs: x.data.ifs.filter(f => !gone[f.ifId]), writes: {}, pending: null } });
-        return finishDepart(mustTruck(x.id), c);
+        return finishDepart(mustTruck(x.id), c, cl.claim);
     });
 
     act('depart_cancel', false, (a, c) => {
@@ -935,7 +939,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('depart_retry', true, (a, c) => {
         const x = mustTruck(a.truckId);
         if (x.status !== T.DEPARTING || !x.data.depart) throw userErr('Nothing to retry on this truck');
-        return finishDepart(x, c);
+        if (!x.data.error && !stale(x)) throw userErr('This departure is still running. Wait a minute, then Retry.');
+        const cl = claimLoad(x, T.DEPARTING, 'depart');
+        return finishDepart(cl.Ld, c, cl.claim);
     });
 
     // ── entry points ─────────────────────────────────────────────────────

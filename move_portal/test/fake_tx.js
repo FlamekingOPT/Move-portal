@@ -25,6 +25,7 @@ function makeFakeTx() {
             const key = verify.opKey(op);
             if (t.failOn === key) { t.failOn = null; throw new Error('IF changed in NetSuite (fake failure on ' + key + ')'); }
             t.ops.push(JSON.parse(JSON.stringify(op)));
+            if (t.onApply) t.onApply(op);
             return op.op === 'if_qty' || op.op === 'if_stamp' ? String(op.ifId) : String(++t.seq);
         },
         findByToken: (tok, type) => { const m = t.memos.find(x => x.type === type && x.memo.indexOf(tok) !== -1); return m ? m.id : null; },
