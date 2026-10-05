@@ -3,6 +3,6 @@
   "configurations": [
     { "name": "move-preview", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js"], "port": 8765 },
     { "name": "move-preview-beta", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js"], "port": 8765 },
-    { "name": "move-preview-smoke", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js", "--port", "8798", "--store", "C:/Users/Jack/AppData/Local/Temp/claude/G--My-Drive-Move-portal/369e3b28-5833-4670-b17b-af901f25b21c/scratchpad/smoke-store.json"], "port": 8798 }
+    { "name": "move-preview-smoke", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js", "--port", "8798", "--store", "move_portal/local/smoke-store.json"], "port": 8798 }
   ]
 }
