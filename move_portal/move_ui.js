@@ -45,6 +45,15 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 .p-blue{background:var(--blue-soft);color:var(--blue)}.p-green{background:var(--green-soft);color:var(--green)}.p-amber{background:var(--amber-soft);color:var(--amber)}.p-red{background:var(--red-soft);color:var(--red)}.p-gray{background:#f1f5f9;color:#475569}
 .scanbox{display:flex;gap:8px;align-items:center;background:#fff;border:2px dashed #94a3b8;border-radius:12px;padding:10px 12px;margin:10px 0}
 .scanbox span{font-size:22px}.scanbox input{border:0;flex:1;font-size:18px;outline:none;min-width:0}.scanbox button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px}
+.scanbox.takeoff{border:3px solid var(--amber);background:var(--amber-soft)}
+.smode{display:flex;gap:6px;margin-top:10px}.smode button{flex:1;border:2px solid var(--line);background:#fff;border-radius:10px;padding:10px 6px;font-weight:700;font-size:14px;color:var(--muted)}
+.smode button.on{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}.smode button.on.off{border-color:var(--amber);background:var(--amber-soft);color:var(--amber)}
+.card.amberc{border:2px solid var(--amber);background:#fffbeb}.card.greenc{border:2px solid var(--green);background:#f0fdf4}
+.diffs div{padding:6px 0;border-bottom:1px solid var(--line);font-size:14px;overflow-wrap:anywhere}.diffs div:last-child{border:0}
+.drow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}.drow:last-child{border:0}.drow span{overflow-wrap:anywhere;min-width:0}.drow button{flex:0 0 auto}
+.banner{position:fixed;top:0;left:0;right:0;z-index:20;padding:8px 12px}
+.banner div{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--green);color:#fff;border-radius:12px;padding:12px;margin-bottom:6px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.banner span{flex:1 1 180px;min-width:0;overflow-wrap:anywhere}.banner button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;background:rgba(255,255,255,.25);color:#fff;font-size:15px}
 .flash{border-radius:14px;padding:16px;margin:10px 0;color:#fff}
 .flash .big{font-size:24px;font-weight:800;line-height:1.15}.flash .mid{font-size:18px;font-weight:700;margin-top:4px}.flash .sm{font-size:14px;margin-top:6px}
 .f-green{background:var(--green)}.f-amber{background:var(--amber)}.f-orange{background:var(--orange)}.f-red{background:var(--red)}
@@ -95,7 +104,8 @@ h3{font-size:15px;margin:16px 0 8px}
         function tone(kind) {
             try {
                 actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-                const seq = kind === 'ok' ? [[880, 0.08], [1320, 0.1]] : kind === 'warn' ? [[660, 0.09], [0, 0.05], [660, 0.09]] : [[180, 0.35]];
+                const seq = kind === 'ok' ? [[880, 0.08], [1320, 0.1]] : kind === 'warn' ? [[660, 0.09], [0, 0.05], [660, 0.09]]
+                    : kind === 'off' ? [[740, 0.09], [494, 0.14]] : kind === 'ready' ? [[880, 0.08], [1320, 0.1], [0, 0.12], [880, 0.08], [1320, 0.1]] : [[180, 0.35]];
                 let t = actx.currentTime;
                 seq.forEach(([f, d]) => {
                     if (f) {
@@ -114,8 +124,12 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         function errBox(msg) { return flash('red', '❌ ' + esc(msg)); }
 
-        const PILL = { loading: ['Loading', 'p-blue'], departing: ['Departing…', 'p-amber'], departed: ['In transit', 'p-blue'],
-            receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], waiting: ['⏳ Waiting for manager', 'p-amber'], error: ['Needs attention', 'p-red'] };
+        const PILL = { loading: ['Loading', 'p-blue'], needs_fix: ['⚠ Needs IF fix', 'p-amber'], ready: ['✅ Ready to ship', 'p-green'], departing: ['Departing…', 'p-amber'],
+            departed: ['In transit', 'p-blue'], receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], error: ['Needs attention', 'p-red'] };
+        // What Correct the IF does under each write mode (confirm text and card notes).
+        const WM = { off: 'Plan only: fix in NetSuite', qty: 'Changes IF quantities in NetSuite (add-on IFs: office creates them)',
+            on: 'Changes IF quantities and creates add-on IFs in NetSuite' };
+        function wmText(m) { return WM[m] || WM.off; }
         function statusPill(s) { const p = PILL[s] || [s, 'p-gray']; return '<span class="pill ' + p[1] + '">' + esc(p[0]) + '</span>'; }
 
         function needWho() {
@@ -143,6 +157,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="subnav" id="subnav"></div><main id="main"></main>';
             const w = $('who');
             if (w) w.onchange = w.oninput = () => { S.who = w.value.trim(); put('mv_who', S.who); };
+            paintBanner();
             renderNav();
         }
 
@@ -172,8 +187,43 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.clearres = () => { const r = $('scanres'); if (r) r.innerHTML = ''; };
         ACT.typecode = el => { const i = $(el.dataset.v); if (i) { i.setAttribute('inputmode', 'text'); i.focus(); } };
 
-        // Scan input: queue every Enter so nothing is lost while a request runs.
-        function wireScan(id, fn) {
+        // ── floor: re-check needs_fix trucks every 30 s; alert once per truck per device when one turns ready ──
+        S.banner = [];
+        function alerted() { try { return JSON.parse(get('mv_alerted') || '[]'); } catch (e) { return []; } }
+        function paintBanner() {
+            let b = $('rbanner');
+            if (!S.banner.length) { if (b) b.remove(); return; }
+            if (!b) { b = document.createElement('div'); b.id = 'rbanner'; b.className = 'banner'; document.body.appendChild(b); }
+            b.innerHTML = S.banner.map(t => '<div><span>✅ ' + esc(t.label) + ' now matches its IF: ready to ship</span>' +
+                '<button data-act="opentruck" data-id="' + esc(t.id) + '">Open</button><button data-act="bannerx" data-id="' + esc(t.id) + '" aria-label="Dismiss">✕</button></div>').join('');
+        }
+        function dropBanner(id) { S.banner = S.banner.filter(t => String(t.id) !== String(id)); paintBanner(); }
+        ACT.bannerx = el => dropBanner(el.dataset.id);
+        async function recheck() {
+            if (document.hidden || S.rcBusy) return;
+            S.rcBusy = true;
+            try {
+                const r = await api('trucks_recheck');
+                if (!r.ok || !r.nowReady) return;
+                const seen = alerted(), fresh = r.nowReady.filter(t => seen.indexOf(String(t.id)) === -1);
+                if (!fresh.length) return;
+                put('mv_alerted', JSON.stringify(seen.concat(fresh.map(t => String(t.id))).slice(-300)));
+                fresh.forEach(t => { if (!S.banner.some(x => String(x.id) === String(t.id))) S.banner.push({ id: String(t.id), label: t.label }); });
+                paintBanner();
+                tone('ready');
+                if (fresh.some(t => String(t.id) === String(S.truckId)) && $('tfoot') && S.tv && S.tv.truck.status === 'needs_fix') truckDetail();
+                else if (S.side === 'out' && S.tab === 'trucks' && !S.truckId) truckList();
+            } finally { S.rcBusy = false; }
+        }
+        function startRecheck() { if (!isMgr && !S.rc && !document.hidden) S.rc = setInterval(recheck, 30000); }
+        function stopRecheck() { clearInterval(S.rc); S.rc = null; }
+        if (!isMgr) {
+            document.addEventListener('visibilitychange', () => { if (document.hidden) stopRecheck(); else { startRecheck(); recheck(); } });
+            startRecheck();
+        }
+
+        // Scan input: queue every Enter so nothing is lost while a request runs. tag(): captured with each scan (the truck scan mode).
+        function wireScan(id, fn, tag) {
             const i = $(id);
             if (!i) return;
             i.focus();
@@ -182,7 +232,7 @@ h3{font-size:15px;margin:16px 0 8px}
             async function pump() {
                 if (running) return;
                 running = true;
-                while (q.length) { await fn(q.shift()); }
+                while (q.length) { const e = q.shift(); await fn(e[0], e[1]); }
                 running = false;
                 refocusScan();
             }
@@ -192,7 +242,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 e.preventDefault();
                 const v = i.value.trim();
                 i.value = '';
-                if (v) { q.push(v); pump(); }
+                if (v) { q.push([v, tag ? tag() : undefined]); pump(); }
             };
         }
         function scanBox(id) {
@@ -426,14 +476,71 @@ h3{font-size:15px;margin:16px 0 8px}
             S.truckId = r.view.truck.id;
             truckDetail(r);
         };
-        ACT.opentruck = el => { S.truckId = el.dataset.id; truckDetail(); };
+        ACT.opentruck = el => {
+            dropBanner(el.dataset.id);
+            S.truckId = el.dataset.id;
+            if (S.side !== 'out' || S.tab !== 'trucks') { S.side = 'out'; put('mv_side', 'out'); S.tab = 'trucks'; shell(); } else truckDetail();
+        };
         ACT.backtruck = () => { S.truckId = null; truckList(); };
         async function truckDetail(pre) {
+            if (S.tmodeTruck !== S.truckId) { S.tmodeTruck = S.truckId; setMode('load'); }
             const r = pre || await api('truck_get', { truckId: S.truckId });
             if (!r.ok) { main(errBox(r.error)); return; }
             main('<button class="btn ghost sm" data-act="backtruck">← All trucks</button><div class="card bl"><h4 id="thead"></h4><div class="muted" id="tsub"></div></div>' +
-                '<div id="tscan"></div><div id="scanres"></div><div class="card" id="tlines"></div><div class="card plist" id="plist"></div><div id="tfoot"></div>');
+                '<div id="tscan"></div><div id="scanres"></div><div class="card" id="tlines"></div><div id="tfoot"></div><div class="card plist" id="plist"></div>');
             paintTruck(r.view, true);
+        }
+
+        // Scan mode: Load or Take off. Take off falls back to Load after 2 minutes without a scan.
+        S.tmode = 'load';
+        function modeHtml() {
+            return '<div class="smode"><button data-act="tmode" data-v="load" class="' + (S.tmode === 'load' ? 'on' : '') + '">➕ Load</button>' +
+                '<button data-act="tmode" data-v="off" class="' + (S.tmode === 'off' ? 'on off' : '') + '">➖ Take off</button></div>';
+        }
+        function paintMode() {
+            const box = $('tmodebox'), i = $('scan');
+            if (box) box.innerHTML = modeHtml();
+            if (i) {
+                i.closest('.scanbox').classList.toggle('takeoff', S.tmode === 'off');
+                i.placeholder = S.tmode === 'off' ? 'Scan a pallet to take it off…' : 'Scan pallet label…';
+            }
+        }
+        function setMode(m) {
+            S.tmode = m === 'off' ? 'off' : 'load';
+            clearTimeout(S.tmodeT);
+            if (S.tmode === 'off') S.tmodeT = setTimeout(() => setMode('load'), 120000);
+            paintMode();
+        }
+        ACT.tmode = el => setMode(el.dataset.v);
+
+        function diffList(diffs) { return '<div class="diffs">' + (diffs || []).map(d => '<div>' + esc(d.text) + '</div>').join('') + '</div>'; }
+        // Picked/Packed IFs no truck has, on this truck's TOs. Never attached without an explicit Add.
+        function sugHtml(list, mgr, truckId) {
+            return list && list.length ? '<label class="f">Packed IFs no truck has yet</label>' + list.map(f => '<div class="drow"><span><b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) +
+                ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</span><button class="dbtn pri" ' + (mgr ? 'data-act="apaddif"' : 'data-act="taddif"') + ' data-id="' + esc(truckId) +
+                '" data-ifid="' + esc(f.ifId) + '" data-label="' + esc(f.ifNum) + '">Add to this truck</button></div>').join('') : '';
+        }
+        function departForm(v) {
+            return '<select class="inp" id="d_trailer"><option value="">Trailer #</option>' + v.trailers.map(x => '<option>' + esc(x) + '</option>').join('') + '<option value="__other">Other…</option></select>' +
+                '<input class="inp" id="d_trailer2" placeholder="Other trailer #" style="display:none"><input class="inp" id="d_seal" placeholder="Seal #">' +
+                '<input class="inp" id="d_carrier" value="' + esc(v.carrier) + '"><div id="dmsg"></div><button class="btn pri" data-act="dpreview">Review departure</button>';
+        }
+        // One card per stage: loading → Verify; needs_fix → the diffs; ready → the departure form.
+        function stageHtml(v) {
+            const t = v.truck, st = t.status, vf = v.verify || {};
+            const undo = '<button class="btn ghost sm" data-act="tundo">↶ Undo last scan</button>';
+            const when = vf.at ? '<div class="muted">Checked ' + esc(vf.at) + (vf.by ? ' by ' + esc(vf.by) : '') + '</div>' : '';
+            const err = st !== 'departing' && t.error ? errBox(t.error) : '';
+            if (st === 'loading') return err + '<button class="btn pri" data-act="tverify">✔ Verify load</button>' + undo;
+            if (st === 'needs_fix') return err + '<div class="card amberc"><h4>⚠ Needs IF fix</h4>' + when + diffList(vf.diffs) + sugHtml(v.suggestions, false, t.id) +
+                '<div class="muted">Keep loading or take pallets off, or wait for the office to fix the IF in NetSuite. A manager can correct it in Approvals.</div>' +
+                '<div class="row2"><button class="dbtn pri" data-act="tverify">Verify again</button><button class="dbtn gh" data-act="backtruck">← Other trucks</button></div></div>' + undo;
+            if (st === 'ready') return err + '<div class="card greenc"><h4>✅ Ready to ship</h4>' + when + '<div class="muted">The load matches its IFs. Enter the trailer and seal.</div>' +
+                departForm(v) + '</div>' + undo;
+            if (st === 'departing') return flash('amber', 'Departing… a NetSuite write is pending', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals');
+            if (t.depart && t.status === 'departed') return err + flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal),
+                t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged');
+            return err;
         }
         function paintTruck(v, first) {
             S.tv = v;
@@ -441,8 +548,8 @@ h3{font-size:15px;margin:16px 0 8px}
             $('thead').innerHTML = esc(t.label) + ' ' + statusPill(t.status);
             $('tsub').textContent = t.depart ? [t.depart.carrier, 'Trailer ' + t.depart.trailer, 'Seal ' + t.depart.seal].join(' · ') : v.totals.pallets + ' pallets · ' + num(v.totals.pieces) + ' pcs';
             if (first) {
-                $('tscan').innerHTML = open ? scanBox('scan') : '';
-                if (open) wireScan('scan', doTruckScan);
+                $('tscan').innerHTML = open ? '<div id="tmodebox"></div>' + scanBox('scan') : '';
+                if (open) { wireScan('scan', doTruckScan, () => S.tmode); paintMode(); }
             }
             $('tlines').innerHTML = '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' +
                 v.lines.map(l => '<tr class="' + (l.scanned === l.expected ? 'okrow' : l.scanned > l.expected ? 'warnrow' : '') + '"><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) +
@@ -451,12 +558,7 @@ h3{font-size:15px;margin:16px 0 8px}
             $('plist').innerHTML = v.pallets.slice().reverse().map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
                 (open ? '<div class="ac"><button data-act="tremove" data-id="' + p.id + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
             const keep = { d_trailer: ($('d_trailer') || {}).value, d_trailer2: ($('d_trailer2') || {}).value, d_seal: ($('d_seal') || {}).value, d_carrier: ($('d_carrier') || {}).value };
-            $('tfoot').innerHTML = (t.status === 'departing' ? '' : (t.error ? errBox(t.error) : '')) + (t.status === 'departing' ? flash('amber', 'Departing… a NetSuite write is pending', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals')
-                : open ? '<button class="btn ghost sm" data-act="tundo">↶ Undo last scan</button><div class="card"><h4>Departure</h4>' +
-                    '<select class="inp" id="d_trailer"><option value="">Trailer #</option>' + v.trailers.map(x => '<option>' + esc(x) + '</option>').join('') + '<option value="__other">Other…</option></select>' +
-                    '<input class="inp" id="d_trailer2" placeholder="Other trailer #" style="display:none"><input class="inp" id="d_seal" placeholder="Seal #">' +
-                    '<input class="inp" id="d_carrier" value="' + esc(v.carrier) + '"><div id="dmsg"></div><button class="btn pri" data-act="dpreview">Review departure</button></div>'
-                : t.depart && t.status === 'departed' ? flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal), t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged') : '');
+            $('tfoot').innerHTML = stageHtml(v);
             const sel = $('d_trailer');
             if (sel && keep.d_trailer != null) {
                 sel.value = keep.d_trailer; $('d_trailer2').value = keep.d_trailer2 || ''; $('d_seal').value = keep.d_seal || ''; $('d_carrier').value = keep.d_carrier || '';
@@ -464,6 +566,30 @@ h3{font-size:15px;margin:16px 0 8px}
             }
             if (sel) sel.onchange = () => { $('d_trailer2').style.display = sel.value === '__other' ? '' : 'none'; };
         }
+        ACT.tverify = async el => {
+            if (needWho()) return;
+            busy(el, true);
+            const r = await api('truck_verify', { truckId: S.truckId });
+            busy(el, false);
+            if (!$('scanres')) return;
+            if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
+            tone(r.match ? 'ok' : 'warn');
+            paintTruck(r.view, false);
+            $('scanres').innerHTML = r.match ? flash('green', '✅ Ready to ship', 'The load matches its IFs')
+                : flash('amber', '⚠ Needs IF fix', r.diffs.length + ' difference' + (r.diffs.length === 1 ? '' : 's') + ': see the card below');
+        };
+        ACT.taddif = async el => {
+            if (needWho()) return;
+            busy(el, true);
+            const r = await api('truck_add_if', { truckId: S.truckId, ifId: el.dataset.ifid });
+            busy(el, false);
+            if (!$('scanres')) return;
+            if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
+            tone(r.match ? 'ok' : 'warn');
+            paintTruck(r.view, false);
+            $('scanres').innerHTML = flash(r.match ? 'green' : 'amber', '➕ ' + esc(el.dataset.label) + ' added',
+                r.match ? 'The load matches its IFs: ready to ship' : 'Still needs an IF fix: see the card below');
+        };
         function departBody() {
             const sel = $('d_trailer').value;
             return { truckId: S.truckId, trailer: sel === '__other' ? $('d_trailer2').value : sel, seal: $('d_seal').value, carrier: $('d_carrier').value };
@@ -475,13 +601,29 @@ h3{font-size:15px;margin:16px 0 8px}
                 p.unplanned.map(u => '<div>↩ ' + esc(u.ifNum) + ' has nothing scanned: back to planned</div>').join('') +
                 (p.bol.changed ? '<div><b>BOL REV 2</b> · BOL # ' + esc(p.bol.number) + ' · IFs ' + esc(p.bol.ifNums.join(', ')) + '</div>' : '') + '</div>';
         }
+        // The departure re-check no longer matches. "IF changed" only when an IF is gone or its qty differs from what the screen showed;
+        // otherwise the load changed (a scan or take-off landed meanwhile).
+        function ifChanged(diffs, prev) {
+            const was = {};
+            ((prev && prev.lines) || []).forEach(l => { was[l.ifNum + '|' + String(l.item)] = Number(l.expected); });
+            return (diffs || []).some(d => d.kind === 'if_gone' || ((d.kind === 'if_short' || d.kind === 'if_over') && was[d.ifNum + '|' + String(d.item)] !== Number(d.ifQty)));
+        }
+        function needsFixAgain(r) {
+            const prev = S.tv;
+            S.dplan = null;
+            tone('bad');
+            paintTruck(r.view, true);
+            $('scanres').innerHTML = flash('red', ifChanged(r.diffs, prev) ? '❌ IF changed in NetSuite: needs a fix again' : '❌ The load changed: verify again',
+                (r.diffs || []).map(d => esc(d.text)).join('<br>'));
+        }
         ACT.dpreview = async el => {
             if (needWho()) return;
             busy(el, true);
             const r = await api('depart_preview', departBody());
             busy(el, false);
+            if (!$('tfoot')) return;
             if (!r.ok) { S.dplan = null; $('dmsg').innerHTML = errBox(r.error); return; }
-            if (r.needsFix) { S.dplan = null; paintTruck(r.view, true); $('scanres').innerHTML = errBox('IF changed in NetSuite: needs a fix again. ' + r.diffs.map(d => d.text).join(' · ')); return; }
+            if (r.needsFix) { needsFixAgain(r); return; }
             S.dplan = r.plan;
             $('dmsg').innerHTML = flash('green', 'Truck ' + r.truckNo + ' of the day', 'Matches the IFs') +
                 planHtml(r.plan) + '<button class="btn go" data-act="dconfirm">Confirm departure</button>';
@@ -493,40 +635,45 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, true);
             const r = await api('depart_confirm', departBody());
             busy(el, false);
+            if (!$('tfoot')) return;
             if (!r.ok) {
                 tone('bad');
                 const g = await api('truck_get', { truckId: S.truckId });
-                if (g.ok && $('tfoot')) { paintTruck(g.view, true); $('scanres').innerHTML = errBox(r.error); } else $('dmsg').innerHTML = errBox(r.error);
+                if (g.ok && $('tfoot')) { paintTruck(g.view, true); $('scanres').innerHTML = errBox(r.error); } else if ($('dmsg')) $('dmsg').innerHTML = errBox(r.error);
                 return;
             }
-            if (r.needsFix) { tone('bad'); paintTruck(r.view, true); $('scanres').innerHTML = errBox('IF changed in NetSuite: needs a fix again. ' + r.diffs.map(d => d.text).join(' · ')); return; }
+            if (r.needsFix) { needsFixAgain(r); return; }
             tone('ok');
             paintTruck(r.view, true);
         };
-        ACT.tundo = async () => { const r = await api('truck_undo', { truckId: S.truckId }); if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
-        ACT.tremove = async el => { const r = await api('truck_remove', { truckId: S.truckId, palletId: el.dataset.id }); if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
-        ACT.tmovehere = async el => { const r = await api('truck_move_here', { truckId: S.truckId, palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('green', '✅ Moved here') : errBox(r.error); if (r.ok) paintTruck(r.view, false); };
+        ACT.tundo = async () => { const r = await api('truck_undo', { truckId: S.truckId }); if (!$('scanres')) return; if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.tremove = async el => { const r = await api('truck_remove', { truckId: S.truckId, palletId: el.dataset.id }); if (!$('scanres')) return; if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.tmovehere = async el => { const r = await api('truck_move_here', { truckId: S.truckId, palletId: el.dataset.id }); if (!$('scanres')) return; $('scanres').innerHTML = r.ok ? flash('green', '✅ Moved here') : errBox(r.error); if (r.ok) paintTruck(r.view, false); };
         function truckResultHtml(r) {
-            const p = r.pallet, line = p ? esc(p.code + ' · ' + p.summary) : '';
+            const p = r.pallet, line = p ? esc(p.code + ' · ' + p.summary) : '', raw = esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"');
             switch (r.result) {
                 case 'ok': return flash('green', '✅ ' + esc(p.headline), esc(p.pieces + ' pcs · ' + p.code), r.view.totals.pallets + ' pallets on the truck');
-                case 'over': return flash('amber', '🟡 Over the IF qty', line, 'The IF will be raised at departure (manager OK).');
-                case 'addon': return flash('amber', '🟡 Add-on IF', line, 'Not on this truck\'s IFs. An add-on IF from ' + esc(r.addonTo ? r.addonTo.toNum : 'an office TO') + ' will be made (manager OK).');
+                case 'taken_off': return flash('amber', '➖ Taken off: ' + esc(p.code) + ' → back to Riverside', esc(p.summary), r.view.totals.pallets + ' pallets on the truck');
+                case 'not_on_truck': return flash('red', '❌ Not on this truck', line || raw, 'Nothing was taken off.');
+                case 'over': return flash('amber', '🟡 Over the IF qty', line, 'Verify will ask for an IF fix.');
+                case 'addon': return flash('amber', '🟡 Not on this truck\'s IFs', line, 'Needs an add-on IF from ' + esc(r.addonTo ? r.addonTo.toNum : 'an office TO') + '. Verify will ask for it.');
                 case 'no_to': return flash('red', '❌ No open TO for ' + esc(r.sku), line, 'Set it aside and call the office.');
                 case 'dup': return flash('amber', '🟡 Already on this truck', line, 'No change.');
                 case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + p.id + '">Move here</button><button data-act="clearres">Leave it</button>');
                 case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + ', departing', line, 'Check with the supervisor.');
                 case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
-                default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), 'Not a move label. Maybe a product barcode?');
+                default: return flash('red', '❌ Unknown label', raw, 'Not a move label. Maybe a product barcode?');
             }
         }
-        async function doTruckScan(v) {
+        // mode: the scan mode when the code was scanned (queued scans keep theirs).
+        async function doTruckScan(v, mode) {
             if (!S.who) { tone('bad'); $('scanres').innerHTML = errBox('Pick your name in "I am" first, then scan again.'); return; }
-            const r = await api('truck_scan', { truckId: S.truckId, raw: v });
+            if (S.tmode === 'off') setMode('off');            // a scan restarts the 2-minute fallback to Load
+            const r = await api('truck_scan', { truckId: S.truckId, raw: v, mode: mode });
             if (!$('scanres')) return;
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
-            tone(r.tone);
+            tone(r.result === 'taken_off' ? 'off' : r.tone);
             $('scanres').innerHTML = truckResultHtml(r);
             if (r.view) paintTruck(r.view, false);
         }
@@ -747,12 +894,38 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.udone = async () => { const r = await api('unload_done', { truckId: S.unloadId }); $('scanres').innerHTML = r.ok ? flash('green', 'Sent to the manager for receipt approval') : errBox(r.error); };
 
         // ── Manager: approvals (v3) ──────────────────────────────────────
+        function corrLine(o) {
+            return o.op === 'if_qty' ? (o.to < o.from ? '⬇ Lower ' : '⬆ Raise ') + esc((o.ifNum || '') + ' ' + num(o.from) + ' → ' + num(o.to))
+                : o.op === 'if_create' ? '➕ Add-on IF from ' + esc(o.toNum || 'TO ' + o.toId) : o.op === 'drop_if' ? '✕ Take ' + esc(o.ifNum) + ' off the truck' : esc(o.op);
+        }
+        // One card per needs_fix truck: diffs (Drop for a gone/empty IF, Correct for a qty or add-on fix), suggestions, Correct all, Re-check.
+        function fixCard(n) {
+            const t = n.truck, id = esc(t.id), lab = esc(t.label), wm = esc(n.writeMode), diffs = n.diffs || [], live = {};
+            diffs.forEach(d => { live[d.key] = 1; });
+            const can = d => d.kind === 'if_short' || d.kind === 'if_over' || (d.kind === 'no_if' && d.toId);
+            const rows = diffs.map(d => '<div class="drow"><span>' + esc(d.text) + '</span>' +
+                (d.kind === 'if_empty' || d.kind === 'if_gone' ? '<button class="dbtn gh" data-act="apdrop" data-id="' + id + '" data-ifid="' + esc(d.ifId) + '" data-label="' + esc(d.ifNum) + '">Drop</button>'
+                    : can(d) ? '<button class="dbtn gh" data-act="apcorrect" data-id="' + id + '" data-key="' + esc(d.key) + '" data-label="' + lab + '" data-wm="' + wm + '">Correct</button>' : '') + '</div>').join('');
+            const corr = (n.corrections || []).filter(k => live[k.key]).map(k => '<div class="muted">📝 ' + corrLine(k.op || {}) + ' · ' + esc(k.by && typeof k.by === 'object' ? k.by.name : k.by) + ' · ' + esc(k.at) + '</div>').join('');
+            return '<div class="card amberc"><h4>⚠ ' + lab + ' · Needs IF fix</h4><div class="muted">' + num(t.pallets) + ' pallets loaded</div>' +
+                (n.stuck ? '<div class="muted warn">⚠ A correction stalled. Press Correct the IF again to free it.</div>' : '') +
+                (n.correctError ? errBox('Correction refused: ' + n.correctError + ' — fix it in NetSuite') : '') +
+                '<div class="diffs">' + rows + '</div>' + corr +
+                (n.orphans || []).map(o => '<div class="muted warn">⚠ Add-on ' + esc(o.text) + '</div>').join('') +
+                sugHtml(n.suggestions, true, t.id) +
+                '<div class="muted">Correct the IF: ' + esc(wmText(n.writeMode)) + '</div>' +
+                '<div class="row2">' + (diffs.some(can) ? '<button class="dbtn pri" data-act="apcorrect" data-id="' + id + '" data-label="' + lab + '" data-wm="' + wm + '">Correct the IF</button>' : '') +
+                '<button class="dbtn gh" data-act="apverify" data-id="' + id + '" data-label="' + lab + '">Re-check</button>' +
+                '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">Open truck</button></div></div>';
+        }
         SCREENS.approve = async (msg) => {
             main((msg || '') + '<div class="muted">Loading…</div>');
             const r = await api('approvals');
             if (!r.ok) { main(errBox(r.error)); return; }
+            const fix = (r.needsFix || []).length ? '<h3>Needs IF fix</h3>' + r.needsFix.map(fixCard).join('') : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
-                '<button class="btn pri" data-act="apretry" data-id="' + t.id + '" data-label="' + esc(t.label) + '">Retry</button></div>').join('');
+                '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
+                (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');
             const rec = r.receipts.map(x => {
                 const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
                 if (!x.perIf) return '<div class="card warnc">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + errBox(x.error || 'Could not build the receipt') +
@@ -764,9 +937,53 @@ h3{font-size:15px;margin:16px 0 8px}
                     (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
                     '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
             }).join('');
-            main((msg || '') + (ret + rec || '<div class="muted">Nothing waiting for approval</div>'));
+            main((msg || '') + (fix + ret + rec || '<div class="muted">Nothing waiting for approval</div>'));
         };
         ACT.apretry = async el => { if (!confirm('Retry departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
+        ACT.aprelease = async el => {
+            if (!confirm('Release ' + (el.dataset.label || 'this truck') + ' to Needs IF fix? Nothing was stamped in NetSuite; the seal is freed and the load is checked again.')) return;
+            busy(el, true);
+            const r = await api('depart_release', { truckId: el.dataset.id });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? flash(r.match ? 'green' : 'amber', '↩ Released ' + esc(el.dataset.label), r.match ? 'It matches its IFs: ready to ship again' : 'It needs an IF fix: see below') : errBox(r.error));
+        };
+        // After a needs-fix action: the verify result on top, then the refreshed list.
+        function verifyMsg(r, label, head) {
+            return r.match ? flash('green', '✅ ' + esc(label) + ' matches now', head ? esc(head) + ' · ready to ship' : 'Ready to ship')
+                : flash('amber', '⚠ ' + esc(label) + ' still needs a fix', head ? esc(head) : '', (r.diffs || []).map(d => esc(d.text)).join('<br>'));
+        }
+        ACT.apcorrect = async el => {
+            const label = el.dataset.label || 'this truck';
+            if (!confirm('Correct the IF on ' + label + (el.dataset.key ? ' (this line)' : ' (every line it can)') + '?\n' + wmText(el.dataset.wm))) return;
+            busy(el, true);
+            const body = { truckId: el.dataset.id };
+            if (el.dataset.key) body.keys = [el.dataset.key];
+            const r = await api('truck_correct', body);
+            tone(r.ok ? 'ok' : 'bad');
+            if (!r.ok) { SCREENS.approve(errBox(r.error)); return; }
+            const w = r.written || [], po = r.planOnly || [], sk = r.skipped || [], vd = r.verify || {};
+            const head = [w.length ? w.length + ' written to NetSuite' : '', po.length ? po.length + ' plan only: fix in NetSuite' : ''].filter(Boolean).join(' · ') || 'Nothing written to NetSuite';
+            SCREENS.approve(verifyMsg(vd, label, head) + (sk.length ? '<div class="card">' + sk.map(s => '<div class="muted warn">Skipped: ' + esc(s.reason) + '</div>').join('') + '</div>' : ''));
+        };
+        ACT.apdrop = async el => {
+            if (!confirm('Take ' + (el.dataset.label || 'this IF') + ' off this truck? Portal only: nothing changes in NetSuite.')) return;
+            busy(el, true);
+            const r = await api('truck_drop_if', { truckId: el.dataset.id, ifId: el.dataset.ifid });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? verifyMsg(r, r.view.truck.label, (el.dataset.label || 'IF') + ' dropped') : errBox(r.error));
+        };
+        ACT.apaddif = async el => {
+            busy(el, true);
+            const r = await api('truck_add_if', { truckId: el.dataset.id, ifId: el.dataset.ifid });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? verifyMsg(r, r.view.truck.label, (el.dataset.label || 'IF') + ' added') : errBox(r.error));
+        };
+        ACT.apverify = async el => {
+            busy(el, true);
+            const r = await api('truck_verify', { truckId: el.dataset.id });
+            tone(r.ok ? (r.match ? 'ok' : 'warn') : 'bad');
+            SCREENS.approve(r.ok ? verifyMsg(r, el.dataset.label || r.view.truck.label, '') : errBox(r.error));
+        };
         ACT.aprecv = async el => {
             if (!confirm('Approve receipt for ' + ((el.dataset.label) || 'this truck') + '? This posts in NetSuite when writes are on.')) return;
             busy(el, true);

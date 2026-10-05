@@ -77,3 +77,37 @@ test('manager page uses the NetSuite login, no "I am" picker; floor keeps it', (
     assert.ok(/const whoCtl = isMgr \? ''/.test(src), 'no picker on the manager page');
     assert.ok(src.indexOf("if (w) w.onchange") !== -1, 'picker wiring guarded');
 });
+
+test('verify-load UI: verify, take-off, stages, recheck alert, manager correct', () => {
+    const src = ui._clientMain.toString();
+    ["api('truck_verify'", "api('trucks_recheck'", "api('truck_add_if'", "api('truck_drop_if'", "api('truck_correct'", 'Needs IF fix', 'Ready to ship',
+        'Take off', 'back to Riverside', 'now matches its IF', 'mv_alerted', 'document.hidden']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    ["api('depart_cancel'", "api('depart_skip_write'", 'Waiting for manager'].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
+});
+
+test('verify-load UI: take-off mode, stage buttons, scan modes', () => {
+    const src = ui._clientMain.toString();
+    ['data-act="tverify"', 'data-act="taddif"', "api('truck_scan', { truckId: S.truckId, raw: v, mode: mode })", "wireScan('scan', doTruckScan, () => S.tmode)", "'takeoff'", '120000', "case 'taken_off'", "case 'not_on_truck'", 'Not on this truck',
+        'Verify again', '← Other trucks', 'Confirm departure', 'Review departure']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    assert.ok(/visibilitychange/.test(src), 'polling stops when hidden');
+    assert.ok(src.indexOf('30000') !== -1, 'recheck every 30 s');
+});
+
+test('verify-load UI: needs-fix message depends on what changed', () => {
+    const src = ui._clientMain.toString();
+    ['IF changed in NetSuite: needs a fix again', 'The load changed: verify again', "'if_gone'", "'if_short'", "'if_over'"]
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+});
+
+test('verify-load UI: approvals needs-fix cards, write-mode wording, release, skipped and orphans', () => {
+    const src = ui._clientMain.toString();
+    ['Plan only: fix in NetSuite', 'Changes IF quantities in NetSuite (add-on IFs: office creates them)', 'Changes IF quantities and creates add-on IFs in NetSuite',
+        'Release to Needs IF fix', "api('depart_release'", 'canRelease', 'r.needsFix', '.orphans', '.skipped', 'correctError', 'data-act="apcorrect"', 'data-act="apdrop"']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    ['apcorrect', 'aprelease', 'apdrop'].forEach(n => {
+        const i = src.indexOf('ACT.' + n + ' =');
+        assert.ok(i !== -1 && src.slice(i, i + 500).indexOf('confirm(') !== -1, 'no confirm in ' + n);
+    });
+});
