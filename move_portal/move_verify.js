@@ -90,10 +90,11 @@ define([], function () {
     // ── departure ────────────────────────────────────────────────────────
     function memoFor(truckNo, dayIso) { return 'Truck ' + truckNo + ' · ' + String(dayIso).slice(5, 7) + '/' + String(dayIso).slice(8, 10); }
     function normSeal(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
+    function sealKey(s) { return String(s == null ? '' : s).toUpperCase().replace(/^\s*SEAL\s*:?\s*/, '').replace(/\s+/g, ''); }
     function departOf(t) { return (t && t.data && t.data.depart) || null; }
     function sealUsed(trucks, seal, exceptId) {
-        const n = normSeal(seal);
-        return !!n && (trucks || []).some(t => String(t.id) !== String(exceptId) && departOf(t) && normSeal(departOf(t).seal) === n);
+        const n = sealKey(seal);
+        return !!n && (trucks || []).some(t => String(t.id) !== String(exceptId) && departOf(t) && sealKey(departOf(t).seal) === n);
     }
     function truckNoForDay(trucks, dayIso, exceptId) {
         return 1 + (trucks || []).filter(t => String(t.id) !== String(exceptId) && departOf(t) && departOf(t).day === dayIso).length;
@@ -202,7 +203,9 @@ define([], function () {
             const key = opKey(op);
             if (!opAllowed(op, mode)) { planOnly.push(key); return; }
             if (done && done[key]) return;
-            const id = String(apply(op));
+            const ret = apply(op);
+            if (ret === undefined || ret === null || ret === '') throw new Error('NetSuite write returned no id for ' + key);
+            const id = String(ret);
             if (onWrite) onWrite(key, id);
             written.push(key);
         });
@@ -223,12 +226,12 @@ define([], function () {
         (o.trucks || []).forEach(t => {
             const d = t.data || {}, dep = d.depart;
             if (!dep) return;
-            const label = memoFor(dep.truckNo, dep.day), sealTxt = 'SEAL: ' + normSeal(dep.seal);
+            const label = memoFor(dep.truckNo, dep.day), sealK = sealKey(dep.seal);
             const row = (ifNum, check, portal, netsuite, ok) => rows.push({ truck: label, seal: dep.seal, ifNum: ifNum, check: check, portal: String(portal), netsuite: netsuite == null ? '—' : String(netsuite), ok: ok });
             (d.alloc || []).forEach(a => {
                 let realId = a.addOn ? null : a.ifId;
                 if (a.addOn) {
-                    realId = ((o.ifsByTo || {})[a.toId] || []).find(id => !planned[id] && ((o.receipts || {})[id] || []).some(r => normSeal(r.seal) === sealTxt)) || null;
+                    realId = ((o.ifsByTo || {})[a.toId] || []).find(id => !planned[id] && ((o.receipts || {})[id] || []).some(r => sealKey(r.seal) === sealK)) || null;
                     const f = realId && o.ifInfo[realId];
                     row(f ? f.ifNum : '(new)', 'Add-on IF on ' + a.toNum, 'needed', f ? f.ifNum : null, f ? true : null);
                 }
@@ -237,18 +240,18 @@ define([], function () {
                 if (!info) return;
                 Object.keys(a.lines).forEach(k => {
                     const ns = (info.lines || []).filter(l => String(l.item) === k).reduce((s, l) => s + Number(l.qty || 0), 0);
-                    row(ifNum, 'IF qty ' + (sku[k] || k), a.lines[k], ns, info.status === 'C' ? ns === a.lines[k] : null);
+                    row(ifNum, 'IF qty ' + (sku[k] || k), a.lines[k], ns, info.status === 'C' ? Number(ns) === Number(a.lines[k]) : null);
                 });
                 row(ifNum, 'Shipped', 'yes', info.status === 'C' ? 'yes' : info.status, info.status === 'C' ? true : null);
                 const rs = (o.receipts || {})[realId] || [];
                 if (!rs.length) return;
                 row(ifNum, 'Trailer', dep.trailer, rs.map(r => r.trailer).join(', '), rs.every(r => normSeal(r.trailer) === normSeal(dep.trailer)));
-                row(ifNum, 'Seal', dep.seal, rs.map(r => r.seal).join(', '), rs.every(r => normSeal(r.seal) === sealTxt));
+                row(ifNum, 'Seal', dep.seal, rs.map(r => r.seal).join(', '), rs.every(r => sealKey(r.seal) === sealK));
                 const mine = (d.received || {})[a.ifId] || null;
                 Object.keys(a.lines).forEach(k => {
                     const ns = rs.reduce((s, r) => s + (Number(r.lines[k]) || 0), 0);
                     const p = mine ? Number(mine[k]) || 0 : null;
-                    row(ifNum, 'Receipt qty ' + (sku[k] || k), p == null ? 'not approved' : p, ns, p == null ? null : p === ns);
+                    row(ifNum, 'Receipt qty ' + (sku[k] || k), p == null ? 'not approved' : p, ns, p == null ? null : Number(p) === Number(ns));
                 });
             });
         });
@@ -256,6 +259,6 @@ define([], function () {
     }
 
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
-        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealUsed, truckNoForDay, planDeparture,
+        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows };
 });

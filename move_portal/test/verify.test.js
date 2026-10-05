@@ -183,3 +183,44 @@ test('shadowRows compares plan vs NetSuite and leaves not-yet-done checks as nul
     assert.equal(pick('IF9100', 'Add-on IF on TO600').ok, true);                // found by the seal on its receipt
     assert.equal(pick('IF9100', 'Receipt qty YSN100').ok, null);               // portal hasn't approved that receipt yet
 });
+
+test('shadowRows compares seals by digits, not by typed format', () => {
+    const mk = seal => ({ id: '1', data: { depart: { truckNo: 3, day: '2026-10-05', trailer: '537224', seal: '5249330' },
+        alloc: [{ ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', lines: { 975: 504 }, addOn: false },
+            { ifId: 'new:600', ifNum: '(new)', toId: '600', toNum: 'TO600', lines: { 975: 24 }, addOn: true }] } });
+    const run = seal => v.shadowRows({ trucks: [mk()], sku: { 975: 'YSN100' },
+        ifInfo: { 9001: { ifNum: 'IF9001', status: 'C', toId: '500', lines: [{ item: '975', qty: 504 }] }, 9100: { ifNum: 'IF9100', status: 'C', toId: '600', lines: [{ item: '975', qty: 24 }] } },
+        ifsByTo: { 500: ['9001'], 600: ['9100'] },
+        receipts: { 9001: [{ id: '1', trailer: '537224', seal: seal, lines: { 975: 504 } }], 9100: [{ id: '2', trailer: '537224', seal: seal, lines: { 975: 24 } }] } });
+    const pick = (rows, ifNum, check) => rows.find(r => r.ifNum === ifNum && r.check === check);
+    ['SEAL:5249330', 'seal  5249330', 'SEAL: 5249330', '5249330'].forEach(s => {
+        const rows = run(s);
+        assert.equal(pick(rows, 'IF9001', 'Seal').ok, true, s);
+        assert.equal(pick(rows, 'IF9100', 'Add-on IF on TO600').ok, true, s);
+    });
+    assert.equal(pick(run('SEAL: 1111111'), 'IF9001', 'Seal').ok, false);
+});
+
+test('sealUsed ignores the SEAL: prefix and spacing', () => {
+    const trucks = [{ id: '1', data: { depart: { seal: '5249330', day: '2026-10-05', truckNo: 1 } } }];
+    assert.equal(v.sealUsed(trucks, 'SEAL: 5249330', '9'), true);
+    assert.equal(v.sealUsed(trucks, 'seal:5249330', '9'), true);
+    assert.equal(v.sealUsed(trucks, 'SEAL: 5249331', '9'), false);
+});
+
+test('runOps refuses a write that returned no id and does not record it', () => {
+    [undefined, null, ''].forEach(ret => {
+        const saved = [];
+        assert.throws(() => v.runOps([{ op: 'if_stamp', ifId: '9' }], 'on', () => ret, {}, k => saved.push(k)), /returned no id/);
+        assert.deepEqual(saved, []);
+    });
+});
+
+test('shadowRows compares string quantities numerically', () => {
+    const truck = { id: '1', data: { depart: { truckNo: 3, day: '2026-10-05', trailer: '1', seal: '5' },
+        alloc: [{ ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', lines: { 975: 480 }, addOn: false }], received: { 9001: { 975: 480 } } } };
+    const rows = v.shadowRows({ trucks: [truck], sku: {}, ifInfo: { 9001: { ifNum: 'IF9001', status: 'C', lines: [{ item: '975', qty: '480' }] } },
+        receipts: { 9001: [{ trailer: '1', seal: '5', lines: { 975: '480' } }] } });
+    assert.equal(rows.find(r => r.check === 'IF qty 975').ok, true);
+    assert.equal(rows.find(r => r.check === 'Receipt qty 975').ok, true);
+});
