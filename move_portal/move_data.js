@@ -233,17 +233,31 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
     function countPallets(q) { return countOf(REC.PALLET, whereFilters(q)); }
 
     // ── loads ────────────────────────────────────────────────────────────
-    function rowToLoad(r) {
-        const g = f => r.getValue(f);
-        return { id: String(r.id), number: g(LF.number) || '', status: g(LF.status) || '', to: String(g(LF.to) || ''), if: String(g(LF.if) || ''),
-            receipts: String(g(LF.receipts) || '').split(',').filter(Boolean), data: json(g(LF.data), {}) };
+    // Truck JSON must never be read back as {}: a later updateLoad would write that emptied copy over the record.
+    function loadJson(id, v) {
+        if (!v) return {};
+        try { return JSON.parse(v); } catch (e) { throw new Error('Truck ' + id + ' data is unreadable'); }
     }
+    function toLoad(id, g) {
+        return { id: String(id), number: g(LF.number) || '', status: g(LF.status) || '', to: String(g(LF.to) || ''), if: String(g(LF.if) || ''),
+            receipts: String(g(LF.receipts) || '').split(',').filter(Boolean), data: loadJson(id, g(LF.data)) };
+    }
+    function rowToLoad(r) { return toLoad(r.id, f => r.getValue(f)); }
     function findLoads(filters, limit) {
         const s = search.create({ type: REC.LOAD, filters: filters || [],
             columns: cols(LF).concat([search.createColumn({ name: 'internalid', sort: search.Sort.DESC })]) });
         return (limit ? s.run().getRange({ start: 0, end: limit }) : all(s)).map(rowToLoad);
     }
-    function getLoad(id) { return Number(id) > 0 ? findLoads([['internalid', 'anyof', String(id)]])[0] || null : null; }
+    // lookupFields reads the whole field (search columns may be cut short on a long truck record).
+    function getLoad(id) {
+        if (!(Number(id) > 0)) return null;
+        let f;
+        try { f = search.lookupFields({ type: REC.LOAD, id: String(id), columns: Object.keys(LF).map(k => LF[k]) }); }
+        catch (e) { if ((e && e.name) === 'RCRD_DSNT_EXIST') return null; throw e; }
+        if (!f || !Object.keys(f).length) return null;
+        const val = v => (Array.isArray(v) ? (v[0] ? v[0].value : '') : v == null ? '' : v);
+        return toLoad(id, k => val(f[k]));
+    }
     function getLoads(ids) { const u = uniq(ids); return u.length ? findLoads([['internalid', 'anyof', u]]) : []; }
     function loadsByStatus(statuses, limit) { return findLoads(anyText(LF.status, statuses), limit); }
     function loadValues(patch, base) {

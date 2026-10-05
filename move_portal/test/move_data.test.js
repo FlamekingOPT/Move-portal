@@ -32,3 +32,20 @@ test('move_data: palletStatusCounts runs one grouped search', () => {
     assert.deepEqual(data.palletStatusCounts([]), {});
     assert.equal(log.creates.length, 1);
 });
+
+test('move_data: getLoad reads the full record with lookupFields; bad JSON throws, never {}', () => {
+    const big = JSON.stringify({ v3: true, stack: Array.from({ length: 400 }, (_, i) => 'x' + i) });
+    let s = setup({ lookup: { custrecord_mvl_number: 'IF1', custrecord_mvl_status: 'loading', custrecord_mvl_to: [{ value: '500', text: 'TO500' }], custrecord_mvl_if: [],
+        custrecord_mvl_receipts: '', custrecord_mvl_data: big } });
+    const L = s.data.getLoad('7');
+    assert.deepEqual([L.id, L.number, L.status, L.to, L.if, L.data.stack.length], ['7', 'IF1', 'loading', '500', '', 400]);
+    assert.equal(s.log.creates.length, 0);
+    assert.equal(s.log.lookups[0].type, 'customrecord_mv_load');
+    s = setup({ lookup: { custrecord_mvl_status: 'loading', custrecord_mvl_data: big.slice(0, 1000) } });
+    assert.throws(() => s.data.getLoad('7'), /Truck 7 data is unreadable/);
+    assert.equal(setup({ lookup: {} }).data.getLoad('7'), null);
+    assert.equal(setup({ lookup: Object.assign(new Error('That record does not exist.'), { name: 'RCRD_DSNT_EXIST' }) }).data.getLoad('7'), null);
+    assert.throws(() => setup({ lookup: new Error('boom') }).data.getLoad('7'), /boom/);
+    s = setup({ rows: [{ id: '8', custrecord_mvl_status: 'loading', custrecord_mvl_data: '{"v3":tr' }] });
+    assert.throws(() => s.data.loadsByStatus(['loading']), /Truck 8 data is unreadable/);
+});

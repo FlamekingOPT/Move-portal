@@ -928,3 +928,10 @@ test('fix7: approvers are the NetSuite user; the roster name is kept separately'
     assert.deepEqual([d.recvApprovedBy, d.recvApprovedByRoster], [{ id: '5', name: 'Jack K' }, 'Boss']);
     assert.equal(ctx.data.palletsByLoad(t.id, ['received'])[0].data.receivedBy, 'Ana');   // floor actors stay roster names
 });
+
+test('fix8: the scan stack keeps the last 30 entries', () => {
+    const ctx = setup();
+    const { t, ps } = truckWith(ctx, 35);
+    const st = ctx.data.getLoad(t.id).data.stack;
+    assert.deepEqual([st.length, st[29]], [30, String(ps[34].id)]);
+});
