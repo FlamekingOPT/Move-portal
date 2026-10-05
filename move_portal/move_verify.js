@@ -198,11 +198,8 @@ define([], function () {
             if (op.op === 'if_qty') addRes(res, op.toId, op.item, Number(op.to) - Number(op.from));
             if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => addRes(res, op.toId, k, Number(op.lines[k]) || 0));
         }));
-        others.filter(t => t.data.corrections).forEach(t => t.data.corrections.forEach(op => {
-            if (inNetSuite(op, o.mode, t.data.writes)) return;
-            if (op.op === 'if_qty') addRes(res, op.toId, op.item, Number(op.to) - Number(op.from));
-            if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => addRes(res, op.toId, k, Number(op.lines[k]) || 0));
-        }));
+        // data.corrections (needs_fix) are NOT reserved separately: the truck's loaded surplus is already placed and reserved below,
+        // so adding them would double-count. Once a qty write lands, the IF qty covers it and the surplus drops to 0.
         const room = reserveToLines(o.toLines, res), out = Object.assign({}, res);
         others.filter(t => [TRUCK.LOADING, TRUCK.NEEDS_FIX, TRUCK.READY].indexOf(t.status) !== -1).forEach(t => {
             const fill = fillExpected(t.data.ifs || [], (o.loadedByTruck || {})[String(t.id)] || {});

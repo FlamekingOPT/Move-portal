@@ -349,7 +349,7 @@ test('correctionOps', () => {
         { op: 'drop_if', ifId: '9002', ifNum: 'IF9002', key: 'if_empty:9002' }]);
 });
 
-test('reservationsFromTrucks: needs_fix/ready reserve loaded surplus like loading; unwritten corrections reserve room', () => {
+test('reservationsFromTrucks: needs_fix/ready reserve loaded surplus like loading; corrections are not double-reserved', () => {
     const o = { mode: 'off', toLines: TOS, loadedByTruck: { 1: { 975: 504 + 60 } } };
     const asLoading = v.reservationsFromTrucks(Object.assign({ trucks: [{ id: '1', status: T.LOADING, data: { v3: true, ifs: IFS } }] }, o));
     ['needs_fix', 'ready'].forEach(st => {
@@ -357,13 +357,11 @@ test('reservationsFromTrucks: needs_fix/ready reserve loaded surplus like loadin
         assert.deepEqual(v.reservationsFromTrucks(Object.assign({ trucks: [{ id: '1', status: st, data: { v3: true, ifs: IFS } }] }, o)), asLoading);
     });
     assert.ok(Object.keys(asLoading).length > 0);
-    const fixing = { id: '2', status: T.NEEDS_FIX, data: { v3: true, writes: { 'if_qty:7:975': '7' }, corrections: [
-        { op: 'if_qty', ifId: '8', toId: '500', item: '975', from: 100, to: 112 },
-        { op: 'if_qty', ifId: '7', toId: '600', item: '975', from: 12, to: 24 },
-        { op: 'if_qty', ifId: '6', toId: '600', item: '975', from: 36, to: 12 },
-        { op: 'if_create', toId: '700', lines: { 11: 120 }, ship: false },
-        { op: 'drop_if', ifId: '5' }] } };
-    assert.deepEqual(v.reservationsFromTrucks({ mode: 'qty', trucks: [fixing], toLines: TOS }), { '500|975': 12, '700|11': 120 });   // key 7 is in NetSuite; if_create isn't written in qty mode
-    assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', trucks: [fixing], toLines: TOS }), { '500|975': 12, '600|975': 12, '700|11': 120 });
-    assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', exceptId: '2', trucks: [fixing], toLines: TOS }), {});
+    // corrections on a needs_fix truck don't add a second reservation: only the surplus is reserved, once
+    const fixing = { id: '2', status: T.NEEDS_FIX, data: { v3: true, ifs: IFS, writes: {}, corrections: [
+        { op: 'if_qty', ifId: '8', toId: '500', item: '975', from: 100, to: 112 }, { op: 'if_create', toId: '700', lines: { 11: 120 }, ship: false }] } };
+    const loadedFix = { 2: { 975: 504 + 60 } };
+    const base = v.reservationsFromTrucks({ mode: 'off', trucks: [{ id: '2', status: T.LOADING, data: { v3: true, ifs: IFS } }], toLines: TOS, loadedByTruck: loadedFix });
+    assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', trucks: [fixing], toLines: TOS, loadedByTruck: loadedFix }), base);
+    assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', exceptId: '2', trucks: [fixing], toLines: TOS, loadedByTruck: loadedFix }), {});
 });
