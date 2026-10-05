@@ -8,7 +8,7 @@
 define([], function () {
     'use strict';
 
-    const TRUCK = { LOADING: 'loading', DEPARTING: 'departing', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
+    const TRUCK = { LOADING: 'loading', NEEDS_FIX: 'needs_fix', READY: 'ready', DEPARTING: 'departing', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
     const VP = { LABELED: 'labeled', LOADED: 'loaded', IN_TRANSIT: 'in_transit', RECEIVED: 'received', MISSING: 'missing', VOID: 'void' };
     const PLANNED_IF_STATUS = ['A', 'B'];
     const OPEN_TO_STATUS = ['B', 'D', 'E'];
@@ -198,8 +198,13 @@ define([], function () {
             if (op.op === 'if_qty') addRes(res, op.toId, op.item, Number(op.to) - Number(op.from));
             if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => addRes(res, op.toId, k, Number(op.lines[k]) || 0));
         }));
+        others.filter(t => t.data.corrections).forEach(t => t.data.corrections.forEach(op => {
+            if (inNetSuite(op, o.mode, t.data.writes)) return;
+            if (op.op === 'if_qty') addRes(res, op.toId, op.item, Number(op.to) - Number(op.from));
+            if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => addRes(res, op.toId, k, Number(op.lines[k]) || 0));
+        }));
         const room = reserveToLines(o.toLines, res), out = Object.assign({}, res);
-        others.filter(t => t.status === TRUCK.LOADING).forEach(t => {
+        others.filter(t => [TRUCK.LOADING, TRUCK.NEEDS_FIX, TRUCK.READY].indexOf(t.status) !== -1).forEach(t => {
             const fill = fillExpected(t.data.ifs || [], (o.loadedByTruck || {})[String(t.id)] || {});
             const sp = placeSurplus(t.data.ifs || [], fill.left, room), byIf = {};
             (t.data.ifs || []).forEach(f => { byIf[String(f.ifId)] = f; });
@@ -388,7 +393,64 @@ define([], function () {
         };
     }
 
+    // ── Verify Load (spec 2026-10-05 amendment §4) ───────────────────────
+    function verifyLoad(o) {
+        const fr = refreshIfs(o.savedIfs, o.freshIfs), ifs = byIfOrder(fr.ifs), diffs = [];
+        fr.gone.forEach(g => diffs.push({ key: 'if_gone:' + g.ifId, kind: 'if_gone', ifId: String(g.ifId), ifNum: g.ifNum }));
+        const fill = fillExpected(ifs, sumLines(o.pallets));
+        ifs.forEach(f => {
+            const a = fill.alloc[String(f.ifId)] || {};
+            if (!Object.keys(a).some(k => a[k] > 0)) { diffs.push({ key: 'if_empty:' + f.ifId, kind: 'if_empty', ifId: String(f.ifId), ifNum: f.ifNum }); return; }
+            Object.keys(a).forEach(k => {
+                const q = ifQty(f, k);
+                if (a[k] < q) diffs.push({ key: 'if_short:' + f.ifId + ':' + k, kind: 'if_short', ifId: String(f.ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: f.toNum, item: k, ifQty: q, loaded: a[k] });
+            });
+        });
+        Object.keys(fill.left).forEach(k => {
+            const left = fill.left[k];
+            if (!(left > 0)) return;
+            const carriers = ifs.filter(f => ifQty(f, k) > 0);
+            if (carriers.length) {
+                const f = carriers[carriers.length - 1], q = ifQty(f, k);
+                diffs.push({ key: 'if_over:' + f.ifId + ':' + k, kind: 'if_over', ifId: String(f.ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: f.toNum, item: k, ifQty: q, loaded: q + left });
+                return;
+            }
+            const to = (o.toLines || []).filter(r => String(r.item) === k && Number(r.remaining) > 0).sort(oldestFirst)[0];
+            diffs.push({ key: 'no_if:' + k, kind: 'no_if', item: k, qty: left, toId: to ? String(to.toId) : null, toNum: to ? to.toNum : null });
+        });
+        return { match: diffs.length === 0, diffs: diffs, ifs: ifs };
+    }
+
+    function fmt(n) { return Number(n).toLocaleString('en-US'); }
+    function diffText(d, sku, pcsPerPallet) {
+        const s = sku || d.item;
+        if (d.kind === 'if_gone') return d.ifNum + ' is no longer Packed in NetSuite → take it off this truck';
+        if (d.kind === 'if_empty') return d.ifNum + ' has nothing loaded → take it off this truck';
+        if (d.kind === 'no_if') return s + ' ×' + fmt(d.qty) + ' loaded, not on any IF → ' + (d.toNum ? 'needs an IF from ' + d.toNum + ' (oldest open TO)' : 'no open TO: take it off the truck');
+        const delta = d.loaded - d.ifQty, n = Math.abs(delta);
+        const pal = pcsPerPallet && n % pcsPerPallet === 0 ? ' (' + (n / pcsPerPallet) + ' pallet' + (n / pcsPerPallet === 1 ? '' : 's') + ')' : '';
+        return d.ifNum + ' ' + s + ': IF ' + fmt(d.ifQty) + ' · loaded ' + fmt(d.loaded) + ' → IF needs ' + (delta < 0 ? '−' : '+') + fmt(n) + pal;
+    }
+
+    function ifSuggestions(o) {
+        const tos = {}, onTruck = {};
+        (o.truckIfs || []).forEach(f => { tos[String(f.toId)] = true; onTruck[String(f.ifId)] = true; });
+        (o.diffs || []).forEach(d => { if (d.kind === 'no_if' && d.toId) tos[String(d.toId)] = true; });
+        return (o.planned || []).filter(f => tos[String(f.toId)] && !onTruck[String(f.ifId)] && !(o.takenIfIds || {})[String(f.ifId)]);
+    }
+
+    function correctionOps(diffs) {
+        const ops = [];
+        (diffs || []).forEach(d => {
+            if (d.kind === 'if_short' || d.kind === 'if_over') ops.push({ op: 'if_qty', ifId: d.ifId, ifNum: d.ifNum, toId: d.toId, item: d.item, from: d.ifQty, to: d.loaded, key: d.key });
+            else if (d.kind === 'no_if' && d.toId) ops.push({ op: 'if_create', toId: d.toId, toNum: d.toNum, lines: { [d.item]: d.qty }, ship: false, key: d.key });
+            else if (d.kind === 'if_empty' || d.kind === 'if_gone') ops.push({ op: 'drop_if', ifId: d.ifId, ifNum: d.ifNum, key: d.key });
+        });
+        return ops;
+    }
+
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
+        verifyLoad, diffText, ifSuggestions, correctionOps,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });

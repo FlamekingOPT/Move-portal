@@ -294,3 +294,76 @@ test('planReceipts: the cumulative never drops below an earlier approved qty', (
     const r = v.planReceipts({ alloc: [{ ifId: '1', ifNum: 'IF1', toId: '5', lines: { 9: 24 } }], pallets: pallets, received: { 1: { 9: 24 } }, stamp: {}, seq: 2 });
     assert.deepEqual([r.ops, r.cumulative], [[], { 1: { 9: 24 } }]);
 });
+
+// ── Verify Load rules ───────────────────────────────────────────────────
+const VIF = (id, toId, qty, item) => ({ ifId: String(id), ifNum: 'IF' + id, toId: String(toId), toNum: 'TO' + toId, status: 'B', lines: [{ item: item || '975', sku: 'YSN100', qty }] });
+const onTruck = (n, item, pcs) => Array.from({ length: n }, (_, i) => pal(300 + i, VP.LOADED, '1', [{ item: item || '975', sku: 'YSN100', pcs: pcs || 12 }]));
+
+test('verifyLoad: exact match', () => {
+    const r = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504)], freshIfs: [VIF(9001, 500, 504)], pallets: onTruck(42), toLines: TOS });
+    assert.deepEqual([r.match, r.diffs, r.ifs.map(f => f.ifId)], [true, [], ['9001']]);
+});
+
+test('verifyLoad: short, over, no IF (oldest open TO), empty IF, gone IF, fresh qty wins', () => {
+    const short = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504)], freshIfs: [VIF(9001, 500, 504)], pallets: onTruck(40), toLines: TOS });
+    assert.deepEqual(short.diffs, [{ key: 'if_short:9001:975', kind: 'if_short', ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', item: '975', ifQty: 504, loaded: 480 }]);
+    const over = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504)], freshIfs: [VIF(9001, 500, 504)], pallets: onTruck(44), toLines: TOS });
+    assert.deepEqual(over.diffs.map(d => [d.kind, d.loaded]), [['if_over', 528]]);
+    const extra = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504)], freshIfs: [VIF(9001, 500, 504)], pallets: onTruck(42).concat(onTruck(1, '11', 120)), toLines: TOS });
+    assert.deepEqual(extra.diffs, [{ key: 'no_if:11', kind: 'no_if', item: '11', qty: 120, toId: '700', toNum: 'TO700' }]);
+    const none = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504)], freshIfs: [VIF(9001, 500, 504)], pallets: onTruck(42).concat(onTruck(1, '999', 5)), toLines: TOS });
+    assert.deepEqual(none.diffs, [{ key: 'no_if:999', kind: 'no_if', item: '999', qty: 5, toId: null, toNum: null }]);
+    const empty = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504), VIF(9002, 500, 504)], freshIfs: [VIF(9001, 500, 504), VIF(9002, 500, 504)], pallets: onTruck(42), toLines: TOS });
+    assert.deepEqual(empty.diffs, [{ key: 'if_empty:9002', kind: 'if_empty', ifId: '9002', ifNum: 'IF9002' }]);
+    const gone = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504), VIF(9002, 500, 504)], freshIfs: [VIF(9001, 500, 504)], pallets: onTruck(42), toLines: TOS });
+    assert.deepEqual(gone.diffs, [{ key: 'if_gone:9002', kind: 'if_gone', ifId: '9002', ifNum: 'IF9002' }]);
+    const fixed = v.verifyLoad({ savedIfs: [VIF(9001, 500, 504)], freshIfs: [VIF(9001, 500, 480)], pallets: onTruck(40), toLines: TOS });
+    assert.equal(fixed.match, true);                                   // the office lowered the IF → now matches
+});
+
+test('diffText', () => {
+    const d = { kind: 'if_short', ifNum: 'IF72287', item: '1031', ifQty: 1152, loaded: 1056 };
+    assert.equal(v.diffText(d, 'YSN401', 48), 'IF72287 YSN401: IF 1,152 · loaded 1,056 → IF needs −96 (2 pallets)');
+    assert.equal(v.diffText(Object.assign({}, d, { kind: 'if_over', loaded: 1200 }), 'YSN401', null), 'IF72287 YSN401: IF 1,152 · loaded 1,200 → IF needs +48');
+    assert.equal(v.diffText({ kind: 'no_if', item: '1021', qty: 64, toNum: 'TO11710' }, 'YSN301'), 'YSN301 ×64 loaded, not on any IF → needs an IF from TO11710 (oldest open TO)');
+    assert.equal(v.diffText({ kind: 'no_if', item: '9', qty: 5, toNum: null }, 'X1'), 'X1 ×5 loaded, not on any IF → no open TO: take it off the truck');
+    assert.equal(v.diffText({ kind: 'if_empty', ifNum: 'IF72288' }), 'IF72288 has nothing loaded → take it off this truck');
+    assert.equal(v.diffText({ kind: 'if_gone', ifNum: 'IF72288' }), 'IF72288 is no longer Packed in NetSuite → take it off this truck');
+});
+
+test('ifSuggestions: new IFs on the truck TOs or no_if TOs, not on the truck, not taken', () => {
+    const planned = [VIF(9001, 500, 504), VIF(9050, 700, 120, '11'), VIF(9051, 500, 48), VIF(9052, 800, 10), VIF(9053, 700, 5, '11')];
+    const diffs = [{ kind: 'no_if', item: '11', qty: 120, toId: '700', toNum: 'TO700' }];
+    assert.deepEqual(v.ifSuggestions({ truckIfs: [VIF(9001, 500, 504)], diffs, planned, takenIfIds: { 9053: true } }).map(f => f.ifId), ['9050', '9051']);
+});
+
+test('correctionOps', () => {
+    const ops = v.correctionOps([
+        { key: 'if_short:9001:975', kind: 'if_short', ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', item: '975', ifQty: 504, loaded: 480 },
+        { key: 'no_if:11', kind: 'no_if', item: '11', qty: 120, toId: '700', toNum: 'TO700' },
+        { key: 'no_if:999', kind: 'no_if', item: '999', qty: 5, toId: null, toNum: null },
+        { key: 'if_empty:9002', kind: 'if_empty', ifId: '9002', ifNum: 'IF9002' }]);
+    assert.deepEqual(ops, [
+        { op: 'if_qty', ifId: '9001', ifNum: 'IF9001', toId: '500', item: '975', from: 504, to: 480, key: 'if_short:9001:975' },
+        { op: 'if_create', toId: '700', toNum: 'TO700', lines: { 11: 120 }, ship: false, key: 'no_if:11' },
+        { op: 'drop_if', ifId: '9002', ifNum: 'IF9002', key: 'if_empty:9002' }]);
+});
+
+test('reservationsFromTrucks: needs_fix/ready reserve loaded surplus like loading; unwritten corrections reserve room', () => {
+    const o = { mode: 'off', toLines: TOS, loadedByTruck: { 1: { 975: 504 + 60 } } };
+    const asLoading = v.reservationsFromTrucks(Object.assign({ trucks: [{ id: '1', status: T.LOADING, data: { v3: true, ifs: IFS } }] }, o));
+    ['needs_fix', 'ready'].forEach(st => {
+        assert.equal(T.NEEDS_FIX, 'needs_fix'); assert.equal(T.READY, 'ready');
+        assert.deepEqual(v.reservationsFromTrucks(Object.assign({ trucks: [{ id: '1', status: st, data: { v3: true, ifs: IFS } }] }, o)), asLoading);
+    });
+    assert.ok(Object.keys(asLoading).length > 0);
+    const fixing = { id: '2', status: T.NEEDS_FIX, data: { v3: true, writes: { 'if_qty:7:975': '7' }, corrections: [
+        { op: 'if_qty', ifId: '8', toId: '500', item: '975', from: 100, to: 112 },
+        { op: 'if_qty', ifId: '7', toId: '600', item: '975', from: 12, to: 24 },
+        { op: 'if_qty', ifId: '6', toId: '600', item: '975', from: 36, to: 12 },
+        { op: 'if_create', toId: '700', lines: { 11: 120 }, ship: false },
+        { op: 'drop_if', ifId: '5' }] } };
+    assert.deepEqual(v.reservationsFromTrucks({ mode: 'qty', trucks: [fixing], toLines: TOS }), { '500|975': 12, '700|11': 120 });   // key 7 is in NetSuite; if_create isn't written in qty mode
+    assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', trucks: [fixing], toLines: TOS }), { '500|975': 12, '600|975': 12, '700|11': 120 });
+    assert.deepEqual(v.reservationsFromTrucks({ mode: 'off', exceptId: '2', trucks: [fixing], toLines: TOS }), {});
+});
