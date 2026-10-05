@@ -11,7 +11,7 @@ define(['N/runtime', 'N/log', 'N/render', 'N/url', 'N/format',
 function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns) {
     'use strict';
 
-    const P = core.PALLET, L = core.LOAD;
+    const P = core.PALLET;
     const MANAGER_ROLE_SCRIPT_IDS = ['customrole_warehouse_manager', 'customrole1009', 'customrole2522', 'customrole_warehouse_portal_manager'];
     const PRINT_CHUNK_MAX = 80;
     const CFG_CHUNK_MAX = 100;
@@ -41,28 +41,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     function pubPallet(p, extra) {
         return Object.assign({ id: p.id, code: p.code, status: p.status, summary: p.summary, headline: core.headline(p.lines),
-            pieces: p.pieces, edited: p.edited, damaged: p.damaged, catchup: p.catchup, lines: p.lines, loadId: p.loadId,
+            pieces: p.pieces, edited: p.edited, damaged: p.damaged, lines: p.lines, loadId: p.loadId,
             printedAt: p.data.printedAt || '', receipt: p.receipt }, extra || {});
     }
 
-    function countsFromPallets(ps) {
-        const out = {};
-        ps.forEach(p => { const o = out[p.status] = out[p.status] || { n: 0, pcs: 0 }; o.n++; o.pcs += p.pieces; });
-        return out;
-    }
-
-    function pubLoad(Ld, counts) {
-        const d = Ld.data || {}, cs = counts || {};
-        const n = st => (cs[st] ? cs[st].n : 0);
-        const pcs = st => (cs[st] ? cs[st].pcs : 0);
-        const onTruck = [P.LOADED, P.SHIPPED, P.RECEIVED, P.MISSING];
-        return { id: Ld.id, number: Ld.number, status: Ld.status, door: d.door || '', carrier: d.carrier || '', trailer: d.trailer || '',
-            seal: d.seal || '', to: Ld.to, if: Ld.if, error: d.error || '', readyBy: d.readyBy || '', readyAt: d.readyAt || '',
-            approvedAt: d.approvedAt || '', approvedBy: d.approvedBy || '', catchupFor: d.catchupFor || '',
-            pallets: onTruck.reduce((a, s) => a + n(s), 0), pieces: onTruck.reduce((a, s) => a + pcs(s), 0), received: n(P.RECEIVED) };
-    }
-
-    function mustLoad(id) { const Ld = data.getLoad(id); if (!Ld) throw userErr('Load not found'); return Ld; }
     function mustPallet(id) { const p = data.getPallet(id); if (!p) throw userErr('Label not found'); return p; }
     function stale(Ld) { return Date.now() - (Number(Ld.data.workingAt) || 0) > STALE_MS; }
 
@@ -409,410 +391,6 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             rows: rows.filter(r => r.palletsLeft > 0 || r.labeled > 0), noConfig: noConfig };
     });
 
-    // ── (Tasks 9–11 add more act(...) blocks here) ──
-
-    // ── loading (outbound) ───────────────────────────────────────────────
-    const OUT_OPEN = [L.LOADING, L.READY, L.SHIPPING, L.ERROR];
-
-    function loadView(loadId) {
-        const Ld = mustLoad(loadId);
-        const pallets = data.palletsByLoad(Ld.id, [P.LOADED, P.SHIPPED, P.RECEIVED, P.MISSING]);
-        const items = {};
-        pallets.forEach(p => p.lines.forEach(l => { items[l.item] = 1; }));
-        return { load: pubLoad(Ld, countsFromPallets(pallets)), pallets: pallets.slice().reverse().map(p => pubPallet(p)),
-            totals: { pallets: pallets.length, pieces: pallets.reduce((a, p) => a + p.pieces, 0), skus: Object.keys(items).length } };
-    }
-
-    act('load_list', false, () => {
-        const loads = data.loadsByStatus(OUT_OPEN, 50).filter(l => (l.data || {}).phase !== 'recv' && !(l.data || {}).catchupFor);
-        const counts = data.palletCountsByLoad(loads.map(l => l.id));
-        return { loads: loads.map(l => pubLoad(l, counts[l.id])) };
-    });
-
-    act('load_create', false, (a, c) => {
-        const clean = v => String(v || '').trim().slice(0, 40);
-        const id = data.createLoad({ number: core.nextLoadNumber(data.allLoadNumbers()), status: L.LOADING,
-            data: { door: clean(a.door), carrier: clean(a.carrier), trailer: clean(a.trailer), seal: clean(a.seal), createdBy: c.actor, createdAt: c.now.stamp } });
-        // Two docks opening a load at the same moment can get the same number; the newer one renumbers.
-        const Ld = data.getLoad(id);
-        if (data.loadsByNumber(Ld.number).some(x => Number(x.id) < Number(id))) data.updateLoad(Ld, { number: core.nextLoadNumber(data.allLoadNumbers()) });
-        return { load: pubLoad(data.getLoad(id)) };
-    });
-
-    act('load_get', false, (a) => loadView(a.loadId));
-
-    act('scan_load', false, (a, c) => {
-        const Ld = mustLoad(a.loadId);
-        if (Ld.status !== L.LOADING) throw userErr(Ld.number + ' is closed for scanning (' + Ld.status + ')');
-        const sc = core.parseScan(a.raw);
-        const p = sc.palletId ? data.getPallet(sc.palletId) : null;
-        const loads = {};
-        if (p && p.loadId) { const o = p.loadId === Ld.id ? Ld : data.getLoad(p.loadId); if (o) loads[o.id] = o; }
-        const rule = core.loadScanRule(p, Ld.id, loads);
-        if (rule.set) data.updatePallet(p, { status: rule.set.status, load: rule.set.loadId, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
-        data.logScan({ pallet: p ? p.id : '', load: Ld.id, result: rule.result, data: { raw: sc.raw, mode: 'load', actor: c.actor, at: c.now.stamp } });
-        const fresh = p ? data.getPallet(p.id) : null;
-        return { result: rule.result, tone: core.toneFor(rule.result), raw: sc.raw, pallet: fresh ? pubPallet(fresh) : null,
-            loadNumber: Ld.number, otherNumber: rule.otherNumber || '', view: loadView(Ld.id) };
-    });
-
-    act('load_move_here', false, (a, c) => {
-        const Ld = mustLoad(a.loadId), p = mustPallet(a.palletId);
-        if (Ld.status !== L.LOADING) throw userErr(Ld.number + ' is closed for scanning');
-        const other = p.loadId ? data.getLoad(p.loadId) : null;
-        if (p.status !== P.LOADED || !other || other.status !== L.LOADING) throw userErr(p.code + ' can no longer be moved');
-        data.updatePallet(p, { load: Ld.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor, movedFrom: other.number } });
-        return { pallet: pubPallet(data.getPallet(p.id)), view: loadView(Ld.id) };
-    });
-
-    function editablePallet(a) {
-        const Ld = mustLoad(a.loadId), p = mustPallet(a.palletId);
-        if (Ld.status !== L.LOADING || p.status !== P.LOADED || p.loadId !== Ld.id) throw userErr(p.code + ' can only be changed while it is on an open load');
-        return { Ld: Ld, p: p };
-    }
-
-    act('pallet_edit', false, (a, c) => {
-        const o = editablePallet(a);
-        const byItem = {};
-        o.p.lines.forEach(l => { byItem[String(l.item)] = l; });
-        const next = (Array.isArray(a.lines) ? a.lines : []).map(l => byItem[String(l.item)] ? Object.assign({}, byItem[String(l.item)], { pcs: l.pcs }) : null);
-        if (next.length !== o.p.lines.length || next.some(l => !l)) throw userErr('Edit can only change piece counts');
-        const err = core.validateLines(next);
-        if (err) throw userErr(err);
-        const lines = next.map(l => Object.assign({}, l, { pcs: Math.floor(Number(l.pcs)) }));
-        data.updatePallet(o.p, { lines: lines, summary: core.summarize(lines), pieces: core.totalPieces(lines), edited: true,
-            data: { editedAt: c.now.stamp, editedBy: c.actor } });
-        return { pallet: pubPallet(data.getPallet(o.p.id)), view: loadView(o.Ld.id) };
-    });
-
-    act('pallet_remove', false, (a, c) => {
-        const o = editablePallet(a);
-        data.updatePallet(o.p, { status: P.LABELED, load: '', data: { removedAt: c.now.stamp, removedBy: c.actor } });
-        return { view: loadView(o.Ld.id) };
-    });
-
-    act('load_ready', false, (a, c) => {
-        const Ld = mustLoad(a.loadId);
-        if (Ld.status !== L.LOADING) throw userErr(Ld.number + ' is not open');
-        if (!data.palletsByLoad(Ld.id, [P.LOADED]).length) throw userErr('Scan at least one pallet first');
-        data.updateLoad(Ld, { status: L.READY, data: { readyBy: c.actor, readyAt: c.now.stamp } });
-        return {};
-    });
-
-    act('load_sendback', true, (a) => {
-        const Ld = mustLoad(a.loadId);
-        if (Ld.data.catchupFor) throw userErr('Catch-up loads are handled on the Catch-ups screen');
-        if ([L.READY, L.ERROR].indexOf(Ld.status) === -1 || Ld.to) throw userErr(Ld.number + ' can no longer be sent back');
-        if (tx.findByToken(core.txToken(Ld.id, 'to'), 'TrnfrOrd')) throw userErr(Ld.number + ' already has a transfer order in NetSuite; press Retry instead');
-        data.updateLoad(Ld, { status: L.LOADING, data: { error: '', phase: '' } });
-        return {};
-    });
-
-    act('ship_list', true, (a, c) => {
-        const loads = data.loadsByStatus([L.READY, L.SHIPPING, L.ERROR], 50).filter(l => (l.data || {}).phase !== 'recv' && !(l.data || {}).catchupFor);
-        const per = loads.map(Ld => ({ Ld: Ld, pallets: data.palletsByLoad(Ld.id, [P.LOADED]) }));
-        const skuOf = {};
-        per.forEach(o => o.pallets.forEach(p => p.lines.forEach(l => { skuOf[l.item] = l.sku; })));
-        const stock = Object.keys(skuOf).length ? data.locationStock(c.S.locFrom, Object.keys(skuOf)) : {};
-        const out = per.map(o => {
-            const agg = o.Ld.to && o.Ld.data.lines ? o.Ld.data.lines : core.aggregate(o.pallets);
-            const rows = Object.keys(agg).map(item => {
-                const avail = stock[item] ? stock[item].avail : 0;
-                // Once the TO exists its own lines are already committed, so availability no longer applies.
-                return { item: item, sku: skuOf[item] || item, qty: agg[item], avail: avail, ok: !!o.Ld.to || avail >= agg[item] };
-            });
-            return Object.assign(pubLoad(o.Ld, countsFromPallets(o.pallets)), { rows: rows,
-                canSendBack: !o.Ld.to && [L.READY, L.ERROR].indexOf(o.Ld.status) !== -1 });
-        });
-        const recent = data.loadsByStatus([L.SHIPPED, L.RECEIVING, L.RECV_READY, L.RECEIVED, L.RECEIVED_SHORT], 10);
-        const t = data.tranids([].concat.apply([], recent.map(l => [l.to, l.if])).filter(Boolean));
-        const rc = data.palletCountsByLoad(recent.map(l => l.id));
-        return { loads: out, recent: recent.map(l => Object.assign(pubLoad(l, rc[l.id]), { toNumber: t[l.to] || '', ifNumber: t[l.if] || '' })) };
-    });
-
-    // Resumable: each finished step (TO, IF) is saved on the load, and memo tokens
-    // find a transaction that was saved just before a crash.
-    function shipLoad(Ld, c) {
-        if ([L.READY, L.ERROR, L.SHIPPING].indexOf(Ld.status) === -1 || Ld.data.phase === 'recv') throw userErr(Ld.number + ' is ' + Ld.status + ', not ready to ship');
-        if (Ld.status === L.SHIPPING && !stale(Ld)) throw userErr(Ld.number + ' is already being shipped. Wait a minute and refresh.');
-        const claimed = claimLoad(Ld, L.SHIPPING, 'ship');
-        Ld = claimed.Ld;
-        const claim = claimed.claim;
-        try {
-            const skuOf = {};
-            data.palletsByLoad(Ld.id, [P.LOADED, P.SHIPPED]).forEach(p => p.lines.forEach(l => { skuOf[l.item] = l.sku; }));
-            const name = k => skuOf[k] || k;
-            let lines = Ld.data.lines;
-            if (!Ld.to) {
-                const loaded = data.palletsByLoad(Ld.id, [P.LOADED]);
-                if (!loaded.length) {
-                    data.updateLoad(Ld, { status: L.READY, data: { workingAt: 0, phase: '' } });
-                    throw userErr('No pallets on ' + Ld.number);
-                }
-                const tok = core.txToken(Ld.id, 'to');
-                // An orphan TO from a prior crash already committed the stock, so the check
-                // below would wrongly see it as unavailable — adopt it and skip the check.
-                const orphan = tx.findByToken(tok, 'TrnfrOrd');
-                lines = core.aggregate(loaded);
-                let toId = orphan;
-                if (!toId) {
-                    const stock = data.locationStock(c.S.locFrom, Object.keys(lines));
-                    const avail = {};
-                    Object.keys(stock).forEach(k => { avail[k] = stock[k].avail; });
-                    const short = core.shortages(lines, avail);
-                    if (short.length) {
-                        data.updateLoad(Ld, { status: L.READY, data: { workingAt: 0, phase: '' } });
-                        throw userErr('Not enough available at ' + c.S.fromName + ': ' +
-                            short.map(s => name(s.item) + ' needs ' + s.need + ', available ' + s.avail).join('; ') + '. Remove a pallet or check the count.');
-                    }
-                    assertClaim(Ld.id, claim, Ld.number, 'ship');
-                    toId = tx.createTransferOrder({ fromLoc: c.S.locFrom, toLoc: c.S.locTo,
-                        orderStatus: c.S.toStatus, memo: 'Move ' + Ld.number + ' ' + tok, lines: lines });
-                }
-                data.updateLoad(Ld, { to: toId, data: { lines: lines } });
-                Ld = data.getLoad(Ld.id);
-            }
-            if (!Ld.if) {
-                const tok = core.txToken(Ld.id, 'if');
-                let ifId = tx.findByToken(tok, 'ItemShip');
-                if (!ifId) {
-                    const sf = tx.committedShortfalls(Ld.to, lines);
-                    if (sf.length) throw userErr('The transfer order was created but NetSuite reserved less than the load: ' +
-                        sf.map(s => name(s.item) + ' reserved ' + s.committed + ' of ' + s.need).join('; ') +
-                        '. Free that stock (or fix the transfer order in NetSuite) and press Retry.');
-                    assertClaim(Ld.id, claim, Ld.number, 'ship');
-                    ifId = tx.fulfillTransferOrder(Ld.to, lines, 'Move ' + Ld.number + ' ' + tok);
-                }
-                data.updateLoad(Ld, { if: ifId });
-                Ld = data.getLoad(Ld.id);
-            }
-            data.palletsByLoad(Ld.id, [P.LOADED]).forEach(p => data.updatePallet(p, { status: P.SHIPPED, shippedDay: c.now.dayIso, data: { shippedAt: c.now.stamp } }));
-            data.updateLoad(Ld, { status: L.SHIPPED, data: { approvedBy: c.actor, approvedAt: c.now.stamp, workingAt: 0, phase: '' } });
-            let t = {}; try { t = data.tranids([Ld.to, Ld.if]); } catch (e) { t = {}; }
-            return { number: Ld.number, toNumber: t[Ld.to] || '', ifNumber: t[Ld.if] || '' };
-        } catch (e) {
-            const cur = data.getLoad(Ld.id);
-            if (cur && cur.status === L.SHIPPING) data.updateLoad(cur, { status: L.ERROR, data: { error: e.message, workingAt: 0 } });
-            throw e;
-        }
-    }
-
-    act('load_approve', true, (a, c) => shipLoad(mustLoad(a.loadId), c));
-
-    // ── receiving (inbound) ──────────────────────────────────────────────
-    const IN_OPEN = [L.SHIPPED, L.RECEIVING, L.RECV_READY, L.RECEIVED_SHORT];
-
-    function recvView(loadId) {
-        const Ld = mustLoad(loadId);
-        const pallets = data.palletsByLoad(Ld.id, [P.SHIPPED, P.RECEIVED, P.MISSING]);
-        const received = pallets.filter(p => p.status === P.RECEIVED);
-        return { load: pubLoad(Ld, countsFromPallets(pallets)), total: pallets.length, receivedCount: received.length,
-            expected: pallets.filter(p => p.status !== P.RECEIVED).map(p => pubPallet(p)),
-            recent: received.slice(-5).reverse().map(p => pubPallet(p)) };
-    }
-
-    act('inbound_list', false, () => {
-        const loads = data.loadsByStatus(IN_OPEN, 50);
-        const counts = data.palletCountsByLoad(loads.map(l => l.id));
-        return { loads: loads.map(l => pubLoad(l, counts[l.id])) };
-    });
-
-    act('recv_get', false, (a) => recvView(a.loadId));
-
-    function receiveOne(p, Ld, c, raw) {
-        if (IN_OPEN.concat([L.RECEIVED]).indexOf(Ld.status) === -1) throw userErr(Ld.number + ' is not open for receiving (' + Ld.status + ')');
-        const loads = {};
-        if (p && p.loadId) { const o = p.loadId === Ld.id ? Ld : data.getLoad(p.loadId); if (o) loads[o.id] = o; }
-        const rule = core.receiveScanRule(p, Ld.id, loads);
-        if (rule.set) {
-            const patch = { status: rule.set.status, data: {} };
-            if ('loadId' in rule.set) patch.load = rule.set.loadId;
-            if (rule.set.status === P.RECEIVED) { patch.data.receivedAt = c.now.stamp; patch.data.receivedBy = c.actor; }
-            if (rule.set.status === P.ARRIVED_UNSHIPPED) {
-                patch.arrivedOn = Ld.id;
-                patch.data.arrivedAt = c.now.stamp; patch.data.arrivedBy = c.actor; patch.data.arrivedFromLoad = rule.fromLoadNumber || '';
-            }
-            data.updatePallet(p, patch);
-            if (rule.set.status === P.RECEIVED && Ld.status === L.SHIPPED) data.updateLoad(Ld, { status: L.RECEIVING });
-        }
-        data.logScan({ pallet: p ? p.id : '', load: Ld.id, result: rule.result, data: { raw: raw, mode: 'receive', actor: c.actor, at: c.now.stamp } });
-        const fresh = p ? data.getPallet(p.id) : null;
-        return { result: rule.result, tone: core.toneFor(rule.result), raw: raw, pallet: fresh ? pubPallet(fresh) : null,
-            loadNumber: Ld.number, otherNumber: rule.otherNumber || '', otherLoadId: rule.otherLoadId || '',
-            fromLoadNumber: rule.fromLoadNumber || '', view: recvView(Ld.id) };
-    }
-
-    act('scan_recv', false, (a, c) => {
-        const Ld = mustLoad(a.loadId);
-        const sc = core.parseScan(a.raw);
-        return receiveOne(sc.palletId ? data.getPallet(sc.palletId) : null, Ld, c, sc.raw);
-    });
-
-    act('recv_other', false, (a, c) => {
-        const p = mustPallet(a.palletId), other = mustLoad(a.otherLoadId);
-        if (p.loadId !== other.id) throw userErr(p.code + ' is not on ' + other.number);
-        const r = receiveOne(p, other, c, p.code);
-        r.view = recvView(a.loadId || other.id);   // keep the worker on the load they are unloading
-        return r;
-    });
-
-    act('recv_damaged', false, (a, c) => {
-        const p = mustPallet(a.palletId);
-        if (p.status !== P.RECEIVED) throw userErr('Scan the pallet in first');
-        data.updatePallet(p, { damaged: true, data: { damagedBy: c.actor, damagedAt: c.now.stamp } });
-        return { pallet: pubPallet(data.getPallet(p.id)), view: a.loadId ? recvView(a.loadId) : null };
-    });
-
-    act('recv_undo', false, (a) => {
-        const p = mustPallet(a.palletId);
-        if (p.status !== P.RECEIVED || p.receipt) throw userErr(p.code + ' can no longer be undone');
-        const Ld = mustLoad(p.loadId);
-        const pinned = Ld.data.pendingRecv && (Ld.data.pendingRecv.ids || []).map(Number).indexOf(Number(p.id)) !== -1;
-        if (Ld.status === L.RECEIVING_TX || pinned) throw userErr(p.code + ' is being received right now and can no longer be undone');
-        const back = [L.RECEIVED, L.RECEIVED_SHORT].indexOf(Ld.status) !== -1 ? P.MISSING : P.SHIPPED;
-        data.updatePallet(p, { status: back, damaged: false, data: { receivedAt: '', receivedBy: '' } });
-        return { view: recvView(a.loadId || Ld.id) };
-    });
-
-    act('recv_ready', false, (a, c) => {
-        const Ld = mustLoad(a.loadId);
-        if (Ld.status !== L.RECEIVING) throw userErr(Ld.number + ' has nothing scanned in yet');
-        data.updateLoad(Ld, { status: L.RECV_READY, data: { recvReadyBy: c.actor, recvReadyAt: c.now.stamp } });
-        return {};
-    });
-
-    act('toreceive_list', true, () => {
-        const unposted = {};
-        data.findPalletsWhere({ status: [P.RECEIVED], receiptEmpty: true }).forEach(p => { unposted[p.loadId] = 1; });
-        const seen = {};
-        const cand = data.loadsByStatus([L.RECV_READY, L.RECEIVING_TX, L.ERROR], 50)
-            .filter(l => l.if && (l.status !== L.ERROR || (l.data || {}).phase === 'recv'))
-            .concat(data.getLoads(Object.keys(unposted)).filter(l => [L.RECEIVED_SHORT, L.RECEIVED].indexOf(l.status) !== -1))
-            .filter(l => { if (seen[l.id]) return false; seen[l.id] = 1; return true; });
-        const loads = cand.map(Ld => {
-            const ps = data.palletsByLoad(Ld.id, [P.SHIPPED, P.RECEIVED, P.MISSING]);
-            const scanned = ps.filter(p => p.status === P.RECEIVED);
-            return Object.assign(pubLoad(Ld, countsFromPallets(ps)), {
-                expected: ps.length, scanned: scanned.length,
-                missing: ps.filter(p => p.status !== P.RECEIVED).map(p => ({ code: p.code, summary: p.summary })),
-                damaged: ps.filter(p => p.damaged).map(p => ({ code: p.code, summary: p.summary })),
-                unpostedPieces: scanned.filter(p => !p.receipt).reduce((x, p) => x + p.pieces, 0),
-                late: [L.RECEIVED_SHORT, L.RECEIVED].indexOf(Ld.status) !== -1 });
-        });
-        const transit = data.loadsByStatus([L.SHIPPED, L.RECEIVING], 50);
-        const tc = data.palletCountsByLoad(transit.map(l => l.id));
-        return { loads: loads, transit: transit.map(l => pubLoad(l, tc[l.id])) };
-    });
-
-    // Resumable: `pendingRecv` pins the pallet set, and the memo token finds a
-    // receipt that was saved just before a crash.
-    function receiveLoad(Ld, c) {
-        const ok = [L.RECV_READY, L.RECEIVED_SHORT, L.RECEIVED, L.ERROR, L.RECEIVING_TX];
-        if (ok.indexOf(Ld.status) === -1 || !Ld.if || (Ld.status === L.ERROR && Ld.data.phase !== 'recv')) {
-            throw userErr(Ld.number + ' is not ready to receive (' + Ld.status + ')');
-        }
-        if (Ld.status === L.RECEIVING_TX && !stale(Ld)) throw userErr(Ld.number + ' is already being received. Wait a minute and refresh.');
-        // Check BEFORE claiming the load: a nothing-to-receive load must not flip to error status.
-        if (!Ld.data.pendingRecv) {
-            const unposted = data.palletsByLoad(Ld.id, [P.RECEIVED]).filter(p => !p.receipt);
-            if (!unposted.length) throw userErr('Nothing scanned in on ' + Ld.number + ' to receive');
-        }
-        const claimed = claimLoad(Ld, L.RECEIVING_TX, 'recv');
-        Ld = claimed.Ld;
-        const claim = claimed.claim;
-        try {
-            let pend = Ld.data.pendingRecv;
-            if (!pend) {
-                const ids = data.palletsByLoad(Ld.id, [P.RECEIVED]).filter(p => !p.receipt).map(p => p.id);
-                pend = { seq: (Number(Ld.data.recvSeq) || 0) + 1, ids: ids };
-                data.updateLoad(Ld, { data: { pendingRecv: pend, recvSeq: pend.seq } });
-                Ld = data.getLoad(Ld.id);
-            }
-            const pallets = data.palletsByIds(pend.ids);
-            const lines = core.aggregate(pallets);
-            const tok = core.txToken(Ld.id, 'r' + pend.seq);
-            let rid = tx.findByToken(tok, 'ItemRcpt');
-            if (!rid) {
-                assertClaim(Ld.id, claim, Ld.number, 'recv');
-                rid = tx.receiveTransferOrder(Ld.to, lines, 'Move ' + Ld.number + ' receipt ' + pend.seq + ' ' + tok);
-            }
-            if (Ld.receipts.indexOf(String(rid)) === -1) data.updateLoad(Ld, { receipts: Ld.receipts.concat([String(rid)]) });
-            Ld = data.getLoad(Ld.id);
-            pallets.forEach(p => { if (!p.receipt) data.updatePallet(p, { receipt: String(rid) }); });
-            data.palletsByLoad(Ld.id, [P.SHIPPED]).forEach(p => data.updatePallet(p, { status: P.MISSING }));
-            const missing = data.palletsByLoad(Ld.id, [P.MISSING]).length;
-            data.updateLoad(Ld, { status: missing ? L.RECEIVED_SHORT : L.RECEIVED,
-                data: { pendingRecv: null, recvApprovedBy: c.actor, recvApprovedAt: c.now.stamp, workingAt: 0, phase: '' } });
-            let t = {}; try { t = data.tranids([rid]); } catch (e) { t = {}; }
-            return { number: Ld.number, receiptNumber: t[rid] || '', pieces: pallets.reduce((x, p) => x + p.pieces, 0), missing: missing };
-        } catch (e) {
-            const cur = data.getLoad(Ld.id);
-            if (cur && cur.status === L.RECEIVING_TX) data.updateLoad(cur, { status: L.ERROR, data: { error: e.message, workingAt: 0 } });
-            throw e;
-        }
-    }
-
-    act('recv_approve', true, (a, c) => receiveLoad(mustLoad(a.loadId), c));
-
-    // ── catch-ups (pallet arrived without an outbound scan) ──────────────
-    act('catchup_list', true, (a, c) => {
-        const ps = data.palletsByStatus([P.ARRIVED_UNSHIPPED]);
-        // Pallets already sent through catch-up once but stuck on a load that hasn't finished
-        // receiving (usually because its ship/receive attempt errored) — surfaced so the office
-        // can retry them instead of the pallet silently vanishing from every screen.
-        const retryPs = data.findPalletsWhere({ catchup: true }).filter(p => p.data.catchupLoad);
-        const retryLoads = {};
-        data.getLoads(retryPs.map(p => p.data.catchupLoad)).forEach(l => { retryLoads[l.id] = l; });
-        const retries = retryPs.filter(p => { const cl = retryLoads[p.data.catchupLoad]; return cl && cl.status !== L.RECEIVED; });
-        const items = {};
-        ps.forEach(p => p.lines.forEach(l => { items[l.item] = 1; }));
-        const stock = Object.keys(items).length ? data.locationStock(c.S.locFrom, Object.keys(items)) : {};
-        const num = {};
-        data.getLoads(ps.map(p => p.arrivedOn).filter(Boolean)).forEach(l => { num[l.id] = l.number; });
-        const waiting = ps.map(p => {
-            const short = p.lines.filter(l => (stock[l.item] ? stock[l.item].avail : 0) < l.pcs)
-                .map(l => l.sku + ' (' + (stock[l.item] ? stock[l.item].avail : 0) + ' available)');
-            return pubPallet(p, { arrivedOnNumber: num[p.arrivedOn] || '', arrivedAt: p.data.arrivedAt || '', ok: !short.length, short: short.join(', ') });
-        });
-        const retryOut = retries.map(p => pubPallet(p, { retry: true, ok: true, error: (retryLoads[p.data.catchupLoad].data || {}).error || '' }));
-        return { pallets: waiting.concat(retryOut) };
-    });
-
-    act('catchup_approve', true, (a, c) => {
-        let p = mustPallet(a.palletId);
-        let cl = p.data.catchupLoad ? data.getLoad(p.data.catchupLoad) : null;
-        if (!cl) {
-            if (p.status !== P.ARRIVED_UNSHIPPED) throw userErr(p.code + ' is not waiting for a catch-up');
-            // A prior attempt may have created the load but crashed before it could be saved back
-            // onto this pallet — reuse it instead of creating a second, orphaned catch-up load.
-            const existing = data.loadsByStatus([L.READY, L.ERROR, L.SHIPPING], 50).find(l => (l.data || {}).catchupPallet === String(p.id));
-            if (existing) {
-                cl = existing;
-            } else {
-                const parent = p.arrivedOn ? data.getLoad(p.arrivedOn) : null;
-                const id = data.createLoad({ number: core.catchupNumber(parent ? parent.number : 'MV-000', data.allLoadNumbers()), status: L.READY,
-                    data: { catchupFor: parent ? parent.id : '', catchupPallet: String(p.id), createdBy: c.actor, createdAt: c.now.stamp, readyBy: c.actor, readyAt: c.now.stamp } });
-                cl = data.getLoad(id);
-            }
-            data.updatePallet(p, { status: P.LOADED, load: cl.id, catchup: true, data: { catchupLoad: cl.id } });
-        }
-        if (cl.status === L.RECEIVED) return { number: cl.number, receiptNumber: '' };
-        if ([L.READY, L.ERROR, L.SHIPPING].indexOf(cl.status) !== -1 && cl.data.phase !== 'recv') shipLoad(cl, c);
-        cl = data.getLoad(cl.id);
-        p = data.getPallet(p.id);
-        if (p.status === P.SHIPPED) data.updatePallet(p, { status: P.RECEIVED, data: { receivedAt: c.now.stamp, receivedBy: c.actor } });
-        if (cl.status === L.SHIPPED) { data.updateLoad(cl, { status: L.RECV_READY }); cl = data.getLoad(cl.id); }
-        const r = receiveLoad(cl, c);
-        return { number: cl.number, receiptNumber: r.receiptNumber };
-    });
-
-    act('catchup_reject', true, (a, c) => {
-        const p = mustPallet(a.palletId);
-        if (p.status !== P.ARRIVED_UNSHIPPED) throw userErr(p.code + ' is not waiting for a catch-up');
-        data.updatePallet(p, { status: P.LABELED, load: '', arrivedOn: '', data: { catchupRejectedBy: c.actor, catchupRejectedAt: c.now.stamp } });
-        return {};
-    });
-
     // ── dashboard ────────────────────────────────────────────────────────
     act('dashboard', true, (a, c) => {
         const sm = stockModel(c);
@@ -820,14 +398,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const moved = data.movedByDay();
         const end = c.now.dayIso < c.S.target ? c.now.dayIso : c.S.target;
         const days = core.moveDays(c.S.start, end, c.S.skip || []).map(d => ({ day: d, n: moved[d] || 0 }));
-        const loads = data.recentLoads(15);
-        const lc = data.palletCountsByLoad(loads.map(l => l.id));
+        const trucks = allTrucks().slice(0, 15);
         const exc = {
             missing: data.countPallets({ status: [P.MISSING] }),
-            arrivedUnshipped: data.countPallets({ status: [P.ARRIVED_UNSHIPPED] }),
-            catchups7: data.countPallets({ catchup: true, shippedSince: core.isoAddDays(c.now.dayIso, -6) }),
+            neverLoaded: data.findPalletsWhere({ status: [P.LABELED, P.LOADED] }).filter(p => p.data.flag === 'never_loaded').length,
             damaged: data.countPallets({ damaged: true }),
-            edited: data.countPallets({ edited: true, status: [P.SHIPPED, P.RECEIVED, P.MISSING] }),
+            edited: data.countPallets({ edited: true, status: [P.IN_TRANSIT, P.RECEIVED, P.MISSING] }),
             stale: data.countPallets({ status: [P.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
             noConfig: sm.est.unknownItems.length
         };
@@ -837,9 +413,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return {
             m: Object.assign({}, m, { neededPerDay: isFinite(m.neededPerDay) ? m.neededPerDay : null }),
             labeled: data.countPallets({ status: [P.LABELED, P.LOADED] }),
-            inTransit: data.countPallets({ status: [P.SHIPPED, P.MISSING] }),
+            inTransit: data.countPallets({ status: [P.IN_TRANSIT, P.MISSING] }),
             received: data.countPallets({ status: [P.RECEIVED] }),
-            target: c.S.target, days: days, loads: loads.map(l => pubLoad(l, lc[l.id])), exc: exc, bySku: bySku,
+            target: c.S.target, days: days, trucks: trucks.map(truckSummary), exc: exc, bySku: bySku,
             noConfigSkus: sm.est.unknownItems.map(skuOf)
         };
     });
@@ -1162,34 +738,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         }));
     }
 
-    function loadSheetModel(Ld, S) {
-        const ps = data.palletsByLoad(Ld.id, [P.LOADED, P.SHIPPED, P.RECEIVED, P.MISSING]);
-        const t = data.tranids([Ld.to, Ld.if].filter(Boolean));
-        const tot = {}, sku = {};
-        ps.forEach(p => p.lines.forEach(l => { tot[l.item] = (tot[l.item] || 0) + l.pcs; sku[l.item] = l.sku; }));
-        const d = Ld.data || {};
-        return { number: Ld.number, fromName: S.fromName, toName: S.toName, toNumber: t[Ld.to] || '', ifNumber: t[Ld.if] || '',
-            door: d.door || '', carrier: d.carrier || '', trailer: d.trailer || '', seal: d.seal || '',
-            approvedAt: d.approvedAt || '', approvedBy: d.approvedBy || '',
-            pallets: ps.map(p => ({ code: p.code, summary: p.summary, pieces: p.pieces })),
-            totals: Object.keys(tot).map(k => ({ sku: sku[k], qty: tot[k] })).sort((x, y) => (x.sku < y.sku ? -1 : 1)) };
-    }
-
     function pdf(ctx) {
         const q = ctx.request.parameters;
         if (!isManager()) { ctx.response.write('Managers only'); return; }
         const S = data.getSettings();
-        let xml;
-        if (q.type === 'loadsheet') {
-            const Ld = data.getLoad(q.loadId);
-            if (!Ld) { ctx.response.write('Load not found'); return; }
-            xml = tpl.loadSheetXml(loadSheetModel(Ld, S));
-        } else {
-            const ps = q.job ? data.palletsByJob(String(q.job)).filter(p => p.status !== P.VOID) : data.palletsByIds(String(q.ids || '').split(','));
-            if (!ps.length) { ctx.response.write('No labels to print'); return; }
-            xml = tpl.labelsXml(ps.map(p => ({ code: p.code, lines: p.lines, pieces: p.pieces, edited: p.edited, printedDay: p.printedDay,
-                by: p.data.printedBy || '', summary: p.summary })), { codeMode: S.labelCode, header: q.header === '1', fromName: S.fromName, toName: S.toName });
-        }
+        const ps = q.job ? data.palletsByJob(String(q.job)).filter(p => p.status !== P.VOID) : data.palletsByIds(String(q.ids || '').split(','));
+        if (!ps.length) { ctx.response.write('No labels to print'); return; }
+        const xml = tpl.labelsXml(ps.map(p => ({ code: p.code, lines: p.lines, pieces: p.pieces, edited: p.edited, printedDay: p.printedDay,
+            by: p.data.printedBy || '', summary: p.summary })), { codeMode: S.labelCode, header: q.header === '1', fromName: S.fromName, toName: S.toName });
         ctx.response.writeFile({ file: render.xmlToPdf({ xmlString: xml }), isInline: true });
     }
 

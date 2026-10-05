@@ -9,13 +9,12 @@ function makeFakeData(core) {
         items: [], stock: {}, configs: [], pallets: {}, loads: {}, scans: [], reqs: {}, tranids: {}, seq: 100
     };
     const nextId = () => ++db.seq;
-    const PKEYS = ['status', 'load', 'job', 'receipt', 'shippedDay', 'printedDay', 'arrivedOn', 'damaged', 'catchup', 'edited', 'summary', 'pieces'];
+    const PKEYS = ['status', 'load', 'job', 'receipt', 'shippedDay', 'printedDay', 'damaged', 'edited', 'summary', 'pieces'];
 
     function toPallet(r) {
         const p = clone(r);
         p.code = core.palletCode(p.id);
         p.loadId = String(p.load || '');
-        p.arrivedOn = String(p.arrivedOn || '');
         p.lines = p.data.lines || [];
         delete p.load;
         return p;
@@ -37,7 +36,6 @@ function makeFakeData(core) {
         if (q.status && q.status.indexOf(p.status) === -1) return false;
         if (q.receiptEmpty && p.receipt) return false;
         if (q.damaged && !p.damaged) return false;
-        if (q.catchup && !p.catchup) return false;
         if (q.edited && !p.edited) return false;
         if (q.shippedSince && !(p.shippedDay && p.shippedDay >= q.shippedSince)) return false;
         if (q.printedBefore && !(p.printedDay && p.printedDay < q.printedBefore)) return false;
@@ -87,7 +85,7 @@ function makeFakeData(core) {
         countByJob: job => pallets().filter(p => p.job === job).length,
         createPallet: patch => {
             const id = nextId();
-            const r = { id, data: {}, load: '', arrivedOn: '', receipt: '', job: '', shippedDay: '', printedDay: '', damaged: false, catchup: false, edited: false, summary: '', pieces: 0, status: '' };
+            const r = { id, data: {}, load: '', receipt: '', job: '', shippedDay: '', printedDay: '', damaged: false, edited: false, summary: '', pieces: 0, status: '' };
             applyPallet(r, patch, null);
             db.pallets[id] = r;
             return id;

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadAmd } = require('./amd');
 const core = loadAmd('move_core.js');
-const P = core.PALLET, L = core.LOAD;
+const P = core.PALLET;
 
 test('parseScan accepts PLT codes in any case and rejects everything else', () => {
     assert.deepEqual(core.parseScan(' plt48213 '), { raw: 'PLT48213', palletId: 48213 });
@@ -51,71 +51,8 @@ test('pcsMap and defaultPcs', () => {
     assert.deepEqual(core.pcsMap(cfg), { '11': { A: 120, B: 60 }, '12': { A: 60 } });
     assert.deepEqual(core.defaultPcs(cfg), { '11': 60, '12': 60 });
     assert.equal(P.LABELED, 'labeled');
-    assert.equal(L.RECEIVED_SHORT, 'received_short');
-});
-
-// ── Task 2 ──
-const LOADS = {
-    '1': { status: L.LOADING, number: 'MV-001' }, '2': { status: L.LOADING, number: 'MV-002' },
-    '3': { status: L.READY, number: 'MV-003' }, '4': { status: L.SHIPPED, number: 'MV-004' }
-};
-
-test('loadScanRule covers every pallet state', () => {
-    assert.deepEqual(core.loadScanRule(null, '1', LOADS), { result: 'unknown' });
-    assert.deepEqual(core.loadScanRule({ status: P.LABELED, loadId: '' }, '1', LOADS), { result: 'ok', set: { status: P.LOADED, loadId: '1' } });
-    assert.deepEqual(core.loadScanRule({ status: P.LOADED, loadId: '1' }, 1, LOADS), { result: 'dup' });
-    assert.deepEqual(core.loadScanRule({ status: P.LOADED, loadId: '2' }, '1', LOADS), { result: 'other_load', otherLoadId: '2', otherNumber: 'MV-002' });
-    assert.deepEqual(core.loadScanRule({ status: P.LOADED, loadId: '3' }, '1', LOADS), { result: 'locked_load', otherLoadId: '3', otherNumber: 'MV-003' });
-    assert.deepEqual(core.loadScanRule({ status: P.VOID, loadId: '' }, '1', LOADS), { result: 'void' });
-    assert.deepEqual(core.loadScanRule({ status: P.SHIPPED, loadId: '4' }, '1', LOADS), { result: 'shipped', otherLoadId: '4', otherNumber: 'MV-004' });
-    assert.equal(core.loadScanRule({ status: P.RECEIVED, loadId: '4' }, '1', LOADS).result, 'shipped');
-    assert.equal(core.loadScanRule({ status: P.ARRIVED_UNSHIPPED, loadId: '' }, '1', LOADS).result, 'shipped');
-});
-
-test('receiveScanRule covers every pallet state', () => {
-    assert.deepEqual(core.receiveScanRule(null, '4', LOADS), { result: 'unknown' });
-    assert.deepEqual(core.receiveScanRule({ status: P.SHIPPED, loadId: '4' }, '4', LOADS), { result: 'ok', set: { status: P.RECEIVED } });
-    assert.deepEqual(core.receiveScanRule({ status: P.MISSING, loadId: '4' }, '4', LOADS), { result: 'late', set: { status: P.RECEIVED } });
-    assert.deepEqual(core.receiveScanRule({ status: P.SHIPPED, loadId: '4' }, '9', LOADS), { result: 'other_load', otherLoadId: '4', otherNumber: 'MV-004' });
-    assert.deepEqual(core.receiveScanRule({ status: P.MISSING, loadId: '4' }, '9', LOADS), { result: 'other_load', otherLoadId: '4', otherNumber: 'MV-004' });
-    assert.deepEqual(core.receiveScanRule({ status: P.RECEIVED, loadId: '4' }, '4', LOADS), { result: 'dup' });
-    assert.deepEqual(core.receiveScanRule({ status: P.RECEIVED, loadId: '4' }, '9', LOADS), { result: 'dup_other', otherLoadId: '4', otherNumber: 'MV-004' });
-    assert.deepEqual(core.receiveScanRule({ status: P.LABELED, loadId: '' }, '4', LOADS),
-        { result: 'arrived_unshipped', set: { status: P.ARRIVED_UNSHIPPED, loadId: '' }, fromLoadNumber: '' });
-    assert.deepEqual(core.receiveScanRule({ status: P.LOADED, loadId: '1' }, '4', LOADS),
-        { result: 'arrived_unshipped', set: { status: P.ARRIVED_UNSHIPPED, loadId: '' }, fromLoadNumber: 'MV-001' });
-    assert.deepEqual(core.receiveScanRule({ status: P.LOADED, loadId: '3' }, '4', LOADS), { result: 'other_load_pending', otherLoadId: '3', otherNumber: 'MV-003' });
-    assert.deepEqual(core.receiveScanRule({ status: P.ARRIVED_UNSHIPPED, loadId: '' }, '4', LOADS), { result: 'dup_catchup' });
-    assert.deepEqual(core.receiveScanRule({ status: P.VOID, loadId: '' }, '4', LOADS), { result: 'void' });
-});
-
-test('toneFor', () => {
-    assert.equal(core.toneFor('ok'), 'ok');
-    assert.equal(core.toneFor('late'), 'ok');
-    assert.equal(core.toneFor('dup'), 'warn');
-    assert.equal(core.toneFor('arrived_unshipped'), 'warn');
-    assert.equal(core.toneFor('void'), 'bad');
-    assert.equal(core.toneFor('whatever'), 'bad');
-});
-
-test('aggregate and shortages', () => {
-    const pallets = [
-        { lines: [{ item: '11', pcs: 120 }] },
-        { lines: [{ item: 11, pcs: 120 }, { item: '12', pcs: 30 }] }
-    ];
-    const agg = core.aggregate(pallets);
-    assert.deepEqual(agg, { '11': 240, '12': 30 });
-    assert.deepEqual(core.shortages(agg, { '11': 200, '12': 30 }), [{ item: '11', need: 240, avail: 200 }]);
-    assert.deepEqual(core.shortages(agg, { '11': 240 }), [{ item: '12', need: 30, avail: 0 }]);
-});
-
-test('load numbers, catch-up numbers and transaction tokens', () => {
-    assert.equal(core.nextLoadNumber([]), 'MV-001');
-    assert.equal(core.nextLoadNumber(['MV-009', 'MV-010', 'junk', 'MV-003-C1']), 'MV-011');
-    assert.equal(core.catchupNumber('MV-011', ['MV-011']), 'MV-011-C1');
-    assert.equal(core.catchupNumber('MV-011', ['MV-011', 'MV-011-C1', 'MV-012-C4']), 'MV-011-C2');
-    assert.equal(core.txToken('17', 'to'), '[mv:17:to]');
-    assert.equal(core.txToken(17, 'r2'), '[mv:17:r2]');
+    assert.equal(P.IN_TRANSIT, 'in_transit');
+    assert.equal(P.SHIPPED, undefined);
 });
 
 // ── Task 3 ──
