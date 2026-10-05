@@ -878,9 +878,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         };
         guard(mustTruck(a.truckId));
         const cl = claimLoad(mustTruck(a.truckId), T.DEPARTING, 'release', guard, { releasedBy: c.user, releasedAt: c.now.stamp });
+        // A finishDepart that died inside its pallet loop left some pallets in transit: they never left, so back on this truck.
+        data.palletsByLoad(cl.Ld.id, [VP.IN_TRANSIT]).forEach(p => {
+            assertClaim(cl.Ld.id, cl.claim, truckLabel(cl.Ld), 'release');
+            data.updatePallet(p, { status: VP.LOADED, load: cl.Ld.id, shippedDay: '' });
+        });
         assertClaim(cl.Ld.id, cl.claim, truckLabel(cl.Ld), 'release');
+        // verify cleared too: a re-verify that fails below must not leave the old (ready) result on a needs_fix truck.
         data.updateLoad(data.getLoad(cl.Ld.id), { status: T.NEEDS_FIX, data: { claim: '', workingAt: 0, phase: '', error: '', depart: null, plan: null, alloc: null,
-            unplanned: null, bol: null, writes: null, departPallets: null } });
+            unplanned: null, bol: null, writes: null, departPallets: null, verify: null } });
         return verifyOut(verifyTruck(cl.Ld.id, c), c);
     });
 

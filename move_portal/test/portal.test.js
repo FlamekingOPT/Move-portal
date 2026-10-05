@@ -1483,3 +1483,32 @@ test('verify to ready clears a stale correctError', () => {
     assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'ready');
     assert.equal(ctx.data.getLoad(t.id).data.correctError, '');
 });
+
+// ── Verify Load final-review fixes ──
+test('final1: release puts pallets a dying departure already moved in transit back on the truck, then re-verifies', () => {
+    const ctx = setup();
+    const { t, ps } = readyTruck(ctx, 42);
+    const realUpd = ctx.data.updatePallet;
+    let n = 0;
+    ctx.data.updatePallet = (p, patch) => { if (patch.status === 'in_transit' && ++n === 3) throw new Error('request died'); return realUpd(p, patch); };
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'IT1' }, false), /request died/);
+    ctx.data.updatePallet = realUpd;
+    assert.equal(ps.filter(p => ctx.data.getPallet(p.id).status === 'in_transit').length, 2);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { workingAt: 1 } });     // stale: the request is gone
+    const r = ctx.run('depart_release', { truckId: t.id });
+    assert.deepEqual(ps.map(p => [ctx.data.getPallet(p.id).status, String(ctx.data.getPallet(p.id).loadId)]).filter(x => x[0] !== 'loaded' || x[1] !== String(t.id)), []);
+    assert.deepEqual([r.match, ctx.data.getLoad(t.id).status], [true, 'ready']);
+    assert.equal(ctx.data.getPallet(ps[0].id).shippedDay || '', '');
+});
+
+test('final1: the release write clears the old verify, so a failed re-verify leaves no stale result', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = readyTruck(ctx, 42);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'IT2' }), /NetSuite write failed/);
+    ctx.ns.plannedIfs = () => { throw new Error('NetSuite down'); };
+    assert.throws(() => ctx.run('depart_release', { truckId: t.id }), /NetSuite down/);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.claim, x.data.verify], ['needs_fix', '', null]);
+});
