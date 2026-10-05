@@ -17,7 +17,19 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
 - **SDD ledger, with every ruling:** `docs/sdd-ledger/progress.md`, plus the task briefs and reports. The review diffs were left out (the history covers them).
 
-## 🧭 READ FIRST — HANDOFF (2026-10-01): REDESIGN, PORTAL = VERIFICATION ONLY · ⏭ NEXT = WRITE SPEC, THEN PLAN, THEN LOCAL BETA
+## 🧭 READ FIRST — HANDOFF (2026-10-05): SPEC WRITTEN · ⏭ NEXT = JACK REVIEWS SPEC, THEN superpowers:writing-plans, THEN LOCAL BETA
+- **Spec:** `docs/superpowers/specs/2026-10-01-move-portal-verification-design.md` (V1–V12). It supersedes both older specs.
+- **Open questions closed 2026-10-05:**
+  - Extra SKU with no open TO → **block the scan**.
+  - BOL reprint → **keep the original BOL #, REV 2, list all IFs**.
+  - `custbody7` = `SEAL: <n>` is **confirmed** in prod.
+- **New decisions 2026-10-05:**
+  - Write modes are `off | qty | on`. The **Suitelet beta = `qty`**: a manager-approved correction edits the Packed IF line qty, and nothing else is written.
+  - **Every receipt needs a manager OK.**
+  - Manager approvals are made only on the logged-in page.
+- **Prod fact:** only 5 trailers rotate (537224, 416460, 105488, 522051, 211659), and every seal is unique.
+
+## (previous) HANDOFF (2026-10-01): REDESIGN, PORTAL = VERIFICATION ONLY
 This **supersedes** both the original design and the bulk-TO amendment (2026-09-28). Brainstorm decisions below are Jack's, confirmed 2026-10-01. No code has changed yet.
 
 **Process (what really happens today, from real prod data + BOL photos):**
