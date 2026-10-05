@@ -66,3 +66,39 @@ Ruling (Jack decision 2026-09-28, resolves I5): QR code only on all pallet label
 Final fix wave: complete (commits 12c14e4..c710724, 62/62; re-review all findings addressed, no new breakage)
 Code build (Tasks 1–12 + 12b + final wave): COMPLETE. Next: Task 13 sandbox deploy (needs Jack's sandbox login), then Task 14 functional pass; merge via finishing-a-development-branch after sandbox sign-off.
 Paused 2026-09-28 by Jack; handoff written to master CLAUDE.md (commit above).
+
+
+## v3 verification portal (2026-10-05) — plan docs/superpowers/plans/2026-10-05-move-portal-verification.md, branch feat/v3-verification
+
+Copied from the session ledger (.superpowers/sdd/progress.md). Each task: implementer + task review (spec + quality); Important findings fixed before completion.
+
+```
+# SDD progress — plan docs/superpowers/plans/2026-10-05-move-portal-verification.md (branch feat/v3-verification)
+Task 1: complete (commits 51b9a92..fed1310, review clean)
+Minor (T1): addonTo is only the first/oldest add-on TO (display only; planDeparture splits across TOs); PLANNED/OPEN_TO_STATUS exported but filtering lives in buildReads; missing boundary tests (after==expected, ==expected+raise), empty-lines pallet returns ok.
+Task 2: complete (commits fed1310..5eacc6e, review clean)
+Minor (T2): truckNoForDay counts (not max) — fine since departed trucks are never undone; toLeft assigns per toId|item (buildReads already aggregates, ok); stamp trailer/seal not normalized in plan (sl departInput trims); bol.number '' when all IFs unplanned + add-ons only; if_qty to:0 on mixed IF relies on tx removeLine (Stage 2 check); test reuses pallet id 100.
+Task 3: complete (commits 5eacc6e..52d2975, review clean)
+Minor (T3, plan-mandated): planReceipts cum[k]=g can drop below earlier approved qty -> consider Math.max(g, before) (posted pallets can't be undone, so low risk); received qty with no IF line is silently dropped (no surplus field); stamp must be passed; thin asserts on dup_other/locked refs and r2.cumulative.
+Task 4: complete (commits 52d2975..3f4fea2, review clean after fix round 1 — Jack approved seal-by-digits + runOps no-id fixes)
+Open for final review (T4): add-on IF only detected in shadow once a receipt carries the seal (between departure and unload shows (new)/null); thin tests for Trailer/Seal false, Shipped null, no-receipt path, on-mode if_create->receipt ordering; Trailer compare still normSeal; empty seal both sides -> ok:true; sealKey strips 'SEAL' prefix from alphanumeric seals.
+Task 5: complete (commits 3f4fea2..5a142ed, review clean). SQL line semantics (TO positive rows at locTo; IF positive rows at locFrom) were checked against prod by the controller on 2026-10-05.
+Minor (T5, plan-mandated): receipt linked to 2 IFs overwrites (1 rcpt=1 IF today); receiptsByIf not sorted by id; ifLines don't require the TO's from-location (only plannedIfs filters by toMeta); toMeta mixes key kinds; thin SQL/snapshot_ns tests; no guard on NaN location / empty {IDS}.
+Task 6: complete (commits 5a142ed..432ddaf, review clean after fix round 1 — Jack approved: untick instead of removeLine + empty-IF guard; real move_tx tests with fake N/record)
+Stage 2 checks (T6): does TO quantityfulfilled count Picked/Packed IFs (vs planner remaining)? bins/inventorydetail on Riverside items? itemreceive=false on a loaded Packed IF drops the line on save? defaultValues.itemfulfillment on TO->IR.
+Minor (T6): cur/caps sum unticked lines too; negative op.to treated as 0; two tx test files.
+Standing approval (Jack, 2026-10-05): plan-mandated hardening/test gaps that don't change portal behavior → just fix, list in final summary. Behavior changes still go to Jack.
+Task 7: complete (commits 432ddaf..9cc93b1, review clean after 2 fix rounds: retry staleness, assertClaim per write, claimLoad re-read+guard, error logging, requestedBy, stronger tests)
+Lesson (T7): updateLoad merges patch.data over the PASSED copy — always re-read (data.getLoad) before updateLoad in multi-step paths. Applies to Task 8 receipt_approve/receiveOn/pushStack.
+Minor (T7): residual tiny race on depart write after claim (could fold depart into claim write); duplicated retry condition; seal/truck# not reserved while pending; remove/undo/move-here not logged as scans; default trailers hard-coded fallback.
+Task 8: complete (commits 9cc93b1..c5d21db, review clean after 2 fix rounds: APPROVING recovery via error/stale, late-arrival visibility, rplan dedupe, postedSeq only planned ids, logging, prevStatus in claim write)
+Minor (T8): unloadView findPalletsWhere over all labeled/loaded per scan (governance); undo leaves receivedAt/By; unload_list extra per-truck search; running-approval truck hidden from list up to 10 min; rplan holds unresolved new:<toId> ids.
+Task 9: complete (commits c5d21db..d982f04, review clean after fix round 1: per-truck isolation in receipts, stuck approving always listed, report diffs tests)
+Minor (T9): mocks position-dependent; report test relies on fake clock day.
+Task 10: complete (commits d982f04..dea4804, review clean after fix round 1: PALLET==VP test, dashboard coverage, dead code removed, P->VP)
+Minor (T10): move_data whereFilters still has dead shippedSince/catchup; dashboard neverLoaded JS filter + per-truck palletsByLoad (governance).
+Task 11: complete + Task 12: complete (commits dea4804..719a588, one implementer, review clean after fix round 1: departing state, confirm prompts, api/handler cross-check test, form value keep, null guards)
+Minor (T11-12): no fake-DOM render tests; handler regex 'ACT\.' unescaped dot; stuck no-perIf card says "Approve" not "Re-approve"; dconfirm text misleading for floor (it only requests); validation error repaints whole truck; stale queued scan may paint previous truck; manager can't reject pending departure with plan error; report table no overflow-x; perIf.short numeric used as bool. NOTE: implementer once ran taskkill /IM node.exe (killed all node processes) — tell Jack.
+Task 13: complete (commits 719a588..8e6cf80 + gitignore tmp, review clean after fix round 1: atomic store, save decoupled, item/trailer merge incl 543804/487491). Snapshot pulled by controller: move_portal/snapshot/prod-2026-10-05.json (12 planned IFs, 6 open TO lines, 38 receipts).
+Minor (T13): save failure not surfaced to client; partial in-memory mutation after failed action could persist on next save.
+```

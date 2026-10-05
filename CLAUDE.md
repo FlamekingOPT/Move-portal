@@ -9,15 +9,26 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - History was split out of the Netsuite OPT repo on 2026-09-28. Commit hashes quoted in the ledger and older handoffs are from that repo and **won't match** hashes here; match by commit message.
 
 ## Files
-- `move_portal/`: `move_core`, `move_label_template`, `move_data`, `move_tx`, `move_ui`, `sl_move_portal`, `label_tester.html`.
-- `move_portal/test/`: node tests with in-memory fakes, plus `preview_server.js`, a local preview on port 8765 (launch config `move-preview`; pass the `floor` arg for the picker view).
-- **Tests:** `node --test "move_portal/test/*.test.js"` → **62/62 pass**. A bare folder path fails on Windows.
+- `move_portal/`: `move_core`, `move_verify` (v3 pure rules), `move_label_template`, `move_data`, `move_tx` (v3 `apply` ops only), `move_ui`, `sl_move_portal`, `label_tester.html`.
+- `move_portal/local/`: node-only `snapshot_ns.js` (reads a prod snapshot) and `local_store.js` (persists to `local/store.json`, gitignored).
+- `move_portal/snapshot/` (gitignored): `prod-<date>.json` snapshots pulled read-only via the SuiteQL connector.
+- `move_portal/test/`: node tests with in-memory fakes, plus `preview_server.js` = the **local beta** on port 8765 (launch config `move-preview` / `move-preview-beta`). Manager view `http://localhost:8765/`, floor view `/?floor=1`. It serves the newest `snapshot/prod-*.json` (else the test fixture) and saves to `local/store.json`.
+- **Tests:** `node --test "move_portal/test/*.test.js"` → **103/103 pass** (2026-10-05, v3). A bare folder path fails on Windows.
 - **Spec:** `docs/superpowers/specs/2026-09-27-move-portal-design.md`. **D2 is SUPERSEDED** by `docs/superpowers/specs/2026-09-28-move-portal-bulk-to-design.md`.
 - **Plan:** `docs/superpowers/plans/2026-09-27-move-portal.md` (Tasks 0–15).
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
 - **SDD ledger, with every ruling:** `docs/sdd-ledger/progress.md`, plus the task briefs and reports. The review diffs were left out (the history covers them).
 
-## 🧭 READ FIRST — HANDOFF (2026-10-05): SPEC WRITTEN · ⏭ NEXT = JACK REVIEWS SPEC, THEN superpowers:writing-plans, THEN LOCAL BETA
+## 🧭 READ FIRST — HANDOFF (2026-10-05, late): v3 LOCAL BETA BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
+- **Branch `feat/v3-verification`** (pushed; not merged to main). Plan `docs/superpowers/plans/2026-10-05-move-portal-verification.md`: Tasks 1–14 done, every task reviewed. The SDD ledger with every review finding and minor is in `docs/sdd-ledger/progress.md` (v3 section).
+- **Run the beta:** `node move_portal/test/preview_server.js` → manager `http://localhost:8765/`, floor `http://localhost:8765/?floor=1` (scanners on the same wifi: `http://<pc-ip>:8765/?floor=1`). Write mode is `off`. Delete `move_portal/local/store.json` to start clean.
+- **Refresh the snapshot:** ask Claude to "refresh the move snapshot". It runs `v.SQL('35','46')` queries (toLines, ifLines, then links/receipts on those ids, items) read-only and writes `move_portal/snapshot/prod-<date>.json`, as in plan Task 13 Step 5. The first one is `prod-2026-10-05.json`: 12 planned IFs, 6 open TO lines.
+- **Smoke-tested 2026-10-05 against that snapshot:** load out IF72287 (short + YSN301 add-on from TO11710, YSN335-ALM blocked: TO11716 has no qty left) → floor request → manager approve → unload 21/23 + never-loaded flag → short receipt approved → report rows ⏳ (office hasn't acted yet). No console/server errors; no horizontal scroll at 375px.
+- **Decisions made during the build (Jack, 2026-10-05):** compare seals by digits; NetSuite writes must return an id; untick IF lines instead of removeLine (+ refuse to empty an IF); departure/receipt claim guards with 10-min stale Retry; standing approval to fix behavior-neutral hardening without asking.
+- **Stage 2 must check in prod (on a test IF):** does TO `quantityfulfilled` count Picked/Packed IFs; bins/inventorydetail on Riverside items; `itemreceive=false` on a Packed IF drops the line; `defaultValues.itemfulfillment` on TO→receipt.
+- **Prod facts:** Tippecanoe = location **46** (sandbox 42). Trailers in rotation: 537224, 416460, 105488, 522051, 211659, 543804, 487491.
+
+## (previous) HANDOFF (2026-10-05): SPEC WRITTEN · ⏭ NEXT = JACK REVIEWS SPEC, THEN superpowers:writing-plans, THEN LOCAL BETA
 - **Spec:** `docs/superpowers/specs/2026-10-01-move-portal-verification-design.md` (V1–V12). It supersedes both older specs.
 - **Open questions closed 2026-10-05:**
   - Extra SKU with no open TO → **block the scan**.
