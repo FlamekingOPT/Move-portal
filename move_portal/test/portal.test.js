@@ -28,6 +28,8 @@ function setup(opts) {
     const run = (action, a, mgr = true) => sl._runAction(action, Object.assign({ actor: 'Miguel' }, a || {}), mgr);
     return { data, tx, run, ns, sl, rt };
 }
+let TRN = 0;
+function tr() { return 'T' + (++TRN); }   // a unique trailer # per truck_start
 const LINE201 = { item: '11', sku: 'YSN201', cfg: 'A', pcs: 120 };
 function printLabels(ctx, n, job, lines) {
     ctx.run('print_chunk', { job: job || 'Jtest1', lines: lines || [LINE201], upTo: n, source: 'plan' });
@@ -146,7 +148,7 @@ test('plan subtracts already-labeled stock and lists SKUs with no config', () =>
 const L975 = { item: '975', sku: 'YSN100', cfg: 'A', pcs: 12 };
 function truckWith(ctx, n, ifId) {
     const ps = printLabels(ctx, n, 'Jt' + n + Math.random().toString(36).slice(2, 6), [L975]);
-    const t = ctx.run('truck_start', { ifIds: [ifId || '9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: [ifId || '9001'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     return { t, ps };
 }
@@ -193,18 +195,18 @@ test('truck_planned lists A/B IFs not on a truck; truck_start takes one', () => 
     const ctx = setup();
     const r = ctx.run('truck_planned');
     assert.deepEqual(r.planned.map(f => [f.ifNum, f.pcs, f.estPallets]), [['IF9001', 504, 42], ['IF9002', 504, 42]]);
-    const v1 = ctx.run('truck_start', { ifIds: ['9001'] }).view;
-    assert.deepEqual([v1.truck.status, v1.truck.label, v1.lines[0].expected, v1.lines[0].scanned], ['loading', 'IF9001', 504, 0]);
+    const v1 = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'P1' }).view;
+    assert.deepEqual([v1.truck.status, v1.truck.label, v1.lines[0].expected, v1.lines[0].scanned], ['loading', 'Trailer P1', 504, 0]);
     assert.deepEqual(ctx.run('truck_planned').planned.map(f => f.ifNum), ['IF9002']);
-    assert.throws(() => ctx.run('truck_start', { ifIds: ['9001'] }), /already on a truck/);
-    assert.throws(() => ctx.run('truck_start', { ifIds: ['9000'] }), /not Picked\/Packed/);
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }), /already on a truck/);
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9000'], trailer: tr() }), /not Picked\/Packed/);
 });
 
 test('truck_scan: ok, dup, no_to blocked, undo and remove', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 2, 'Jscan', [L975]);
     const bad = printLabels(ctx, 1, 'Jbad', [{ item: '12', sku: 'YSN301', cfg: 'A', pcs: 60 }]);
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     const r = ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code });
     assert.deepEqual([r.result, r.tone, r.view.lines[0].scanned], ['ok', 'ok', 12]);
     assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code }).result, 'dup');
@@ -220,11 +222,11 @@ test('truck_scan: ok, dup, no_to blocked, undo and remove', () => {
 test('truck_scan: pallet on another loading truck → other_truck → move here', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 1, 'Jmv', [L975]);
-    const a = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
-    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    const a = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
+    const b = ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() }).view.truck;
     ctx.run('truck_scan', { truckId: a.id, raw: ps[0].code });
     const r = ctx.run('truck_scan', { truckId: b.id, raw: ps[0].code });
-    assert.deepEqual([r.result, r.otherLabel], ['other_truck', 'IF9001']);
+    assert.deepEqual([r.result, r.otherLabel], ['other_truck', a.label]);
     assert.equal(ctx.run('truck_move_here', { truckId: b.id, palletId: ps[0].id }).view.lines[0].scanned, 12);
     assert.equal(ctx.data.getPallet(ps[0].id).loadId, b.id);
 });
@@ -260,7 +262,7 @@ test('retry skips keys already written; pallets stay loaded until the retry fini
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'on';
     const ps = printLabels(ctx, 42, 'Jtwo', [L975]).concat(printLabels(ctx, 42, 'Jtwo2', [L975]));   // fills IF9001 and IF9002 exactly: two stamps
-    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'ready');
     ctx.tx._t.failOn = 'if_stamp:9002';
@@ -301,7 +303,7 @@ test('a claim stolen mid-write stops the next op and leaves pallets loaded', () 
 test('an empty IF blocks Ready; dropped by a manager, it goes back to the planned list and the truck departs', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 42, 'Junp', [L975]);
-    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     assert.deepEqual(ctx.run('truck_verify', { truckId: t.id }, false).diffs.map(d => d.kind), ['if_empty']);
     assert.equal(ctx.run('truck_drop_if', { truckId: t.id, ifId: '9002' }).view.truck.status, 'ready');
@@ -414,7 +416,7 @@ test('receipt_approve in on mode writes one receipt per IF, a second TO included
     ctx.data.db.settings.writeMode = 'on';
     ifOn700(ctx);
     const ps = printLabels(ctx, 2, 'Jon', [{ item: '11', sku: 'YSN201', cfg: 'A', pcs: 120 }]).concat(printLabels(ctx, 42, 'Jon2', [L975]));
-    const t = ctx.run('truck_start', { ifIds: ['9001', '9901'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9901'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id }, false);
     ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'S9' }, true);
@@ -427,7 +429,7 @@ test('receipt_approve in on mode writes one receipt per IF, a second TO included
 function mixedOnTruck(ctx, seal) {
     ifOn700(ctx);
     const ps = printLabels(ctx, 2, 'Jm' + seal, [{ item: '11', sku: 'YSN201', cfg: 'A', pcs: 120 }]).concat(printLabels(ctx, 42, 'Jn' + seal, [L975]));
-    const t = ctx.run('truck_start', { ifIds: ['9001', '9901'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9901'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id }, false);
     ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: seal }, true);
@@ -718,14 +720,14 @@ test('fix2: unload_list and approvals do not search pallets per truck for fully 
 test('fix3: a truck scan re-checks the truck right before loading the pallet', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 2, 'Jrc', [L975]);
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     const orig = ctx.ns.openToLines;
     ctx.ns.openToLines = () => { ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'X' } }); return orig(); };
     assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code }), /Scanning is closed/);
     assert.equal(ctx.data.getPallet(ps[0].id).status, 'labeled');
     ctx.ns.openToLines = orig;
     ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: '' } });
-    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    const b = ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() }).view.truck;
     ctx.run('truck_scan', { truckId: t.id, raw: ps[1].code });
     ctx.ns.openToLines = () => { ctx.data.updateLoad(ctx.data.getLoad(b.id), { status: 'departing', data: { claim: 'c1' } }); return orig(); };
     assert.throws(() => ctx.run('truck_move_here', { truckId: b.id, palletId: ps[1].id }), /Scanning is closed/);
@@ -735,7 +737,7 @@ test('fix3: a truck scan re-checks the truck right before loading the pallet', (
 test('fix3: the scan stack is not written over a truck that closed meanwhile; undo too', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 2, 'Jst', [L975]);
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code });
     const realUp = ctx.data.updatePallet;
     ctx.data.updatePallet = (p, patch) => { realUp(p, patch); ctx.data.updateLoad(ctx.data.getLoad(t.id), { status: 'departing', data: { claim: 'other' } }); };
@@ -776,7 +778,7 @@ test('fix3: the claim write carries depart, plan, alloc and writes', () => {
 test('fix4: an IF the office shipped after Ready stops the departure (if_gone) until a manager drops it', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 42, 'Jif', [L975]).concat(printLabels(ctx, 42, 'Jif2', [L975]));
-    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id }, false);
     const orig = ctx.ns.plannedIfs;
@@ -864,7 +866,7 @@ test('fix9: never-loaded flags live on the truck; unload view and dashboard read
 
 test('fix10: an empty truck cannot depart (its IF is empty, so it never gets to Ready)', () => {
     const ctx = setup();
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     assert.deepEqual(ctx.run('truck_verify', { truckId: t.id }, false).diffs.map(d => d.kind), ['if_empty']);
     const a = { truckId: t.id, trailer: '537224', seal: 'E10' };
     assert.throws(() => ctx.run('depart_preview', a, false), /Verify the load first/);
@@ -892,8 +894,8 @@ test('fix10: a truck emptied right after the claim goes to needs_fix, claim rele
 test('fix11: a load scan that is not a labeled pallet reads no TO lines and no truck list', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 3, 'Jcls', [L975]);
-    const a = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
-    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    const a = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
+    const b = ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() }).view.truck;
     ctx.run('truck_scan', { truckId: a.id, raw: ps[0].code });
     ctx.run('pallet_void', { palletId: ps[1].id }, false);
     const to = { n: 0 }, origTo = ctx.ns.openToLines;
@@ -904,7 +906,7 @@ test('fix11: a load scan that is not a labeled pallet reads no TO lines and no t
     assert.equal(res(ps[1].code).result, 'void');
     assert.equal(res('PLT99999').result, 'unknown');
     const o = ctx.run('truck_scan', { truckId: b.id, raw: ps[0].code });
-    assert.deepEqual([o.result, o.otherLabel], ['other_truck', 'IF9001']);
+    assert.deepEqual([o.result, o.otherLabel], ['other_truck', a.label]);
     assert.deepEqual([to.n, lists.n], [0, 0]);
     assert.equal(res(ps[2].code).result, 'ok');
     assert.ok(to.n === 1 && lists.n >= 1);
@@ -983,7 +985,7 @@ test('take off mode: pallet back to labeled, logged; not on truck → refused; r
 test('recheck: an office fix in NetSuite turns a needs_fix truck ready', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 40);
-    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'needs_fix');
+    assert.equal(ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false).view.truck.status, 'needs_fix');
     const real = ctx.ns.plannedIfs;
     ctx.ns.plannedIfs = () => real().map(f => f.ifId === '9001' ? Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: 480 })] }) : f);
     const r = ctx.run('trucks_recheck', {}, false);
@@ -994,7 +996,7 @@ test('recheck: an office fix in NetSuite turns a needs_fix truck ready', () => {
 test('recheck lists every ready truck with its verify time, so a device that missed nowReady still alerts', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     const real = ctx.ns.plannedIfs;
     ctx.ns.plannedIfs = () => real().map(f => f.ifId === '9001' ? Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: 480 })] }) : f);
     const r1 = ctx.run('trucks_recheck', {}, false);
@@ -1007,7 +1009,7 @@ test('recheck lists every ready truck with its verify time, so a device that mis
 test('recheck does not list a truck that is not ready', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     assert.deepEqual(ctx.run('trucks_recheck', {}, false).ready, []);
 });
 
@@ -1037,9 +1039,9 @@ test('a pallet on a ready truck reads other_truck; move here sends both trucks t
     const ctx = setup();
     const { t: a, ps } = truckWith(ctx, 42);
     assert.equal(ctx.run('truck_verify', { truckId: a.id }, false).view.truck.status, 'ready');
-    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    const b = ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() }).view.truck;
     const r = ctx.run('truck_scan', { truckId: b.id, raw: ps[0].code }, false);
-    assert.deepEqual([r.result, r.otherLabel], ['other_truck', 'IF9001']);
+    assert.deepEqual([r.result, r.otherLabel], ['other_truck', a.label]);
     ctx.run('truck_move_here', { truckId: b.id, palletId: ps[0].id }, false);
     assert.equal(ctx.data.getLoad(a.id).status, 'loading');
     ctx.data.updateLoad(ctx.data.getLoad(a.id), { status: 'ready' });
@@ -1066,12 +1068,14 @@ test('verify saves the fresh NetSuite IFs; refuses when the truck changed meanwh
 });
 
 // ── Verify Load review fixes (I1, I2, M4) ──
+function noTrailer(ctx, id) { ctx.data.updateLoad(ctx.data.getLoad(id), { data: { trailer: '' } }); }
 function goneIf(ctx, ifId) { const real = ctx.ns.plannedIfs; ctx.ns.plannedIfs = () => real().filter(f => f.ifId !== ifId); }
 
 test('I1: a gone IF persists across verifies and a recheck until a manager drops it', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 43);
     ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' });                // manager
+    noTrailer(ctx, t.id);                                                    // an old truck: labeled by its IF numbers
     goneIf(ctx, '9002');
     const kinds = r => r.diffs.map(d => d.kind);
     assert.ok(kinds(ctx.run('truck_verify', { truckId: t.id }, false)).includes('if_gone'));
@@ -1087,6 +1091,7 @@ test('I1: a gone IF persists across verifies and a recheck until a manager drops
 test('I1: a truck whose only IF is gone keeps its label; the manager drops it; then no IFs and no_if for the load', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 42);
+    noTrailer(ctx, t.id);                                                    // an old truck: labeled by its IF numbers
     goneIf(ctx, '9001');
     const v = ctx.run('truck_verify', { truckId: t.id }, false);
     assert.deepEqual(v.diffs.map(d => d.kind).sort(), ['if_gone', 'no_if', 'no_ifs']);
@@ -1106,7 +1111,7 @@ test('I1: the last IF can be dropped only when it is gone', () => {
 test('I2: a recheck with no change writes nothing and keeps verify at/by', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id, actor: 'Ana' }, false);
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Ana', shortNote: 'short pick' }, false);
     const before = ctx.data.getLoad(t.id).data.verify;
     const n = countCalls(ctx, 'updateLoad');
     const reads = countCalls(ctx, 'palletsByStatus');
@@ -1120,7 +1125,7 @@ test('I2: a recheck with no change writes nothing and keeps verify at/by', () =>
 test('I2: recheck reads planned IFs and TO lines once for all trucks', () => {
     const ctx = setup();
     const a = truckWith(ctx, 40).t, b = truckWith(ctx, 40, '9002').t;
-    ctx.run('truck_verify', { truckId: a.id }, false); ctx.run('truck_verify', { truckId: b.id }, false);
+    ctx.run('truck_verify', { truckId: a.id, shortNote: 'short pick' }, false); ctx.run('truck_verify', { truckId: b.id, shortNote: 'short pick' }, false);
     const calls = { p: 0, o: 0 }, rp = ctx.ns.plannedIfs, ro = ctx.ns.openToLines;
     ctx.ns.plannedIfs = () => { calls.p++; return rp(); };
     ctx.ns.openToLines = () => { calls.o++; return ro(); };
@@ -1131,7 +1136,7 @@ test('I2: recheck reads planned IFs and TO lines once for all trucks', () => {
 test('M4: recheck skips a truck that throws a user error and still returns the others', () => {
     const ctx = setup();
     const a = truckWith(ctx, 40).t, b = truckWith(ctx, 40, '9002').t;
-    ctx.run('truck_verify', { truckId: a.id }, false); ctx.run('truck_verify', { truckId: b.id }, false);
+    ctx.run('truck_verify', { truckId: a.id, shortNote: 'short pick' }, false); ctx.run('truck_verify', { truckId: b.id, shortNote: 'short pick' }, false);
     const real = ctx.ns.plannedIfs;
     ctx.ns.plannedIfs = () => real().map(f => Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: 480 })] }));
     const getLoad = ctx.data.getLoad;
@@ -1149,8 +1154,8 @@ test('M4: a manager adds a non-suggested eligible IF; an IF on another truck is 
     const v = ctx.run('truck_verify', { truckId: t.id }, false);
     assert.ok(!v.suggestions.some(f => f.ifId === ifX));
     assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: ifX }, false), /not a suggested IF/);
-    assert.ok(ctx.run('truck_add_if', { truckId: t.id, ifId: ifX }).view.truck.label.includes('IF' + ifX));
-    ctx.run('truck_start', { ifIds: ['9002'] });
+    assert.ok(ctx.run('truck_add_if', { truckId: t.id, ifId: ifX }).view.lines.some(l => l.ifNum === 'IF' + ifX));
+    ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() });
     assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' }, false), /on another truck/);
     assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: '9002' }), /on another truck/);
 });
@@ -1224,7 +1229,7 @@ test('a pallet taken off right after the claim: re-verified from the claimed sta
 
 test('a truck with no live IF can never be ready; dropping its gone IF leaves no_ifs', () => {
     const ctx = setup();
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     const real = ctx.ns.plannedIfs;
     ctx.ns.plannedIfs = () => real().filter(f => f.ifId !== '9001');
     ctx.run('truck_verify', { truckId: t.id }, false);
@@ -1276,7 +1281,7 @@ test('depart_release is refused once a stamp landed, and while the departure is 
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'on';
     const ps = printLabels(ctx, 42, 'Jrl', [L975]).concat(printLabels(ctx, 42, 'Jrl2', [L975]));
-    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id }, false);
     ctx.tx._t.failOn = 'if_stamp:9002';
@@ -1338,7 +1343,7 @@ test('truck_correct: manager only; qty mode writes if_qty and the truck verifies
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'qty';
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     assert.throws(() => ctx.run('truck_correct', { truckId: t.id }, false), /Managers only/);
     const real = ctx.ns.plannedIfs;
     ctx.tx._t.onApply = op => { if (op.op === 'if_qty') ctx.ns.plannedIfs = () => real().map(f => f.ifId === '9001' ? Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: op.to })] }) : f); };
@@ -1351,7 +1356,7 @@ test('truck_correct: manager only; qty mode writes if_qty and the truck verifies
 test('truck_correct: off mode is plan-only; on mode creates a Packed add-on IF and attaches it', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 42, 'Jc1', [L975]).concat(printLabels(ctx, 1, 'Jc2', [{ item: '11', sku: 'YSN201', cfg: 'A', pcs: 120 }]));
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id });
     const off = ctx.run('truck_correct', { truckId: t.id });
@@ -1368,7 +1373,7 @@ test('truck_correct: off mode is plan-only; on mode creates a Packed add-on IF a
 test('approvals lists needs_fix trucks with instruction text', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     const a = ctx.run('approvals');
     assert.equal(a.needsFix[0].truck.id, t.id);
     assert.match(a.needsFix[0].diffs[0].text, /IF needs −24/);
@@ -1377,7 +1382,7 @@ test('approvals lists needs_fix trucks with instruction text', () => {
 test('approvals needs_fix entry says who verified and when (name, never an object)', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     const v = ctx.data.getLoad(t.id).data.verify;
     let e = ctx.run('approvals').needsFix[0];
     assert.equal(typeof e.verifiedBy, 'string');
@@ -1393,7 +1398,7 @@ test('truck_correct: a refused write surfaces correctError, keeps the truck need
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'qty';
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     assert.throws(() => ctx.run('truck_correct', { truckId: t.id, keys: ['nope'] }), /Nothing the portal can correct/);
     ctx.tx._t.failOn = 'if_qty:9001:975';
     assert.throws(() => ctx.run('truck_correct', { truckId: t.id }), /^Error: Correction refused: .*fix it in NetSuite/);
@@ -1403,14 +1408,14 @@ test('truck_correct: a refused write surfaces correctError, keeps the truck need
     assert.deepEqual(x.data.corrections.map(k => k.key), ['if_short:9001:975']);
     assert.equal(x.data.corrections[0].by.name, 'Jack K');
     assert.match(ctx.run('approvals').needsFix[0].correctError, /IF changed/);
-    assert.throws(() => ctx.run('truck_correct', { truckId: ctx.run('truck_start', { ifIds: ['9002'] }).view.truck.id }), /needs a fix|Verify/);
+    assert.throws(() => ctx.run('truck_correct', { truckId: ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() }).view.truck.id }), /needs a fix|Verify/);
 });
 
 test('truck_correct on mode: the created Packed IF is attached and kept when NetSuite returns it', () => {
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'on';
     const ps = printLabels(ctx, 42, 'Jd1', [L975]).concat(printLabels(ctx, 1, 'Jd2', [LINE201]));
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id });
     const real = ctx.ns.plannedIfs;
@@ -1427,7 +1432,7 @@ test('truck_correct: a later correction of the same IF item with new numbers is 
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'qty';
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     ctx.run('truck_correct', { truckId: t.id });                 // 504 → 480; NetSuite still says 504 in the fixture
     ctx.run('truck_verify', { truckId: t.id }, false);
     assert.equal(ctx.tx._t.ops.length, 1);
@@ -1440,7 +1445,7 @@ test('truck_correct: a later correction of the same IF item with new numbers is 
 test('report lists plan-only corrections as IF fix needed until the diff closes', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 42, 'Je1', [L975]).concat(printLabels(ctx, 1, 'Je2', [LINE201]));
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id });
     ctx.run('truck_correct', { truckId: t.id });
@@ -1455,7 +1460,7 @@ test('a dropped add-on IF is not created again: Correct skips it with a reason, 
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'on';
     const ps = printLabels(ctx, 42, 'Jf1', [L975]).concat(printLabels(ctx, 1, 'Jf2', [LINE201]));
-    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
     ctx.run('truck_verify', { truckId: t.id });
     ctx.run('truck_correct', { truckId: t.id });                  // creates IF 901; the fixture doesn't know it, so it reads as gone
@@ -1475,7 +1480,7 @@ test('verify to ready clears a stale correctError', () => {
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'qty';
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     ctx.tx._t.failOn = 'if_qty:9001:975';
     assert.throws(() => ctx.run('truck_correct', { truckId: t.id }), /Correction refused/);
     assert.ok(ctx.data.getLoad(t.id).data.correctError);
@@ -1529,7 +1534,7 @@ test('final2: re-pressing Verify on an unchanged truck keeps verify at/by; a cha
 test('final2: a poll flip records Auto re-check, not the polling device', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id, actor: 'Ana' }, false);
+    ctx.run('truck_verify', { truckId: t.id, actor: 'Ana', shortNote: 'short pick' }, false);
     matchIf(ctx, '9001', 480);
     ctx.run('trucks_recheck', { actor: 'Poller' }, false);
     const x = ctx.data.getLoad(t.id);
@@ -1543,7 +1548,7 @@ test('final3: every action resets the ns cache; truck_correct resets it again af
     ctx.data.db.settings.writeMode = 'qty';
     const { t } = truckWith(ctx, 40);
     n = 0;
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     assert.equal(n, 1);
     n = 0;
     ctx.tx._t.failOn = 'if_qty:9001:975';
@@ -1581,8 +1586,65 @@ test('final6: an if_qty correction with the same numbers is written again (the o
     const ctx = setup();
     ctx.data.db.settings.writeMode = 'qty';
     const { t } = truckWith(ctx, 40);
-    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     ctx.run('truck_correct', { truckId: t.id });                 // 504 → 480; the fixture still says 504 (reverted)
     ctx.run('truck_correct', { truckId: t.id });
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['if_qty', 504, 480], ['if_qty', 504, 480]]);
+});
+
+test('trailer: required, unique among open trucks, names the truck', () => {
+    const ctx = setup();
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9001'] }, false), /Enter the trailer/);
+    const v = ctx.run('truck_start', { ifIds: ['9001'], trailer: ' 537224 ' }, false).view;
+    assert.deepEqual([v.truck.label, v.trailer], ['Trailer 537224', '537224']);
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9002'], trailer: '537224' }, false), /already on an open truck/);
+    assert.equal(ctx.run('truck_planned', {}, false).open[0].label, 'Trailer 537224');
+});
+
+test('short note: required on a manual verify that finds a short; recheck does not need it', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 40, 'Jsn', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'S1' }, false).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false));
+    const r1 = ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.equal(r1.needsNote, true);
+    assert.equal(ctx.data.getLoad(t.id).status, 'loading');
+    const r2 = ctx.run('truck_verify', { truckId: t.id, shortNote: '  trailer full ' }, false);
+    assert.deepEqual([r2.view.truck.status, ctx.data.getLoad(t.id).data.shortNote.text], ['needs_fix', 'trailer full']);
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).needsNote, undefined);   // note already saved
+    assert.doesNotThrow(() => ctx.run('trucks_recheck', {}, false));
+});
+
+test('other items: add/remove while open, ignored by verify, ready → loading', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Joi', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'O1' }, false).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false));
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'ready');
+    const v = ctx.run('truck_other_add', { truckId: t.id, desc: 'Office desk', qty: 2 }, false).view;
+    assert.deepEqual([v.truck.status, v.otherItems.map(o => [o.desc, o.qty])], ['loading', [['Office desk', 2]]]);
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'ready');   // other items ignored
+    assert.throws(() => ctx.run('truck_other_add', { truckId: t.id, desc: '', qty: 1 }, false), /description/i);
+    assert.throws(() => ctx.run('truck_other_add', { truckId: t.id, desc: 'Chair', qty: 0 }, false), /count/i);
+    const id = v.otherItems[0].id;
+    assert.equal(ctx.run('truck_other_remove', { truckId: t.id, id }, false).view.otherItems.length, 0);
+});
+
+test('departure carries other items, clears the short note and frees the trailer; unload ticks them', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Jdep', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'D1' }, false).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false));
+    const oid = ctx.run('truck_other_add', { truckId: t.id, desc: 'Office desk', qty: 2 }, false).view.otherItems[0].id;
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'note kept until departure' }, false);
+    assert.equal(ctx.data.getLoad(t.id).data.shortNote.by, 'Miguel');
+    ctx.run('depart_confirm', { truckId: t.id, seal: '5249340' }, false);       // trailer defaults to the truck's
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.shortNote, x.data.depart.trailer, x.data.depart.otherItems.map(o => o.desc)], ['departed', null, 'D1', ['Office desk']]);
+    assert.throws(() => ctx.run('truck_other_add', { truckId: t.id, desc: 'Chair', qty: 1 }, false), /closed/);
+    assert.equal(ctx.run('truck_start', { ifIds: ['9002'], trailer: 'd1' }, false).view.trailer, 'd1');   // a departed truck no longer holds it
+    const u = ctx.run('unload_other_tick', { truckId: t.id, id: oid, on: true }, false).view;
+    assert.deepEqual(u.otherItems.map(o => [o.desc, o.in]), [['Office desk', true]]);
+    assert.equal(ctx.run('unload_other_tick', { truckId: t.id, id: oid, on: false }, false).view.otherItems[0].in, false);
+    assert.throws(() => ctx.run('unload_other_tick', { truckId: t.id, id: 'nope', on: true }, false), /not on this truck/);
 });

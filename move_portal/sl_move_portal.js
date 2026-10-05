@@ -137,6 +137,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function truckLabel(x) {
         const d = x.data || {};
         if (d.depart) return verify.memoFor(d.depart.truckNo, d.depart.day);
+        if (d.trailer) return 'Trailer ' + d.trailer;
         return (d.ifs || []).length ? d.ifs.map(f => f.ifNum).join(' + ') : 'No IFs: add one';     // gone IFs keep their number until dropped
     }
     function truckMap(list) { const o = {}; list.forEach(x => { o[x.id] = { status: x.status, label: truckLabel(x) }; }); return o; }
@@ -182,7 +183,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
-            trailers: c.S.trailers || ['537224', '416460', '105488', '522051', '211659'], carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c) };
+            trailers: c.S.trailers || ['537224', '416460', '105488', '522051', '211659'], carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
+            trailer: d.trailer || '', otherItems: d.otherItems || [], shortNote: d.shortNote || null };
     }
     // Stages where pallets may go on or off.
     const OPEN = [T.LOADING, T.NEEDS_FIX, T.READY];
@@ -275,6 +277,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = opt.truck || mustTruck(id);
         if (!isOpen(x)) throw closedErr(x);
         const chk = checkTruck(x, c, opt), r = chk.r, ps = chk.ps, trucks = chk.trucks, planned = chk.planned;
+        // A manual Verify that finds a short needs a note (once per truck); nothing is written without it.
+        if (opt.needNote && !opt.note && !x.data.shortNote && r.diffs.some(d => d.kind === 'if_short')) return { needsNote: true, r: r, x: x, ps: ps };
         const status = r.match ? T.READY : T.NEEDS_FIX;
         const changed = status !== x.status || ifSig(r.keep) !== ifSig(x.data.ifs) || diffSig(r.diffs) !== diffSig((x.data.verify || {}).diffs);
         const out = { r: r, x: x, ps: ps, trucks: trucks, planned: planned, changed: changed };
@@ -286,11 +290,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         // Unchanged: keep at/by, so a re-pressed Verify never raises a second ready alert. A poll-driven change is the auto re-check's.
         const old = x.data.verify || {}, by = !changed && old.at ? old.by : opt.auto ? AUTO_BY : c.actor;
         data.updateLoad(cur, { status: status, data: Object.assign({ ifs: r.keep, verify: { at: !changed && old.at ? old.at : c.now.stamp, by: by, diffs: r.diffs } },
-            status === T.READY ? { correctError: '' } : {}) });      // a ready truck has nothing left to correct
+            status === T.READY ? { correctError: '' } : {}, opt.note ? { shortNote: { text: opt.note, by: c.actor, at: c.now.stamp } } : {}) });      // a ready truck has nothing left to correct
         out.x = mustTruck(id);
         return out;
     }
     function verifyOut(v, c) {
+        if (v.needsNote) return { needsNote: true, diffs: pubDiffs(v.r.diffs, v.ps) };
         const view = truckView(v.x, c, { planned: v.planned, trucks: v.trucks });   // lists suggestions when the truck is needs_fix
         return { match: v.r.match, diffs: pubDiffs(v.r.diffs, v.ps), suggestions: view.suggestions, view: view };
     }
@@ -299,7 +304,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function departInput(a, x, c) {
         const pick = (k, d) => String(a[k] != null && a[k] !== '' ? a[k] : d || '').trim();
-        const inp = { trailer: pick('trailer'), seal: pick('seal'), carrier: pick('carrier', c.S.defaultCarrier || 'Armstrong Group') };
+        const inp = { trailer: pick('trailer', x.data.trailer), seal: pick('seal'), carrier: pick('carrier', c.S.defaultCarrier || 'Armstrong Group') };
         if (!inp.trailer) throw userErr('Enter the trailer #');
         if (!inp.seal) throw userErr('Enter the seal #');
         if (verify.sealUsed(allTrucks(), inp.seal, x.id)) throw userErr('Seal ' + inp.seal + ' was already used on another truck');
@@ -320,7 +325,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             plan = verify.planDeparture({ ifs: chk.r.ifs, pallets: ps, toLines: reservedToLines(x.id, chk.trucks, null, c),
                 stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } });
         } catch (e) { if (/^No open transfer order covers/.test(e.message || '')) throw userErr(e.message); throw e; }
-        return { truckNo: truckNo, palletKey: palletKey(ps), plan: plan, ifs: chk.r.ifs };
+        return { truckNo: truckNo, palletKey: palletKey(ps), plan: plan, ifs: chk.r.ifs, otherItems: x.data.otherItems || [] };
     }
     // Safety net: a matched load plans stamps only. Anything else is a mismatch, never a silent correction.
     function planMismatch(plan) {
@@ -587,9 +592,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             open: open.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt() };
     });
 
+    // A trailer is on one truck at a time until it leaves ('ship_pending' arrives with ship confirm).
+    const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, 'ship_pending', T.DEPARTING];
+    const normTrailer = t => String(t || '').trim().toUpperCase();
     act('truck_start', false, (a, c) => {
-        const ids = (a.ifIds || []).map(String);
+        const ids = (a.ifIds || []).map(String), trailer = String(a.trailer || '').trim();
+        if (!trailer) throw userErr('Enter the trailer #');
         if (!ids.length) throw userErr('Pick at least one IF');
+        if (data.loadsByStatus(TRAILER_BUSY).some(x => x.data && x.data.v3 && normTrailer(x.data.trailer) === normTrailer(trailer))) throw userErr('Trailer ' + trailer + ' is already on an open truck');
         const planned = ns.plannedIfs(), taken = {};
         allTrucks().forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
         const ifs = ids.map(id => {
@@ -599,7 +609,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             return f;
         });
         const id = data.createLoad({ number: ifs.map(f => f.ifNum).join('+').slice(0, 290), status: T.LOADING,
-            data: { v3: true, ifs: ifs, startedBy: c.actor, startedAt: c.now.stamp, stack: [] } });
+            data: { v3: true, ifs: ifs, trailer: trailer, startedBy: c.actor, startedAt: c.now.stamp, stack: [] } });
         return { view: truckView(mustTruck(id), c) };
     });
 
@@ -671,7 +681,33 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { view: truckView(mustTruck(x.id), c) };
     });
 
-    act('truck_verify', false, (a, c) => verifyOut(verifyTruck(a.truckId, c), c));
+    act('truck_verify', false, (a, c) => verifyOut(verifyTruck(a.truckId, c, { needNote: true, note: String(a.shortNote || '').trim() }), c));
+
+    // Other (non-inventory) items: typed lines, not in NetSuite, ignored by Verify. An edit sends a ready truck back to loading.
+    function editOther(id, fn) {
+        mustOpenTruck(id);
+        const cur = data.getLoad(id);                 // fresh read right before the write
+        if (!cur || !isOpen(cur)) throw closedErr(cur);
+        const patch = { data: { otherItems: fn((cur.data.otherItems || []).slice()) } };
+        if (cur.status === T.READY) patch.status = T.LOADING;
+        data.updateLoad(cur, patch);
+    }
+    act('truck_other_add', false, (a, c) => {
+        const desc = String(a.desc || '').trim(), qty = Number(a.qty);
+        if (!desc || desc.length > 80) throw userErr('Enter a description (1 to 80 characters)');
+        if (!Number.isInteger(qty) || qty < 1) throw userErr('Enter a count of 1 or more (whole number)');
+        const item = { id: String(Date.now()) + String(Math.floor(Math.random() * 10000)).padStart(4, '0'), desc: desc, qty: qty, by: c.actor, at: c.now.stamp };
+        editOther(a.truckId, list => list.concat([item]));
+        return { view: truckView(mustTruck(a.truckId), c) };
+    });
+    act('truck_other_remove', false, (a, c) => {
+        const id = String(a.id || '');
+        editOther(a.truckId, list => {
+            if (!list.some(o => String(o.id) === id)) throw userErr('That item is not on this truck');
+            return list.filter(o => String(o.id) !== id);
+        });
+        return { view: truckView(mustTruck(a.truckId), c) };
+    });
 
     // An office fix in NetSuite (IF qty edited, IF added) can turn a needs_fix truck ready without anyone scanning.
     act('trucks_recheck', false, (a, c) => {
@@ -846,7 +882,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // What the claim write carries, so a departing truck always has its plan (no claimed-but-unplanned state).
     function departData(d, inp, c) {
         return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
-            approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
+            approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '', otherItems: d.otherItems || [] }, inp), shortNote: null, plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
             bol: d.plan.bol, ifs: d.ifs, departPallets: d.palletKey, writes: {} };
     }
     // Re-verify and plan from a truck copy; a mismatch is thrown, so a claim is never taken (or is released) on a load that no longer matches.
@@ -919,7 +955,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const rp = verify.planReceipts({ alloc: x.data.alloc || [], pallets: ps, received: x.data.received || {}, stamp: x.data.depart || {}, seq: 0 });
         const got = ps.filter(p => p.status === VP.RECEIVED);
         const flagged = stillFlagged(x.data.flagged).filter(p => p.data.flaggedTruck === x.id);
-        return { truck: truckSummary(x, countsFromPallets(x.id, ps)), perIf: rp.perIf, expected: ps.filter(p => p.status !== VP.RECEIVED).map(p => pubPallet(p)),
+        const tick = x.data.otherItemsIn || {};
+        return { otherItems: ((x.data.depart || {}).otherItems || []).map(o => Object.assign({}, o, { in: !!tick[o.id] })),
+            truck: truckSummary(x, countsFromPallets(x.id, ps)), perIf: rp.perIf, expected: ps.filter(p => p.status !== VP.RECEIVED).map(p => pubPallet(p)),
             recent: got.slice(-5).reverse().map(p => pubPallet(p)), counts: { in: got.length, of: ps.length }, flagged: flagged.map(p => pubPallet(p)) };
     }
     // Never-loaded pallets are listed on the truck that flagged them (data.flagged) and read back by id.
@@ -981,6 +1019,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         receiveOn(x, p, was, c);
         data.logScan({ pallet: p.id, load: x.id, result: was === VP.MISSING ? 'late' : 'ok', data: { raw: p.code || '', mode: 'unload', actor: c.actor, at: c.now.stamp, via: 'other_truck' } });
         return { view: unloadView(mustTruck(x.id), c) };
+    });
+
+    // Other-item checklist at unload: informational only.
+    act('unload_other_tick', false, (a, c) => {
+        const cur = mustUnloadable(a.truckId), id = String(a.id || '');     // a fresh read right before the write
+        if (!((cur.data.depart || {}).otherItems || []).some(o => String(o.id) === id)) throw userErr('That item is not on this truck');
+        data.updateLoad(cur, { data: { otherItemsIn: Object.assign({}, cur.data.otherItemsIn, { [id]: a.on ? { by: c.actor, at: c.now.stamp } : null }) } });
+        return { view: unloadView(mustTruck(a.truckId), c) };
     });
 
     act('unload_damaged', false, (a, c) => {
