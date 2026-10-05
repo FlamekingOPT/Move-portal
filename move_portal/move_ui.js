@@ -166,7 +166,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (i && !(a && a.matches && a.matches('input,select,textarea'))) i.focus();
         }
         ACT.side = el => { S.side = el.dataset.v; put('mv_side', S.side); shell(); };
-        ACT.tab = el => { S.tab = el.dataset.v; S.truckId = null; S.unloadId = null; renderNav(); };
+        ACT.tab = el => { S.tab = el.dataset.v; S.truckId = null; S.unloadId = null; S.lastIn = null; renderNav(); };
         ACT.clearres = () => { const r = $('scanres'); if (r) r.innerHTML = ''; };
         ACT.typecode = el => { const i = $(el.dataset.v); if (i) { i.setAttribute('inputmode', 'text'); i.focus(); } };
 
@@ -448,13 +448,19 @@ h3{font-size:15px;margin:16px 0 8px}
                 v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td><b>' + num(x.scanned) + '</b> extra</td></tr>').join('') + '</table>';
             $('plist').innerHTML = v.pallets.slice().reverse().map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
                 (open ? '<div class="ac"><button data-act="tremove" data-id="' + p.id + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
-            $('tfoot').innerHTML = (t.error ? errBox(t.error) : '') + (t.pending ? flash('amber', '⏳ Waiting for manager approval', esc('Trailer ' + t.pending.trailer + ' · Seal ' + t.pending.seal), 'Requested by ' + esc(t.pending.by), '<button data-act="dcancel">Cancel request, keep loading</button>')
+            const keep = { d_trailer: ($('d_trailer') || {}).value, d_trailer2: ($('d_trailer2') || {}).value, d_seal: ($('d_seal') || {}).value, d_carrier: ($('d_carrier') || {}).value };
+            $('tfoot').innerHTML = (t.status === 'departing' ? '' : (t.error ? errBox(t.error) : '')) + (t.status === 'departing' ? flash('amber', 'Departing… a NetSuite write is pending', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals')
+                : t.pending ? flash('amber', '⏳ Waiting for manager approval', esc('Trailer ' + t.pending.trailer + ' · Seal ' + t.pending.seal), 'Requested by ' + esc(t.pending.by), '<button data-act="dcancel">Cancel request, keep loading</button>')
                 : open ? '<button class="btn ghost sm" data-act="tundo">↶ Undo last scan</button><div class="card"><h4>Departure</h4>' +
                     '<select class="inp" id="d_trailer"><option value="">Trailer #</option>' + v.trailers.map(x => '<option>' + esc(x) + '</option>').join('') + '<option value="__other">Other…</option></select>' +
                     '<input class="inp" id="d_trailer2" placeholder="Other trailer #" style="display:none"><input class="inp" id="d_seal" placeholder="Seal #">' +
                     '<input class="inp" id="d_carrier" value="' + esc(v.carrier) + '"><div id="dmsg"></div><button class="btn pri" data-act="dpreview">Review departure</button></div>'
-                : t.depart ? flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal), t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged') : '');
+                : t.depart && t.status === 'departed' ? flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal), t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged') : '');
             const sel = $('d_trailer');
+            if (sel && keep.d_trailer != null) {
+                sel.value = keep.d_trailer; $('d_trailer2').value = keep.d_trailer2 || ''; $('d_seal').value = keep.d_seal || ''; $('d_carrier').value = keep.d_carrier || '';
+                $('d_trailer2').style.display = sel.value === '__other' ? '' : 'none';
+            }
             if (sel) sel.onchange = () => { $('d_trailer2').style.display = sel.value === '__other' ? '' : 'none'; };
         }
         function departBody() {
@@ -478,10 +484,16 @@ h3{font-size:15px;margin:16px 0 8px}
                 planHtml(r.plan) + '<button class="btn go" data-act="dconfirm">' + (r.plan.needsManager && !isMgr ? 'Send to manager' : 'Confirm departure') + '</button>';
         };
         ACT.dconfirm = async el => {
+            if (!confirm('Confirm departure of ' + (S.tv ? S.tv.truck.label : 'this truck') + '? Trailer and seal go on the IFs.')) return;
             busy(el, true);
             const r = await api('depart_confirm', departBody());
             busy(el, false);
-            if (!r.ok) { tone('bad'); $('dmsg').innerHTML = errBox(r.error); return; }
+            if (!r.ok) {
+                tone('bad');
+                const g = await api('truck_get', { truckId: S.truckId });
+                if (g.ok && $('tfoot')) { paintTruck(g.view, true); $('scanres').innerHTML = errBox(r.error); } else $('dmsg').innerHTML = errBox(r.error);
+                return;
+            }
             tone('ok');
             paintTruck(r.view, true);
         };
@@ -507,6 +519,7 @@ h3{font-size:15px;margin:16px 0 8px}
         async function doTruckScan(v) {
             if (!S.who) { tone('bad'); $('scanres').innerHTML = errBox('Pick your name in "I am" first, then scan again.'); return; }
             const r = await api('truck_scan', { truckId: S.truckId, raw: v });
+            if (!$('scanres')) return;
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
             tone(r.tone);
             $('scanres').innerHTML = truckResultHtml(r);
@@ -678,7 +691,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 esc(t.depart ? 'Seal ' + t.depart.seal + ' · Trailer ' + t.depart.trailer : '') + ' · ' + t.received + ' of ' + t.pallets + ' in' + (t.missing ? ' · ' + t.missing + ' missing' : '') + '</div></div>').join('') ||
                 '<div class="muted">No trucks in transit</div>');
         }
-        ACT.openunload = el => { S.unloadId = el.dataset.id; unloadDetail(); };
+        ACT.openunload = el => { S.lastIn = null; S.unloadId = el.dataset.id; unloadDetail(); };
         ACT.backunload = () => { S.unloadId = null; unloadList(); };
         async function unloadDetail() {
             const r = await api('unload_get', { truckId: S.unloadId });
@@ -716,6 +729,7 @@ h3{font-size:15px;margin:16px 0 8px}
         async function doUnloadScan(v) {
             if (!S.who) { tone('bad'); $('scanres').innerHTML = errBox('Pick your name in "I am" first, then scan again.'); return; }
             const r = await api('unload_scan', { truckId: S.unloadId, raw: v });
+            if (!$('scanres')) return;
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
             tone(r.tone);
             if (r.result === 'ok' || r.result === 'late') S.lastIn = r.pallet.id;
@@ -724,7 +738,7 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         ACT.uother = async el => { const r = await api('unload_other', { palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('green', '✅ Received on its own truck') : errBox(r.error); };
         ACT.udamaged = async el => { const r = await api('unload_damaged', { palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('amber', 'Marked damaged') : errBox(r.error); };
-        ACT.uundo = async () => { const r = await api('unload_undo', { truckId: S.unloadId }); if (r.ok) paintUnload(r.view); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.uundo = async () => { const r = await api('unload_undo', { truckId: S.unloadId }); if (r.ok) { S.lastIn = null; paintUnload(r.view); } else $('scanres').innerHTML = errBox(r.error); };
         ACT.udone = async () => { const r = await api('unload_done', { truckId: S.unloadId }); $('scanres').innerHTML = r.ok ? flash('green', 'Sent to the manager for receipt approval') : errBox(r.error); };
 
         // ── Manager: approvals (v3) ──────────────────────────────────────
@@ -733,23 +747,25 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = await api('approvals');
             if (!r.ok) { main(errBox(r.error)); return; }
             const dep = r.departures.map(d => '<div class="card"><h4>🚚 ' + esc(d.truck.label) + ' · departure</h4><div class="muted">' + esc('Trailer ' + d.pending.trailer + ' · Seal ' + d.pending.seal + ' · by ' + d.pending.by) + '</div>' +
-                (d.plan ? planHtml(d.plan) + '<button class="btn go" data-act="apdepart" data-id="' + d.truck.id + '">Approve departure</button>' : errBox(d.error)) + '</div>').join('');
-            const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') + '<button class="btn pri" data-act="apretry" data-id="' + t.id + '">Retry</button></div>').join('');
+                (d.plan ? planHtml(d.plan) + '<button class="btn go" data-act="apdepart" data-id="' + d.truck.id + '" data-label="' + esc(d.truck.label) + '">Approve departure</button>' : errBox(d.error)) + '</div>').join('');
+            const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') + '<button class="btn pri" data-act="apretry" data-id="' + t.id + '" data-label="' + esc(t.label) + '">Retry</button></div>').join('');
             const rec = r.receipts.map(x => {
                 const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
-                if (!x.perIf) return '<div class="card warnc">' + head + errBox(x.error || 'Could not build the receipt') + '</div>';
+                if (!x.perIf) return '<div class="card warnc">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + errBox(x.error || 'Could not build the receipt') +
+                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '" data-label="' + esc(x.truck.label) + '">Approve receipt</button></div>';
                 const missing = x.missing || [];
                 return '<div class="card">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + (x.error ? errBox(x.error) : '') +
                     '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' +
                     x.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
                     (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
-                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
+                    '<button class="btn go" data-act="aprecv" data-id="' + x.truck.id + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
             }).join('');
             main((msg || '') + (dep + ret + rec || '<div class="muted">Nothing waiting for approval</div>'));
         };
-        ACT.apdepart = async el => { busy(el, true); const r = await api('depart_confirm', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
-        ACT.apretry = async el => { busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
+        ACT.apdepart = async el => { if (!confirm('Approve departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_confirm', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
+        ACT.apretry = async el => { if (!confirm('Retry departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
         ACT.aprecv = async el => {
+            if (!confirm('Approve receipt for ' + ((el.dataset.label) || 'this truck') + '? This posts in NetSuite when writes are on.')) return;
             busy(el, true);
             const r = await api('receipt_approve', { truckId: el.dataset.id });
             tone(r.ok ? 'ok' : 'bad');

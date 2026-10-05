@@ -30,3 +30,30 @@ test('v3 inbound/approval/report screens exist', () => {
     ['SCREENS.unload', 'SCREENS.approve', 'SCREENS.report', "api('unload_scan'", "api('receipt_approve'", "api('report'"].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
     ['SCREENS.recv ', 'SCREENS.toreceive', "api('scan_recv'", 'SCREENS.catchup'].forEach(s => assert.equal(src.indexOf(s), -1, 'still has ' + s));
 });
+
+test('every client api() action exists on the server and every data-act has an ACT handler', () => {
+    const fs = require('fs'), path = require('path');
+    const src = ui._clientMain.toString();
+    const server = fs.readFileSync(path.join(__dirname, '..', 'sl_move_portal.js'), 'utf8');
+    const apis = new Set(); let m;
+    const reApi = /api\('([a-z_]+)'/g;
+    while ((m = reApi.exec(src))) apis.add(m[1]);
+    assert.ok(apis.size > 10);
+    apis.forEach(a => assert.ok(server.indexOf("act('" + a + "'") !== -1, 'server lacks act ' + a));
+    const acts = new Set();
+    const reAct = /data-act="([a-z]+)"/g;
+    while ((m = reAct.exec(src))) acts.add(m[1]);
+    assert.ok(acts.size > 10);
+    acts.forEach(a => assert.ok(new RegExp('ACT\.' + a + ' =').test(src), 'no ACT handler for ' + a));
+});
+
+test('departing state, confirm prompts, null-screen guards', () => {
+    const src = ui._clientMain.toString();
+    assert.ok(src.indexOf("t.status === 'departed'") !== -1);
+    assert.ok(src.indexOf('Departing… a NetSuite write is pending') !== -1);
+    ['apdepart', 'apretry', 'aprecv', 'dconfirm'].forEach(n => {
+        const i = src.indexOf('ACT.' + n + ' =');
+        assert.ok(i !== -1 && src.slice(i, i + 400).indexOf('confirm(') !== -1, 'no confirm in ' + n);
+    });
+    assert.ok(src.indexOf("if (!$('scanres')) return;") !== -1);
+});
