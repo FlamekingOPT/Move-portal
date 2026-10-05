@@ -97,24 +97,12 @@ function makeFakeData(core) {
             return o;
         },
         movedByDay: () => { const o = {}; pallets().filter(p => p.shippedDay).forEach(p => { o[p.shippedDay] = (o[p.shippedDay] || 0) + 1; }); return o; },
-        palletCountsByLoad: ids => {
-            const o = {}, want = ids.map(String);
-            pallets().filter(p => want.indexOf(String(p.load)) !== -1).forEach(p => {
-                const l = o[p.load] = o[p.load] || {};
-                const s = l[p.status] = l[p.status] || { n: 0, pcs: 0 };
-                s.n++; s.pcs += p.pieces;
-            });
-            return o;
-        },
         findPalletsWhere: q => pallets().filter(p => matchQ(p, q)).map(toPallet),
         countPallets: q => pallets().filter(p => matchQ(p, q)).length,
 
         getLoad: id => (db.loads[String(id)] ? toLoad(db.loads[String(id)]) : null),
         getLoads: ids => ids.map(String).filter(id => db.loads[id]).map(id => toLoad(db.loads[id])),
         loadsByStatus: (st, limit) => loadsDesc().filter(l => st.indexOf(l.status) !== -1).slice(0, limit || 1e9).map(toLoad),
-        recentLoads: limit => loadsDesc().slice(0, limit).map(toLoad),
-        loadsByNumber: n => loadsDesc().filter(l => l.number === n).map(toLoad),
-        allLoadNumbers: () => Object.values(db.loads).map(l => l.number),
         createLoad: patch => {
             const id = String(nextId());
             const r = { id, number: '', status: '', to: '', if: '', receipts: [], data: {} };

@@ -78,28 +78,5 @@ define([], function () {
             '<body width="4in" height="6in" padding="0.15in" font-family="Helvetica">' + pages.join('<pbr/>') + '</body></pdf>';
     }
 
-    function loadSheetXml(m) {
-        const row = (a, b) => '<tr><td width="50%">' + a + '</td><td>' + b + '</td></tr>';
-        return HEAD + '<pdf><head><style>td, th { padding: 3pt; } th { border-bottom: 1pt solid #000; }</style></head>' +
-            '<body size="Letter" padding="0.5in" font-family="Helvetica" font-size="10pt">' +
-            '<p style="font-size:18pt;font-weight:bold">Move load sheet · ' + esc(m.number) + '</p>' +
-            '<table width="100%" style="margin-top:8pt">' +
-            row('From: <b>' + esc(m.fromName) + '</b>', 'To: <b>' + esc(m.toName) + '</b>') +
-            row('Transfer order: <b>' + esc(m.toNumber) + '</b>', 'Fulfillment: <b>' + esc(m.ifNumber) + '</b>') +
-            row('Door: ' + esc(m.door), 'Carrier: ' + esc(m.carrier)) +
-            row('Trailer: ' + esc(m.trailer), 'Seal: ' + esc(m.seal)) +
-            row('Approved: ' + esc(m.approvedAt), 'By: ' + esc(m.approvedBy)) + '</table>' +
-            '<p style="font-size:13pt;font-weight:bold;margin-top:12pt">SKU totals</p>' +
-            '<table width="60%"><tr><th align="left">SKU</th><th align="right">Pieces</th></tr>' +
-            m.totals.map(t => '<tr><td>' + esc(t.sku) + '</td><td align="right">' + esc(t.qty) + '</td></tr>').join('') + '</table>' +
-            '<p style="font-size:13pt;font-weight:bold;margin-top:12pt">Pallets (' + m.pallets.length + ')</p>' +
-            '<table width="100%"><tr><th align="left">#</th><th align="left">Label</th><th align="left">Contents</th><th align="right">Pcs</th></tr>' +
-            m.pallets.map((p, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(p.code) + '</td><td>' + esc(p.summary) +
-                '</td><td align="right">' + esc(p.pieces) + '</td></tr>').join('') + '</table>' +
-            '<p style="margin-top:30pt">Driver signature: ________________________  Date: ____________</p>' +
-            '<p style="margin-top:16pt">Received by: ________________________  Date: ____________</p>' +
-            '</body></pdf>';
-    }
-
-    return { esc: esc, skuSize: skuSize, labelsXml: labelsXml, loadSheetXml: loadSheetXml };
+    return { esc: esc, skuSize: skuSize, labelsXml: labelsXml };
 });

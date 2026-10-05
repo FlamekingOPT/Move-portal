@@ -149,17 +149,23 @@ function truckWith(ctx, n, ifId) {
     return { t, ps };
 }
 
-test('dashboard counts in-transit pallets and lists v3 trucks', () => {
+test('dashboard counts moved, remaining, days, in-transit, never-loaded and trucks', () => {
     const ctx = setup();
+    ctx.data.db.stock['35']['975'] = { onHand: 1000, avail: 1000 };
     const { t } = truckWith(ctx, 42);
     ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249330' }, false);
+    ctx.data.db.stock['35']['975'].onHand = 496;           // NetSuite drops on-hand when the IF ships
     printLabels(ctx, 1, 'Jlater');
     ctx.data.db.pallets[Object.keys(ctx.data.db.pallets).pop()].printedDay = '2026-10-01';   // stale label
+    const stray = printLabels(ctx, 1, 'Jstray', [L975]);
+    ctx.run('unload_scan', { truckId: t.id, raw: stray[0].code }, false);   // labeled, never loaded
     const r = ctx.run('dashboard');
-    assert.deepEqual([r.inTransit, r.labeled, r.received], [42, 1, 0]);
+    assert.deepEqual([r.m.moved, r.m.remaining, r.m.total, r.m.movedToday], [42, 62, 104, 42]);
+    assert.deepEqual([r.inTransit, r.labeled, r.received], [42, 2, 0]);
     assert.deepEqual(r.days[r.days.length - 1], { day: '2026-10-14', n: 42 });
     assert.equal(r.days[0].day, '2026-10-01');
-    assert.deepEqual([r.exc.missing, r.exc.stale, r.exc.neverLoaded], [0, 1, 0]);
+    assert.deepEqual([r.exc.missing, r.exc.stale, r.exc.noConfig, r.exc.neverLoaded], [0, 1, 0, 1]);
+    assert.equal(r.bySku[0].sku, 'YSN100');
     assert.equal(r.trucks.length, 1);
     assert.equal(r.trucks[0].status, 'departed');
     assert.equal(r.loads, undefined);

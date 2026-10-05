@@ -57,17 +57,6 @@ test('text is XML-escaped', () => {
     assert.equal(tpl.skuSize('YSNEZFSTND2.0'), 30);
 });
 
-test('load sheet lists totals, pallets and signature lines', () => {
-    const x = tpl.loadSheetXml({ number: 'MV-014', fromName: 'Riverside', toName: 'Tippecanoe', toNumber: 'TO9412', ifNumber: 'IF72031',
-        door: '4', carrier: 'Estes', trailer: '53-1', seal: '9', approvedAt: '10/14/2026 2:14 pm', approvedBy: 'Jack',
-        pallets: [{ code: 'PLT1', summary: 'YSN201 · A · 120', pieces: 120 }], totals: [{ sku: 'YSN201', qty: 120 }] });
-    assert.match(x, /Move load sheet · MV-014/);
-    assert.match(x, /TO9412/);
-    assert.match(x, /Pallets \(1\)/);
-    assert.match(x, /Driver signature/);
-    assert.match(x, /size="Letter"/);
-});
-
 // ── Task 12b ──
 test('barcode value carries code, SKU and pieces with tabs as XML char refs', () => {
     const x = tpl.labelsXml([lab('PLT9', A)], O);

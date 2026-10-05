@@ -4,14 +4,14 @@
  *
  * Move Portal (Riverside -> Tippecanoe warehouse move). A separate app from the
  * picker portal; shares no code with it.
- * Spec: docs/superpowers/specs/2026-09-27-move-portal-design.md
+ * Spec: docs/superpowers/specs/2026-10-01-move-portal-verification-design.md
  */
 define(['N/runtime', 'N/log', 'N/render', 'N/url', 'N/format',
         './move_core', './move_data', './move_tx', './move_label_template', './move_ui', './move_verify', './move_ns'],
 function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns) {
     'use strict';
 
-    const P = core.PALLET;
+    const VP = verify.VP;
     const MANAGER_ROLE_SCRIPT_IDS = ['customrole_warehouse_manager', 'customrole1009', 'customrole2522', 'customrole_warehouse_portal_manager'];
     const PRINT_CHUNK_MAX = 80;
     const CFG_CHUNK_MAX = 100;
@@ -96,7 +96,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (n > PRINT_CHUNK_MAX) throw userErr('Too many labels in one request (max ' + PRINT_CHUNK_MAX + ')');
         const f = lineFields(lines, c.S);
         for (let i = 0; i < n; i++) {
-            data.createPallet(Object.assign({ status: P.LABELED, job: job, printedDay: c.now.dayIso }, f,
+            data.createPallet(Object.assign({ status: VP.LABELED, job: job, printedDay: c.now.dayIso }, f,
                 { lines: lines, data: { source: source, printedAt: c.now.stamp, printedBy: c.actor, printCount: 1 } }));
         }
         return Math.max(existing, target);
@@ -119,7 +119,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // ── actions ──────────────────────────────────────────────────────────
     // ── v3 trucks (spec 2026-10-01) ──────────────────────────────────────
-    const T = verify.TRUCK, VP = verify.VP;
+    const T = verify.TRUCK;
     function writeMode(c) { return verify.normMode(c.S.writeMode); }
     function allTrucks() { return data.loadsByStatus(Object.values(T)).filter(x => x.data && x.data.v3); }
     function mustTruck(id) { const x = data.getLoad(id); if (!x || !x.data || !x.data.v3) throw userErr('Truck not found'); return x; }
@@ -339,30 +339,30 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     act('pallet_void', false, (a, c) => {
         const p = mustPallet(a.palletId);
-        if (p.status !== P.LABELED) throw userErr(p.code + ' is ' + p.status + '. Only labels not on a load can be voided.');
-        data.updatePallet(p, { status: P.VOID, data: { voidReason: String(a.reason || '').slice(0, 60), voidedBy: c.actor, voidedAt: c.now.stamp } });
+        if (p.status !== VP.LABELED) throw userErr(p.code + ' is ' + p.status + '. Only labels not on a load can be voided.');
+        data.updatePallet(p, { status: VP.VOID, data: { voidReason: String(a.reason || '').slice(0, 60), voidedBy: c.actor, voidedAt: c.now.stamp } });
         return {};
     });
 
     act('pallet_reprint', true, (a) => {
         const p = mustPallet(a.palletId);
-        if (p.status === P.VOID) throw userErr(p.code + ' is voided');
+        if (p.status === VP.VOID) throw userErr(p.code + ' is voided');
         data.updatePallet(p, { data: { printCount: (Number(p.data.printCount) || 1) + 1 } });
         return { ids: [p.id] };
     });
 
     act('pallet_relabel', true, (a, c) => {
         const p = mustPallet(a.palletId);
-        if (p.status === P.VOID && p.data.replacedBy) throw userErr(p.code + ' was already relabeled as ' + core.palletCode(p.data.replacedBy));
+        if (p.status === VP.VOID && p.data.replacedBy) throw userErr(p.code + ' was already relabeled as ' + core.palletCode(p.data.replacedBy));
         const job = 'RL' + p.id;
         let np = data.palletsByJob(job)[0];
         if (!np) {
-            if (p.status !== P.LABELED) throw userErr(p.code + ' is ' + p.status + '. Fix loaded pallets with Edit on the Load screen.');
+            if (p.status !== VP.LABELED) throw userErr(p.code + ' is ' + p.status + '. Fix loaded pallets with Edit on the Load screen.');
             createPalletsForJob(job, normalizeLines(a.lines, c.S), 1, 'relabel:' + p.id, c);
             np = data.palletsByJob(job)[0];
         }
-        if (p.status !== P.VOID) {
-            data.updatePallet(p, { status: P.VOID, data: { voidReason: 'relabeled', replacedBy: np.id, voidedBy: c.actor, voidedAt: c.now.stamp } });
+        if (p.status !== VP.VOID) {
+            data.updatePallet(p, { status: VP.VOID, data: { voidReason: 'relabeled', replacedBy: np.id, voidedBy: c.actor, voidedAt: c.now.stamp } });
         }
         return { job: job, code: np.code };
     });
@@ -400,11 +400,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const days = core.moveDays(c.S.start, end, c.S.skip || []).map(d => ({ day: d, n: moved[d] || 0 }));
         const trucks = allTrucks().slice(0, 15);
         const exc = {
-            missing: data.countPallets({ status: [P.MISSING] }),
-            neverLoaded: data.findPalletsWhere({ status: [P.LABELED, P.LOADED] }).filter(p => p.data.flag === 'never_loaded').length,
+            missing: data.countPallets({ status: [VP.MISSING] }),
+            neverLoaded: data.findPalletsWhere({ status: [VP.LABELED, VP.LOADED] }).filter(p => p.data.flag === 'never_loaded').length,
             damaged: data.countPallets({ damaged: true }),
-            edited: data.countPallets({ edited: true, status: [P.IN_TRANSIT, P.RECEIVED, P.MISSING] }),
-            stale: data.countPallets({ status: [P.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
+            edited: data.countPallets({ edited: true, status: [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING] }),
+            stale: data.countPallets({ status: [VP.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
             noConfig: sm.est.unknownItems.length
         };
         const skuOf = k => (sm.stock[k] ? sm.stock[k].sku : k);
@@ -412,9 +412,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             .sort((x, y) => y.palletsLeft - x.palletsLeft).slice(0, 20);
         return {
             m: Object.assign({}, m, { neededPerDay: isFinite(m.neededPerDay) ? m.neededPerDay : null }),
-            labeled: data.countPallets({ status: [P.LABELED, P.LOADED] }),
-            inTransit: data.countPallets({ status: [P.IN_TRANSIT, P.MISSING] }),
-            received: data.countPallets({ status: [P.RECEIVED] }),
+            labeled: data.countPallets({ status: [VP.LABELED, VP.LOADED] }),
+            inTransit: data.countPallets({ status: [VP.IN_TRANSIT, VP.MISSING] }),
+            received: data.countPallets({ status: [VP.RECEIVED] }),
             target: c.S.target, days: days, trucks: trucks.map(truckSummary), exc: exc, bySku: bySku,
             noConfigSkus: sm.est.unknownItems.map(skuOf)
         };
@@ -742,7 +742,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const q = ctx.request.parameters;
         if (!isManager()) { ctx.response.write('Managers only'); return; }
         const S = data.getSettings();
-        const ps = q.job ? data.palletsByJob(String(q.job)).filter(p => p.status !== P.VOID) : data.palletsByIds(String(q.ids || '').split(','));
+        const ps = q.job ? data.palletsByJob(String(q.job)).filter(p => p.status !== VP.VOID) : data.palletsByIds(String(q.ids || '').split(','));
         if (!ps.length) { ctx.response.write('No labels to print'); return; }
         const xml = tpl.labelsXml(ps.map(p => ({ code: p.code, lines: p.lines, pieces: p.pieces, edited: p.edited, printedDay: p.printedDay,
             by: p.data.printedBy || '', summary: p.summary })), { codeMode: S.labelCode, header: q.header === '1', fromName: S.fromName, toName: S.toName });

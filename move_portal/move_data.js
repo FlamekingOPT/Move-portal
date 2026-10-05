@@ -201,23 +201,6 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
             });
         return out;
     }
-    function palletCountsByLoad(loadIds) {
-        const out = {}, u = uniq(loadIds);
-        if (!u.length) return out;
-        search.create({ type: REC.PALLET, filters: [[PF.load, 'anyof', u]],
-            columns: [search.createColumn({ name: PF.load, summary: search.Summary.GROUP }),
-                search.createColumn({ name: PF.status, summary: search.Summary.GROUP }),
-                search.createColumn({ name: 'internalid', summary: search.Summary.COUNT }),
-                search.createColumn({ name: PF.pieces, summary: search.Summary.SUM })] })
-            .run().each(r => {
-                const l = String(r.getValue({ name: PF.load, summary: search.Summary.GROUP }));
-                const st = r.getValue({ name: PF.status, summary: search.Summary.GROUP });
-                (out[l] = out[l] || {})[st] = { n: Number(r.getValue({ name: 'internalid', summary: search.Summary.COUNT })) || 0,
-                    pcs: Number(r.getValue({ name: PF.pieces, summary: search.Summary.SUM })) || 0 };
-                return true;
-            });
-        return out;
-    }
     function whereFilters(q) {
         const f = [];
         const add = x => { if (f.length) f.push('AND'); f.push(x); };
@@ -247,9 +230,6 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
     function getLoad(id) { return Number(id) > 0 ? findLoads([['internalid', 'anyof', String(id)]])[0] || null : null; }
     function getLoads(ids) { const u = uniq(ids); return u.length ? findLoads([['internalid', 'anyof', u]]) : []; }
     function loadsByStatus(statuses, limit) { return findLoads(anyText(LF.status, statuses), limit); }
-    function recentLoads(limit) { return findLoads([], limit); }
-    function loadsByNumber(n) { return findLoads([[LF.number, 'is', String(n)]]); }
-    function allLoadNumbers() { return all(search.create({ type: REC.LOAD, columns: [search.createColumn({ name: LF.number })] })).map(r => r.getValue(LF.number)); }
     function loadValues(patch, base) {
         const v = {};
         Object.keys(patch).forEach(k => {
@@ -301,8 +281,8 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
         itemLookup, itemInfo, skuMap, locationStock,
         configsByItem, countConfigsInBatch, createConfig, deleteConfigsNotInBatch,
         getPallet, palletsByIds, palletsByJob, palletsByStatus, palletsByLoad, countByJob, createPallet, updatePallet,
-        labeledPiecesByItem, movedByDay, palletCountsByLoad, findPalletsWhere, countPallets,
-        getLoad, getLoads, loadsByStatus, recentLoads, loadsByNumber, allLoadNumbers, createLoad, updateLoad,
+        labeledPiecesByItem, movedByDay, findPalletsWhere, countPallets,
+        getLoad, getLoads, loadsByStatus, createLoad, updateLoad,
         logScan, createReq, getReq, findReqs, updateReq, tranids
     };
 });

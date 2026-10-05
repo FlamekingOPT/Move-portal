@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadAmd } = require('./amd');
 const core = loadAmd('move_core.js');
+const verify = loadAmd('move_verify.js', {});
 const P = core.PALLET;
 
 test('parseScan accepts PLT codes in any case and rejects everything else', () => {
@@ -51,6 +52,7 @@ test('pcsMap and defaultPcs', () => {
     assert.deepEqual(core.pcsMap(cfg), { '11': { A: 120, B: 60 }, '12': { A: 60 } });
     assert.deepEqual(core.defaultPcs(cfg), { '11': 60, '12': 60 });
     assert.equal(P.LABELED, 'labeled');
+    assert.deepEqual(core.PALLET, verify.VP);
     assert.equal(P.IN_TRANSIT, 'in_transit');
     assert.equal(P.SHIPPED, undefined);
 });

@@ -30,5 +30,4 @@ test('fake data: loads keep string ids and merge data', () => {
     d.updateLoad(L, { status: 'ready', receipts: ['9'], data: { readyBy: 'M' } });
     L = d.getLoad(id);
     assert.deepEqual([L.status, L.receipts, L.data.door, L.data.readyBy], ['ready', ['9'], '4', 'M']);
-    assert.deepEqual(d.allLoadNumbers(), ['MV-001']);
 });

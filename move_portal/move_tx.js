@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NModuleScope Public
  *
- * Move Portal: NetSuite transactions (Item Fulfillment and Item Receipt writes (see apply)).
+ * Move Portal: NetSuite transactions (Item Fulfillment and Item Receipt writes via apply).
  * Called only from manager actions in sl_move_portal.js. The test double is test/fake_tx.js.
  */
 define(['N/record', 'N/search'], function (record, search) {
@@ -91,6 +91,7 @@ define(['N/record', 'N/search'], function (record, search) {
         setLines(r, op.lines);
         return String(r.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
+    // if_qty / if_stamp re-read the IF and refuse if it changed; if_create / receipt rely on runOps done-keys
     function apply(op) {
         if (op.op === 'if_qty') return setIfItemQty(op);
         if (op.op === 'if_stamp') return stampShip(op);
