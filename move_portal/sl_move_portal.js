@@ -15,7 +15,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     const MANAGER_ROLE_SCRIPT_IDS = ['customrole_warehouse_manager', 'customrole1009', 'customrole2522', 'customrole_warehouse_portal_manager'];
     const PRINT_CHUNK_MAX = 80;
     const CFG_CHUNK_MAX = 100;
-    const STALE_MS = 10 * 60 * 1000;   // above the Suitelet time limit, so a Retry can't take over a still-running request
+    const STALE_MS = 10 * 60 * 1000;
+    const STACK_MAX = 30;                // undo stacks live in the truck JSON: keep them small   // above the Suitelet time limit, so a Retry can't take over a still-running request
 
     // ── shared helpers ───────────────────────────────────────────────────
     function userErr(msg) { const e = new Error(msg); e.user = true; return e; }
@@ -136,11 +137,25 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const est = f.lines.reduce((a, l) => a + (dp[l.item] ? Math.ceil(l.qty / dp[l.item]) : 0), 0);
         return { ifId: f.ifId, ifNum: f.ifNum, status: f.status, toNum: f.toNum, trandate: f.trandate, lines: f.lines, pcs: pcs, estPallets: est };
     }
-    function truckSummary(x) {
-        const ps = data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
+    // counts = data.palletStatusCounts(ids) run once by the caller for every truck it lists; without it, one grouped search.
+    function cnt(counts, id, st) { const b = (counts || {})[String(id)] || {}; return b[st] ? b[st].n : 0; }
+    function pcsOf(counts, id, sts) { const b = (counts || {})[String(id)] || {}; return sts.reduce((a, st) => a + (b[st] ? b[st].pcs : 0), 0); }
+    function countsFromPallets(id, ps) {
+        const b = {};
+        ps.forEach(p => { const c = (b[p.status] = b[p.status] || { n: 0, pcs: 0 }); c.n++; c.pcs += Number(p.pieces) || 0; });
+        return { [String(id)]: b };
+    }
+    function truckSummary(x, counts) {
+        const k = counts || data.palletStatusCounts([x.id]), n = st => cnt(k, x.id, st);
         return { id: x.id, label: truckLabel(x), status: x.status, pending: x.data.pending || null, depart: x.data.depart || null,
-            error: x.data.error || '', pallets: ps.length, received: ps.filter(p => p.status === VP.RECEIVED).length,
-            missing: ps.filter(p => p.status === VP.MISSING || (x.status === T.RECEIVED && p.status === VP.IN_TRANSIT)).length };
+            error: x.data.error || '', pallets: n(VP.LOADED) + n(VP.IN_TRANSIT) + n(VP.RECEIVED) + n(VP.MISSING), received: n(VP.RECEIVED),
+            missing: n(VP.MISSING) + (x.status === T.RECEIVED ? n(VP.IN_TRANSIT) : 0) };
+    }
+    // Received pallets not yet in an approved receipt. Kept on the truck (data.unposted); a pre-flag truck falls back to a search.
+    function unpostedOf(x, counts) {
+        if (typeof x.data.unposted === 'number') return x.data.unposted;
+        if (!x.data.recvSeq) return cnt(counts || data.palletStatusCounts([x.id]), x.id, VP.RECEIVED);
+        return data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).length;
     }
     function truckView(x, c) {
         const d = x.data || {}, dp = defPcs(c);
@@ -150,7 +165,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         (d.ifs || []).forEach(f => f.lines.forEach(l => lines.push({ ifNum: f.ifNum, item: l.item, sku: l.sku, expected: l.qty,
             scanned: fill.alloc[f.ifId] ? fill.alloc[f.ifId][l.item] || 0 : 0, estPallets: dp[l.item] ? Math.ceil(l.qty / dp[l.item]) : null })));
         const extraIds = Object.keys(fill.left).filter(k => fill.left[k] > 0), sk = skuNames(extraIds);
-        return { truck: Object.assign(truckSummary(x), { bol: d.bol || null }), lines: lines,
+        return { truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
             trailers: c.S.trailers || ['537224', '416460', '105488', '522051', '211659'], carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c) };
@@ -406,7 +421,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const moved = data.movedByDay();
         const end = c.now.dayIso < c.S.target ? c.now.dayIso : c.S.target;
         const days = core.moveDays(c.S.start, end, c.S.skip || []).map(d => ({ day: d, n: moved[d] || 0 }));
-        const trucks = allTrucks().slice(0, 15);
+        const trucks = allTrucks().slice(0, 15), counts = data.palletStatusCounts(trucks.map(x => x.id));
         const exc = {
             missing: data.countPallets({ status: [VP.MISSING] }),
             neverLoaded: data.findPalletsWhere({ status: [VP.LABELED, VP.LOADED] }).filter(p => p.data.flag === 'never_loaded').length,
@@ -423,7 +438,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             labeled: data.countPallets({ status: [VP.LABELED, VP.LOADED] }),
             inTransit: data.countPallets({ status: [VP.IN_TRANSIT, VP.MISSING] }),
             received: data.countPallets({ status: [VP.RECEIVED] }),
-            target: c.S.target, days: days, trucks: trucks.map(truckSummary), exc: exc, bySku: bySku,
+            target: c.S.target, days: days, trucks: trucks.map(x => truckSummary(x, counts)), exc: exc, bySku: bySku,
             noConfigSkus: sm.est.unknownItems.map(skuOf)
         };
     });
@@ -431,8 +446,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_planned', false, (a, c) => {
         const trucks = allTrucks(), taken = {}, dp = defPcs(c);
         trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
+        const open = trucks.filter(x => x.status === T.LOADING || x.status === T.DEPARTING), counts = data.palletStatusCounts(open.map(x => x.id));
         return { planned: ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)),
-            open: trucks.filter(x => x.status === T.LOADING || x.status === T.DEPARTING).map(truckSummary), pulledAt: ns.pulledAt() };
+            open: open.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt() };
     });
 
     act('truck_start', false, (a, c) => {
@@ -557,7 +573,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const rp = verify.planReceipts({ alloc: x.data.alloc || [], pallets: ps, received: x.data.received || {}, stamp: x.data.depart || {}, seq: 0 });
         const got = ps.filter(p => p.status === VP.RECEIVED);
         const flagged = data.findPalletsWhere({ status: [VP.LABELED, VP.LOADED] }).filter(p => p.data.flag === 'never_loaded' && p.data.flaggedTruck === x.id);
-        return { truck: truckSummary(x), perIf: rp.perIf, expected: ps.filter(p => p.status !== VP.RECEIVED).map(p => pubPallet(p)),
+        return { truck: truckSummary(x, countsFromPallets(x.id, ps)), perIf: rp.perIf, expected: ps.filter(p => p.status !== VP.RECEIVED).map(p => pubPallet(p)),
             recent: got.slice(-5).reverse().map(p => pubPallet(p)), counts: { in: got.length, of: ps.length }, flagged: flagged.map(p => pubPallet(p)) };
     }
     function mustUnloadable(id) {
@@ -573,13 +589,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function receiveOn(x, p, prev, c) {
         data.updatePallet(p, { status: VP.RECEIVED, data: { receivedAt: c.now.stamp, receivedBy: c.actor } });
-        pushStack(mustTruck(x.id), { id: String(p.id), prev: prev }, 'rstack');
-        const cur = mustTruck(x.id);
-        if (cur.status === T.DEPARTED) data.updateLoad(cur, { status: T.RECEIVING });
+        const cur = mustTruck(x.id), d = cur.data;          // fresh read: stack and counters merge over the current copy
+        const patch = { data: { rstack: (d.rstack || []).concat([{ id: String(p.id), prev: prev }]).slice(-STACK_MAX),
+            unposted: typeof d.unposted === 'number' ? d.unposted + 1 : unpostedOf(cur) } };
+        if (prev === VP.MISSING) patch.data.missing = Math.max(0, (Number(d.missing) || 0) - 1);
+        if (cur.status === T.DEPARTED) patch.status = T.RECEIVING;
+        data.updateLoad(cur, patch);
     }
 
-    act('unload_list', false, () => ({ trucks: allTrucks().filter(x => x.status === T.DEPARTED || x.status === T.RECEIVING || (x.status === T.APPROVING && (x.data.error || stale(x))) ||
-        (x.status === T.RECEIVED && (truckSummary(x).missing > 0 || data.palletsByLoad(x.id, [VP.RECEIVED]).some(p => !p.data.postedSeq)))).map(truckSummary) }));
+    act('unload_list', false, () => {
+        const cand = allTrucks().filter(x => UNLOADABLE.indexOf(x.status) !== -1 || x.status === T.APPROVING);
+        const counts = data.palletStatusCounts(cand.map(x => x.id));
+        return { trucks: cand.map(x => ({ x: x, s: truckSummary(x, counts) })).filter(o => o.x.status === T.DEPARTED || o.x.status === T.RECEIVING ||
+            (o.x.status === T.APPROVING && (o.x.data.error || stale(o.x))) || (o.x.status === T.RECEIVED && (o.s.missing > 0 || unpostedOf(o.x, counts) > 0))).map(o => o.s) };
+    });
 
     act('unload_get', false, (a, c) => ({ view: unloadView(mustViewable(a.truckId), c) }));
 
@@ -615,11 +638,17 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     act('unload_undo', false, (a, c) => {
         const x = mustUnloadable(a.truckId), st = (x.data.rstack || []).slice();
+        let undone = null;
         while (st.length) {
             const e = st.pop(), p = data.getPallet(e.id);
-            if (p && p.status === VP.RECEIVED && p.loadId === x.id && !p.data.postedSeq) { data.updatePallet(p, { status: e.prev, damaged: false }); break; }
+            if (p && p.status === VP.RECEIVED && p.loadId === x.id && !p.data.postedSeq) { data.updatePallet(p, { status: e.prev, damaged: false }); undone = e; break; }
         }
-        data.updateLoad(mustTruck(x.id), { data: { rstack: st } });
+        const cur = mustTruck(x.id), patch = { rstack: st };
+        if (undone) {
+            patch.unposted = Math.max(0, (typeof cur.data.unposted === 'number' ? cur.data.unposted : unpostedOf(cur) + 1) - 1);
+            if (undone.prev === VP.MISSING) patch.missing = (Number(cur.data.missing) || 0) + 1;
+        }
+        data.updateLoad(cur, { data: patch });
         return { view: unloadView(mustTruck(x.id), c) };
     });
 
@@ -669,10 +698,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const planned = {}, transit = {};
         rp.recvIds.forEach(id => { planned[String(id)] = 1; });
         rp.transitIds.forEach(id => { transit[String(id)] = 1; });
-        data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => planned[String(p.id)] && !p.data.postedSeq).forEach(p => data.updatePallet(p, { data: { postedSeq: seq } }));
+        let unposted = 0;
+        data.palletsByLoad(x.id, [VP.RECEIVED]).forEach(p => {
+            if (p.data.postedSeq) return;
+            if (planned[String(p.id)]) data.updatePallet(p, { data: { postedSeq: seq } }); else unposted++;
+        });
         data.palletsByLoad(x.id, [VP.IN_TRANSIT]).filter(p => transit[String(p.id)]).forEach(p => data.updatePallet(p, { status: VP.MISSING }));
+        const missing = cnt(data.palletStatusCounts([x.id]), x.id, VP.MISSING);
         const fin = data.getLoad(x.id);
-        data.updateLoad(fin, { status: T.RECEIVED, data: { rplan: (fin.data.rplan || []).concat(rp.ops), prevStatus: '', received: rp.cumulative, recvSeq: seq, recvRequested: null, error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
+        data.updateLoad(fin, { status: T.RECEIVED, data: { rplan: (fin.data.rplan || []).concat(rp.ops), prevStatus: '', received: rp.cumulative, recvSeq: seq, recvRequested: null,
+            unposted: unposted, missing: missing, error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
         return { perIf: rp.perIf, missing: rp.missing, written: res.written, view: unloadView(mustTruck(x.id), c) };
     });
 
@@ -680,23 +715,25 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('approvals', true, (a, c) => {
         const trucks = allTrucks();
         const stuck = x => !!(x.data.error || stale(x));
+        const counts = data.palletStatusCounts(trucks.filter(x => x.status !== T.LOADING || x.data.pending).map(x => x.id));
+        const sum = x => truckSummary(x, counts);
         return {
             departures: trucks.filter(x => x.status === T.LOADING && x.data.pending).map(x => {
                 let plan = null, error = null;
                 try { plan = pubPlan(departPlan(x, x.data.pending, c).plan); } catch (e) { error = e.message; }
-                return { truck: truckSummary(x), pending: x.data.pending, plan: plan, error: error };
+                return { truck: sum(x), pending: x.data.pending, plan: plan, error: error };
             }),
             retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => {
                 const k = x.data.errorKey || '', op = k ? (x.data.plan || []).find(o => verify.opKey(o) === k) : null;
-                return Object.assign(truckSummary(x), { errorKey: k, errorOp: op ? { op: op.op, ifNum: op.ifNum || '', item: op.item || '', from: op.from, to: op.to } : null });
+                return Object.assign(sum(x), { errorKey: k, errorOp: op ? { op: op.op, ifNum: op.ifNum || '', item: op.item || '', from: op.from, to: op.to } : null });
             }),
             receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;
                 try {
-                    const unposted = data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).length;
+                    const unposted = unpostedOf(x, counts);
                     if (!isStuck && (!unposted || (x.status !== T.RECEIVED && !x.data.recvRequested))) return null;
                     const rp = receiptPlan(x);
-                    const o = { truck: truckSummary(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED };
+                    const o = { truck: sum(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED };
                     if (isStuck) o.stuck = true;
                     return o;
                 } catch (e) {
@@ -710,7 +747,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     act('report', true, (a, c) => {
-        const trucks = allTrucks().filter(x => x.data.depart);
+        const trucks = allTrucks().filter(x => x.data.depart), counts = data.palletStatusCounts(trucks.map(x => x.id));
         const ids = {};
         trucks.forEach(x => (x.data.alloc || []).forEach(al => Object.keys(al.lines).forEach(k => { ids[k] = 1; })));
         const rows = verify.shadowRows({ trucks: trucks, ifInfo: ns.ifInfo(), ifsByTo: ns.ifsByTo(), receipts: ns.receiptsByIf(), sku: skuNames(Object.keys(ids)) });
@@ -718,8 +755,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         rows.forEach(r => { if (r.ok === false) diffsBy[r.truck] = (diffsBy[r.truck] || 0) + 1; });
         trucks.forEach(x => {
             const dd = days[x.data.depart.day] = days[x.data.depart.day] || { day: x.data.depart.day, trucks: 0, pallets: 0, pieces: 0, diffs: 0 };
-            const ps = data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
-            dd.trucks++; dd.pallets += ps.length; dd.pieces += ps.reduce((s, p) => s + p.pieces, 0);
+            const sts = [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING];
+            dd.trucks++; dd.pallets += sts.reduce((s, st) => s + cnt(counts, x.id, st), 0); dd.pieces += pcsOf(counts, x.id, sts);
             dd.diffs += diffsBy[truckLabel(x)] || 0;
         });
         return { rows: rows, days: Object.values(days).sort((p, q) => (p.day < q.day ? 1 : -1)), pulledAt: ns.pulledAt(), writeMode: writeMode(c) };

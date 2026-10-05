@@ -52,3 +52,11 @@ test('local store round-trips db to a file', () => {
         assert.throws(() => makeLocalStore(core, f), /corrupted.*mv-store-/);
     } finally { try { fs.unlinkSync(f); } catch (e) {} try { fs.unlinkSync(f + '.tmp'); } catch (e) {} }
 });
+
+test('fake data: palletStatusCounts groups by load and status with pieces', () => {
+    const d = makeFakeData(core);
+    const mk = (load, status, pieces) => d.createPallet({ status, load, pieces, lines: [], data: {} });
+    mk('7', 'loaded', 12); mk('7', 'loaded', 10); mk('7', 'received', 5); mk('8', 'missing', 3); mk('9', 'loaded', 1);
+    assert.deepEqual(d.palletStatusCounts(['7', '8']), { 7: { loaded: { n: 2, pcs: 22 }, received: { n: 1, pcs: 5 } }, 8: { missing: { n: 1, pcs: 3 } } });
+    assert.deepEqual(d.palletStatusCounts([]), {});
+});

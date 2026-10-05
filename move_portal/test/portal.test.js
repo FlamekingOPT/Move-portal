@@ -710,3 +710,62 @@ test('fix1: only a refused IF quantity edit can be skipped', () => {
     assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'K2' }), /NetSuite write failed/);
     assert.throws(() => ctx.run('depart_skip_write', { truckId: t.id, key: 'if_stamp:9001' }), /Only an IF quantity edit/);
 });
+
+function extraIfs(ctx, n) {                                // more planned IFs (12 pcs of YSN100 each, on TO600)
+    const orig = ctx.ns.plannedIfs;
+    const more = Array.from({ length: n }, (_, i) => ({ ifId: String(9101 + i), ifNum: 'IF' + (9101 + i), status: 'B', trandate: '2026-10-05', toId: '600', toNum: 'TO600',
+        lines: [{ item: '975', sku: 'YSN100', qty: 12 }] }));
+    ctx.ns.plannedIfs = () => orig().concat(JSON.parse(JSON.stringify(more)));
+    return more.map(f => f.ifId);
+}
+function countCalls(ctx, name) {
+    const real = ctx.data[name], c = { n: 0, ids: [] };
+    ctx.data[name] = function (id) { c.n++; c.ids.push(String(id)); return real.apply(this, arguments); };
+    return c;
+}
+
+test('fix2: unposted and missing flags stay consistent through scan, undo, approval and a late arrival', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 3, 'F1');
+    const flags = () => { const d = ctx.data.getLoad(t.id).data; return [d.unposted, d.missing]; };
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false);
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[1].code }, false);
+    assert.deepEqual(flags(), [2, undefined]);
+    ctx.run('unload_undo', { truckId: t.id }, false);
+    assert.deepEqual(flags(), [1, undefined]);
+    ctx.run('receipt_approve', { truckId: t.id });
+    assert.deepEqual(flags(), [0, 2]);
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[2].code }, false);             // late
+    assert.deepEqual(flags(), [1, 1]);
+    ctx.run('unload_undo', { truckId: t.id }, false);
+    assert.deepEqual(flags(), [0, 2]);
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[2].code }, false);
+    ctx.run('receipt_approve', { truckId: t.id });
+    assert.deepEqual(flags(), [0, 1]);
+});
+
+test('fix2: unload_list and approvals do not search pallets per truck for fully received trucks', () => {
+    const ctx = setup();
+    const ids = extraIfs(ctx, 6);
+    const done = ids.slice(0, 5).map((id, i) => {
+        const d = departed(ctx, 1, 'FR' + i, id);
+        ctx.run('unload_scan', { truckId: d.t.id, raw: d.ps[0].code }, false);
+        ctx.run('receipt_approve', { truckId: d.t.id });
+        return d;
+    });
+    const open = departed(ctx, 1, 'FR9', ids[5]);
+    ctx.run('unload_scan', { truckId: open.t.id, raw: open.ps[0].code }, false);
+    ctx.run('unload_done', { truckId: open.t.id }, false);
+    const byLoad = countCalls(ctx, 'palletsByLoad'), grouped = countCalls(ctx, 'palletStatusCounts');
+    const ul = ctx.run('unload_list', {}, false);
+    assert.deepEqual(ul.trucks.map(x => x.id), [open.t.id]);
+    assert.deepEqual([byLoad.n, grouped.n], [0, 1]);
+    const ap = ctx.run('approvals');
+    assert.deepEqual(ap.receipts.map(x => [x.truck.id, x.truck.pallets, x.truck.received]), [[open.t.id, 1, 1]]);
+    assert.ok(byLoad.n <= 1, 'palletsByLoad calls: ' + byLoad.ids.join(','));
+    assert.ok(byLoad.ids.every(id => id === open.t.id));
+    assert.equal(grouped.n, 2);
+    assert.equal(done.length, 5);
+    ['truck_planned', 'dashboard', 'report'].forEach(a => { const b = byLoad.n; ctx.run(a); assert.equal(byLoad.n, b, a + ' searched pallets per truck'); });
+    assert.equal(grouped.n, 5);
+});

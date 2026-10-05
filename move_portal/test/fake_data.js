@@ -99,6 +99,14 @@ function makeFakeData(core) {
         movedByDay: () => { const o = {}; pallets().filter(p => p.shippedDay).forEach(p => { o[p.shippedDay] = (o[p.shippedDay] || 0) + 1; }); return o; },
         findPalletsWhere: q => pallets().filter(p => matchQ(p, q)).map(toPallet),
         countPallets: q => pallets().filter(p => matchQ(p, q)).length,
+        palletStatusCounts: ids => {
+            const want = (ids || []).map(String), o = {};
+            pallets().filter(p => p.load && want.indexOf(String(p.load)) !== -1).forEach(p => {
+                const b = (o[String(p.load)] = o[String(p.load)] || {}), c = (b[p.status] = b[p.status] || { n: 0, pcs: 0 });
+                c.n++; c.pcs += Number(p.pieces) || 0;
+            });
+            return o;
+        },
 
         getLoad: id => (db.loads[String(id)] ? toLoad(db.loads[String(id)]) : null),
         getLoads: ids => ids.map(String).filter(id => db.loads[id]).map(id => toLoad(db.loads[id])),

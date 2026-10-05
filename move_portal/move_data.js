@@ -201,6 +201,22 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
             });
         return out;
     }
+    // One grouped search for many trucks: {loadId: {status: {n, pcs}}}.
+    function palletStatusCounts(loadIds) {
+        const out = {}, u = uniq(loadIds);
+        if (!u.length) return out;
+        const G = search.Summary.GROUP;
+        search.create({ type: REC.PALLET, filters: [[PF.load, 'anyof', u]],
+            columns: [search.createColumn({ name: PF.load, summary: G }), search.createColumn({ name: PF.status, summary: G }),
+                search.createColumn({ name: 'internalid', summary: search.Summary.COUNT }), search.createColumn({ name: PF.pieces, summary: search.Summary.SUM })] })
+            .run().each(r => {
+                const L = String(r.getValue({ name: PF.load, summary: G }) || ''), st = String(r.getValue({ name: PF.status, summary: G }) || '');
+                if (L) (out[L] = out[L] || {})[st] = { n: Number(r.getValue({ name: 'internalid', summary: search.Summary.COUNT })) || 0,
+                    pcs: Number(r.getValue({ name: PF.pieces, summary: search.Summary.SUM })) || 0 };
+                return true;
+            });
+        return out;
+    }
     function whereFilters(q) {
         const f = [];
         const add = x => { if (f.length) f.push('AND'); f.push(x); };
@@ -281,7 +297,7 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
         itemLookup, itemInfo, skuMap, locationStock,
         configsByItem, countConfigsInBatch, createConfig, deleteConfigsNotInBatch,
         getPallet, palletsByIds, palletsByJob, palletsByStatus, palletsByLoad, countByJob, createPallet, updatePallet,
-        labeledPiecesByItem, movedByDay, findPalletsWhere, countPallets,
+        labeledPiecesByItem, movedByDay, findPalletsWhere, countPallets, palletStatusCounts,
         getLoad, getLoads, loadsByStatus, createLoad, updateLoad,
         logScan, createReq, getReq, findReqs, updateReq, tranids
     };
