@@ -8,7 +8,7 @@
 define([], function () {
     'use strict';
 
-    const TRUCK = { LOADING: 'loading', NEEDS_FIX: 'needs_fix', READY: 'ready', DEPARTING: 'departing', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
+    const TRUCK = { LOADING: 'loading', NEEDS_FIX: 'needs_fix', READY: 'ready', SHIP_PENDING: 'ship_pending', DEPARTING: 'departing', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
     const VP = { LABELED: 'labeled', LOADED: 'loaded', IN_TRANSIT: 'in_transit', RECEIVED: 'received', MISSING: 'missing', VOID: 'void' };
     const PLANNED_IF_STATUS = ['A', 'B'];
     const OPEN_TO_STATUS = ['B', 'D', 'E'];
@@ -94,9 +94,11 @@ define([], function () {
     function normSeal(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
     function sealKey(s) { return String(s == null ? '' : s).toUpperCase().replace(/^\s*SEAL\s*:?\s*/, '').replace(/\s+/g, ''); }
     function departOf(t) { return (t && t.data && t.data.depart) || null; }
+    // A seal is taken once a truck departed with it, or while the floor's Mark shipped holds it (shipReq).
+    function sealOf(t) { const d = departOf(t), q = t && t.data && t.data.shipReq; return d ? d.seal : q ? q.seal : null; }
     function sealUsed(trucks, seal, exceptId) {
         const n = sealKey(seal);
-        return !!n && (trucks || []).some(t => String(t.id) !== String(exceptId) && departOf(t) && sealKey(departOf(t).seal) === n);
+        return !!n && (trucks || []).some(t => String(t.id) !== String(exceptId) && sealOf(t) != null && sealKey(sealOf(t)) === n);
     }
     function truckNoForDay(trucks, dayIso, exceptId) {
         return 1 + (trucks || []).filter(t => String(t.id) !== String(exceptId) && departOf(t) && departOf(t).day === dayIso).length;
@@ -205,7 +207,7 @@ define([], function () {
         // data.corrections (needs_fix) are NOT reserved separately: the truck's loaded surplus is already placed and reserved below,
         // so adding them would double-count. Once a qty write lands, the IF qty covers it and the surplus drops to 0.
         const room = reserveToLines(o.toLines, res), out = Object.assign({}, res);
-        others.filter(t => [TRUCK.LOADING, TRUCK.NEEDS_FIX, TRUCK.READY].indexOf(t.status) !== -1).forEach(t => {
+        others.filter(t => [TRUCK.LOADING, TRUCK.NEEDS_FIX, TRUCK.READY, TRUCK.SHIP_PENDING].indexOf(t.status) !== -1).forEach(t => {
             const ifs = liveIfs(t.data.ifs);
             const fill = fillExpected(ifs, (o.loadedByTruck || {})[String(t.id)] || {});
             const sp = placeSurplus(ifs, fill.left, room), byIf = {};
@@ -228,7 +230,7 @@ define([], function () {
             case VP.IN_TRANSIT: return pt === me ? { result: 'ok', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
             case VP.MISSING: return pt === me ? { result: 'late', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
             case VP.RECEIVED: return pt === me ? { result: 'dup' } : Object.assign({ result: 'dup_other' }, ref);
-            case VP.LOADED: if (other.status === TRUCK.DEPARTING) return Object.assign({ result: 'locked' }, ref);
+            case VP.LOADED: if (other.status === TRUCK.DEPARTING || other.status === TRUCK.SHIP_PENDING) return Object.assign({ result: 'locked' }, ref);
                 return { result: 'never_loaded' };
             default: return { result: 'never_loaded' };
         }

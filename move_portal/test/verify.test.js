@@ -392,3 +392,16 @@ test('verifyLoad: a truck with no live IF is never a match (no_ifs)', () => {
     assert.deepEqual(g.diffs.map(d => d.kind), ['if_gone', 'no_ifs', 'no_if']);
     assert.deepEqual(v.correctionOps([{ key: 'no_ifs', kind: 'no_ifs' }]), []);
 });
+
+// ── rework Task 2: ship_pending ──
+test('ship_pending: reserves loaded surplus like ready; its shipReq seal is taken; its loaded pallets are locked at unload', () => {
+    assert.equal(T.SHIP_PENDING, 'ship_pending');
+    const o = { mode: 'off', toLines: TOS, loadedByTruck: { 1: { 975: 504 + 60 } } };
+    const asReady = v.reservationsFromTrucks(Object.assign({ trucks: [{ id: '1', status: T.READY, data: { v3: true, ifs: IFS } }] }, o));
+    assert.ok(Object.keys(asReady).length > 0);
+    assert.deepEqual(v.reservationsFromTrucks(Object.assign({ trucks: [{ id: '1', status: T.SHIP_PENDING, data: { v3: true, ifs: IFS } }] }, o)), asReady);
+    const pending = { id: '5', status: T.SHIP_PENDING, data: { v3: true, shipReq: { seal: 'SEAL: 52 50' } } };
+    assert.deepEqual([v.sealUsed([pending], '5250', '9'), v.sealUsed([pending], '5250', '5'), v.sealUsed([pending], '5251', '9')], [true, false, false]);
+    const r = v.classifyUnloadScan({ pallet: pal(1, VP.LOADED, '5', []), truckId: '7', trucks: { 5: { status: T.SHIP_PENDING, label: 'Trailer X' } } });
+    assert.equal(r.result, 'locked');
+});

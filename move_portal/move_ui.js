@@ -124,7 +124,7 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         function errBox(msg) { return flash('red', '❌ ' + esc(msg)); }
 
-        const PILL = { loading: ['Loading', 'p-blue'], needs_fix: ['⚠ Needs IF fix', 'p-amber'], ready: ['✅ Ready to ship', 'p-green'], departing: ['Departing…', 'p-amber'],
+        const PILL = { loading: ['Loading', 'p-blue'], needs_fix: ['⚠ Needs IF fix', 'p-amber'], ready: ['✅ Ready to ship', 'p-green'], ship_pending: ['Shipped by floor', 'p-amber'], departing: ['Departing…', 'p-amber'],
             departed: ['In transit', 'p-blue'], receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], error: ['Needs attention', 'p-red'] };
         // What Correct the IF does under each write mode (confirm text and card notes).
         const WM = { off: 'Plan only: fix in NetSuite', qty: 'Changes IF quantities in NetSuite (add-on IFs: office creates them)',
@@ -530,10 +530,10 @@ h3{font-size:15px;margin:16px 0 8px}
                 ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</span><button class="dbtn pri" ' + (mgr ? 'data-act="apaddif"' : 'data-act="taddif"') + ' data-id="' + esc(truckId) +
                 '" data-ifid="' + esc(f.ifId) + '" data-label="' + esc(f.ifNum) + '">Add to this truck</button></div>').join('') : '';
         }
+        // Mark shipped (rework Task 2): the trailer is the truck's; a manager confirms in Approvals. Task 4 moves this to the Shipments tab.
         function departForm(v) {
-            return '<select class="inp" id="d_trailer"><option value="">Trailer #</option>' + v.trailers.map(x => '<option>' + esc(x) + '</option>').join('') + '<option value="__other">Other…</option></select>' +
-                '<input class="inp" id="d_trailer2" placeholder="Other trailer #" style="display:none"><input class="inp" id="d_seal" placeholder="Seal #">' +
-                '<input class="inp" id="d_carrier" value="' + esc(v.carrier) + '"><div id="dmsg"></div><button class="btn pri" data-act="dpreview">Review departure</button>';
+            return '<input class="inp" id="d_seal" placeholder="Seal #"><input class="inp" id="d_carrier" value="' + esc(v.carrier) + '"><div id="dmsg"></div>' +
+                '<button class="btn go" data-act="dmark">🚚 Mark shipped</button>';
         }
         // One card per stage: loading → Verify; needs_fix → the diffs; ready → the departure form.
         function stageHtml(v) {
@@ -545,8 +545,9 @@ h3{font-size:15px;margin:16px 0 8px}
             if (st === 'needs_fix') return err + '<div class="card amberc"><h4>⚠ Needs IF fix</h4>' + when + diffList(vf.diffs) + sugHtml(v.suggestions, false, t.id) +
                 '<div class="muted">Keep loading or take pallets off, or wait for the office to fix the IF in NetSuite. A manager can correct it in Approvals.</div>' +
                 '<div class="row2"><button class="dbtn pri" data-act="tverify">Verify again</button><button class="dbtn gh" data-act="backtruck">← Other trucks</button></div></div>' + undo;
-            if (st === 'ready') return err + '<div class="card greenc"><h4>✅ Ready to ship</h4>' + when + '<div class="muted">The load matches its IFs. Enter the trailer and seal.</div>' +
+            if (st === 'ready') return err + '<div class="card greenc"><h4>✅ Ready to ship</h4>' + when + '<div class="muted">The load matches its IFs. Enter the seal #.</div>' +
                 departForm(v) + '</div>' + undo;
+            if (st === 'ship_pending') return flash('amber', '🚚 Marked shipped: waiting for a manager to confirm', esc('Seal ' + ((t.shipReq || {}).seal || '')));
             if (st === 'departing') return flash('amber', 'Departing… a NetSuite write is pending', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals');
             if (t.depart && t.status === 'departed') return err + flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal),
                 t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged');
@@ -567,14 +568,9 @@ h3{font-size:15px;margin:16px 0 8px}
                 v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td><b>' + num(x.scanned) + '</b> extra</td></tr>').join('') + '</table>';
             $('plist').innerHTML = v.pallets.slice().reverse().map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
                 (open ? '<div class="ac"><button data-act="tremove" data-id="' + esc(p.id) + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
-            const keep = { d_trailer: ($('d_trailer') || {}).value, d_trailer2: ($('d_trailer2') || {}).value, d_seal: ($('d_seal') || {}).value, d_carrier: ($('d_carrier') || {}).value };
+            const keep = { d_seal: ($('d_seal') || {}).value, d_carrier: ($('d_carrier') || {}).value };
             $('tfoot').innerHTML = stageHtml(v);
-            const sel = $('d_trailer');
-            if (sel && keep.d_trailer != null) {
-                sel.value = keep.d_trailer; $('d_trailer2').value = keep.d_trailer2 || ''; $('d_seal').value = keep.d_seal || ''; $('d_carrier').value = keep.d_carrier || '';
-                $('d_trailer2').style.display = sel.value === '__other' ? '' : 'none';
-            }
-            if (sel) sel.onchange = () => { $('d_trailer2').style.display = sel.value === '__other' ? '' : 'none'; };
+            if ($('d_seal') && keep.d_seal != null) { $('d_seal').value = keep.d_seal || ''; $('d_carrier').value = keep.d_carrier || ''; }
         }
         ACT.tverify = async el => {
             if (needWho()) return;
@@ -602,17 +598,7 @@ h3{font-size:15px;margin:16px 0 8px}
             $('scanres').innerHTML = flash(r.match ? 'green' : 'amber', '➕ ' + esc(el.dataset.label) + ' added',
                 r.match ? 'The load matches its IFs: ready to ship' : 'Still needs an IF fix: see the card below');
         };
-        function departBody() {
-            const sel = $('d_trailer').value;
-            return { truckId: S.truckId, trailer: sel === '__other' ? $('d_trailer2').value : sel, seal: $('d_seal').value, carrier: $('d_carrier').value };
-        }
-        function planHtml(p) {
-            const line = o => o.op === 'if_qty' ? (o.to < o.from ? '⬇ Lower ' : '⬆ Raise ') + esc(o.ifNum + ' ' + o.sku + ' ' + num(o.from) + ' → ' + num(o.to))
-                : o.op === 'if_create' ? '➕ Add-on IF from ' + esc(o.toNum + ': ' + o.skus.join(', ')) : '🔖 Stamp ' + esc(o.ifNum) + ' · Shipped';
-            return '<div class="card"><h4>Plan</h4>' + p.ops.map(o => '<div>' + line(o) + '</div>').join('') +
-                p.unplanned.map(u => '<div>↩ ' + esc(u.ifNum) + ' has nothing scanned: back to planned</div>').join('') +
-                (p.bol.changed ? '<div><b>BOL REV 2</b> · BOL # ' + esc(p.bol.number) + ' · IFs ' + esc(p.bol.ifNums.join(', ')) + '</div>' : '') + '</div>';
-        }
+        function departBody() { return { truckId: S.truckId, seal: $('d_seal').value, carrier: $('d_carrier').value }; }
         // The departure re-check no longer matches. "IF changed" only when an IF is gone or its qty differs from what the screen showed;
         // otherwise the load changed (a scan or take-off landed meanwhile).
         function ifChanged(diffs, prev) {
@@ -622,7 +608,6 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         function needsFixAgain(r) {
             const prev = S.tv;
-            S.dplan = null;
             tone('bad');
             paintTruck(r.view, true);
             $('scanres').innerHTML = flash('red', ifChanged(r.diffs, prev) ? '❌ IF changed in NetSuite: needs a fix again' : '❌ The load changed: verify again',
@@ -631,7 +616,6 @@ h3{font-size:15px;margin:16px 0 8px}
         // A refused departure: the truck may have changed on another device, so refetch and repaint (the form keeps what was typed
         // while the truck is still Ready). The error goes in scanres, above the repainted stage card.
         async function departRefused(r) {
-            S.dplan = null;
             tone('bad');
             const g = await api('truck_get', { truckId: S.truckId });
             if (!g.ok || !$('tfoot')) { if ($('dmsg')) $('dmsg').innerHTML = errBox(r.error); return; }
@@ -639,28 +623,15 @@ h3{font-size:15px;margin:16px 0 8px}
             $('scanres').innerHTML = errBox(r.error) +
                 (['loading', 'needs_fix'].indexOf(g.view.truck.status) !== -1 ?flash('amber', 'The truck changed on another device: verify again') : '');
         }
-        ACT.dpreview = async el => {
+        ACT.dmark = async el => {
             if (needWho()) return;
+            if (!confirm('Mark this truck shipped? A manager confirms it in Approvals.')) return;
             busy(el, true);
-            const r = await api('depart_preview', departBody());
+            const r = await api('ship_mark', departBody());
             busy(el, false);
             if (!$('tfoot')) return;
             if (!r.ok) { await departRefused(r); return; }
             markSeen(r.view);
-            if (r.needsFix) { needsFixAgain(r); return; }
-            S.dplan = r.plan;
-            $('dmsg').innerHTML = flash('green', 'Truck ' + r.truckNo + ' of the day', 'Matches the IFs') +
-                planHtml(r.plan) + '<button class="btn go" data-act="dconfirm">Confirm departure</button>';
-        };
-        ACT.dconfirm = async el => {
-            const wm = S.tv ? S.tv.writeMode : 'off';
-            if (!confirm(wm === 'on' ? 'Confirm departure? Trailer and seal go on the IFs.'
-                : 'Confirm departure? (plan only — NetSuite is updated by the office)')) return;
-            busy(el, true);
-            const r = await api('depart_confirm', departBody());
-            busy(el, false);
-            if (!$('tfoot')) return;
-            if (!r.ok) { await departRefused(r); return; }
             if (r.needsFix) { needsFixAgain(r); return; }
             tone('ok');
             paintTruck(r.view, true);

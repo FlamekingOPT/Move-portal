@@ -21,7 +21,7 @@ test('client code never contains a closing script tag', () => {
 
 test('v3 screens exist and old ones are gone', () => {
     const src = ui._clientMain.toString();
-    ['SCREENS.trucks', "api('truck_scan'", "api('depart_confirm'", "api('truck_planned'"].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
+    ['SCREENS.trucks', "api('truck_scan'", "api('ship_mark'", "api('truck_planned'"].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
     ['SCREENS.ship', 'SCREENS.load ', "api('scan_load'"].forEach(s => assert.equal(src.indexOf(s), -1, 'still has ' + s));
 });
 
@@ -51,7 +51,7 @@ test('departing state, confirm prompts, null-screen guards', () => {
     const src = ui._clientMain.toString();
     assert.ok(src.indexOf("t.status === 'departed'") !== -1);
     assert.ok(src.indexOf('Departing… a NetSuite write is pending') !== -1);
-    ['apretry', 'aprecv', 'dconfirm'].forEach(n => {
+    ['apretry', 'aprecv', 'dmark'].forEach(n => {
         const i = src.indexOf('ACT.' + n + ' =');
         assert.ok(i !== -1 && src.slice(i, i + 400).indexOf('confirm(') !== -1, 'no confirm in ' + n);
     });
@@ -64,9 +64,9 @@ test('removed: no pending, cancel or skip-write paths; a departure that needs a 
     assert.ok(src.indexOf('IF changed in NetSuite: needs a fix again') !== -1);
 });
 
-test('fix11: departure confirm text, stuck receipt button, scrollable report', () => {
+test('fix11: mark-shipped confirm text, stuck receipt button, scrollable report', () => {
     const src = ui._clientMain.toString();
-    ['Confirm departure? (plan only — NetSuite is updated by the office)', 'Confirm departure? Trailer and seal go on the IFs.', 'overflow-x:auto']
+    ['Mark this truck shipped? A manager confirms it in Approvals.', 'overflow-x:auto']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.split("x.stuck ? 'Re-approve receipt'").length - 1, 2);
 });
@@ -89,7 +89,7 @@ test('verify-load UI: verify, take-off, stages, recheck alert, manager correct',
 test('verify-load UI: take-off mode, stage buttons, scan modes', () => {
     const src = ui._clientMain.toString();
     ['data-act="tverify"', 'data-act="taddif"', "api('truck_scan', { truckId: S.truckId, raw: v, mode: mode })", "wireScan('scan', doTruckScan, () => S.tmode)", "'takeoff'", '120000', "case 'taken_off'", "case 'not_on_truck'", 'Not on this truck',
-        'Verify again', '← Other trucks', 'Confirm departure', 'Review departure']
+        'Verify again', '← Other trucks', 'Mark shipped', "api('ship_mark'"]
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.ok(/visibilitychange/.test(src), 'polling stops when hidden');
     assert.ok(src.indexOf('30000') !== -1, 'recheck every 30 s');
@@ -123,7 +123,7 @@ test('review fixes: ready alert per ready event on every device; confirm and ban
 test('polish: no self-alert after Verify; banner pads main so it cannot cover controls', () => {
     const src = ui._clientMain.toString();
     ["view.truck.id + '|' + view.verify.at", 'markSeen(r.view)', 'paddingBottom'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
-    ['ACT.tverify =', 'ACT.taddif =', 'ACT.dpreview ='].forEach(n => {
+    ['ACT.tverify =', 'ACT.taddif =', 'ACT.dmark ='].forEach(n => {
         const i = src.indexOf(n);
         assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('markSeen(r.view)') !== -1, 'no markSeen in ' + n);
     });
@@ -136,10 +136,10 @@ test('final fixes: manager add-any-IF picker on the needs-fix card; ids escaped;
     assert.ok(src.indexOf("typeof vf.by === 'object'") !== -1, 'verify by object shown by name');
 });
 
-test('a refused departure (preview or confirm) refetches the truck and repaints, error above the stage', () => {
+test('a refused mark shipped refetches the truck and repaints, error above the stage', () => {
     const src = ui._clientMain.toString();
     assert.ok(src.indexOf('The truck changed on another device: verify again') !== -1);
-    ['ACT.dpreview =', 'ACT.dconfirm ='].forEach(n => {
+    ['ACT.dmark ='].forEach(n => {
         const i = src.indexOf(n);
         assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('departRefused(r)') !== -1, 'no departRefused in ' + n);
     });

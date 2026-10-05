@@ -158,7 +158,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function truckSummary(x, counts) {
         const k = counts || data.palletStatusCounts([x.id]), n = st => cnt(k, x.id, st);
-        return { id: x.id, label: truckLabel(x), status: x.status, depart: x.data.depart || null,
+        return { id: x.id, label: truckLabel(x), status: x.status, depart: x.data.depart || null, shipReq: x.data.shipReq || null, sentBack: x.data.sentBack || null,
             error: x.data.error || '', pallets: n(VP.LOADED) + n(VP.IN_TRANSIT) + n(VP.RECEIVED) + n(VP.MISSING), received: n(VP.RECEIVED),
             missing: n(VP.MISSING) + (x.status === T.RECEIVED ? n(VP.IN_TRANSIT) : 0) };
     }
@@ -223,6 +223,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // Called at the start and again right before a pallet changes, so a scan never lands on a truck that is departing.
     function mustOpenTruck(id) {
         const x = mustTruck(id);
+        if (x.status === T.SHIP_PENDING) throw waitingErr();
         if (!isOpen(x)) throw userErr('Scanning is closed on this truck');
         return x;
     }
@@ -268,7 +269,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     const AUTO_BY = { id: 0, name: 'Auto re-check' };
     // Why verify can't run: a manager's correction holds the claim only briefly, so say so instead of "departing".
+    function waitingErr() { return userErr('This truck is waiting for a manager to confirm shipping'); }
     function closedErr(x) {
+        if (x && x.status === T.SHIP_PENDING) return waitingErr();
         if (x && x.data.claim && x.data.phase === 'correct' && !x.data.depart) return userErr('This truck is being corrected by a manager, try again in a moment');
         return userErr('This truck is closed for changes (' + (x ? (x.data.claim || x.data.depart ? T.DEPARTING : x.status) : 'gone') + ')');
     }
@@ -299,23 +302,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const view = truckView(v.x, c, { planned: v.planned, trucks: v.trucks });   // lists suggestions when the truck is needs_fix
         return { match: v.r.match, diffs: pubDiffs(v.r.diffs, v.ps), suggestions: view.suggestions, view: view };
     }
-    function pubPlan(p) {
-        return { ops: p.ops.map(o => Object.assign({}, o)), unplanned: p.unplanned, bol: p.bol, corrections: p.corrections.length };
-    }
-    function departInput(a, x, c) {
-        const pick = (k, d) => String(a[k] != null && a[k] !== '' ? a[k] : d || '').trim();
-        const inp = { trailer: pick('trailer', x.data.trailer), seal: pick('seal'), carrier: pick('carrier', c.S.defaultCarrier || 'Armstrong Group') };
-        if (!inp.trailer) throw userErr('Enter the trailer #');
-        if (!inp.seal) throw userErr('Enter the seal #');
-        if (verify.sealUsed(allTrucks(), inp.seal, x.id)) throw userErr('Seal ' + inp.seal + ' was already used on another truck');
-        return inp;
-    }
     // Departure leaves only from Ready, with no claim and no depart yet.
     function notReady(x) {
         if (x.status === T.LOADING || x.status === T.NEEDS_FIX) return userErr('Verify the load first');
+        if (x.status === T.SHIP_PENDING) return userErr('This truck is already marked shipped');
         return userErr('This truck is already ' + (x.status === T.READY ? T.DEPARTING : x.status));
     }
     function mustReady(x) { if (x.status !== T.READY || x.data.claim || x.data.depart) throw notReady(x); }
+    // Ship confirm and send back act only on a marked truck nobody is processing.
+    function mustPending(x) {
+        if (x.status === T.SHIP_PENDING && !x.data.claim && !x.data.depart && x.data.shipReq) return;
+        if (x.status === T.SHIP_PENDING || x.status === T.DEPARTING) throw userErr((truckLabel(x) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+        throw userErr('This truck is ' + x.status + ', not waiting for a ship confirmation');
+    }
+    function sealTaken(seal, id) { if (verify.sealUsed(allTrucks(), seal, id)) throw userErr('Seal ' + seal + ' was already used on another truck'); }
     // chk: a checkTruck result that matched. The plan comes from the IFs and pallets it checked.
     function departPlan(x, inp, c, chk) {
         const truckNo = verify.truckNoForDay(chk.trucks, c.now.dayIso, x.id), ps = chk.ps;
@@ -336,13 +336,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function mismatch(chk, diffs, x) { return Object.assign(new Error('mismatch'), { mismatch: { keep: chk.r.keep, diffs: diffs || chk.r.diffs, ps: chk.ps, seenIfs: x.data.ifs } }); }
     // Back to needs_fix with the new diffs. Without `claim` the truck must still be open; with it the claim must still be ours,
     // and the departure state written with the claim is cleared. Always a fresh read right before the write.
-    function toNeedsFix(id, m, c, claim) {
+    // pending: the truck is ship_pending (Confirm shipped re-verified before claiming).
+    function toNeedsFix(id, m, c, claim, pending) {
         const cur = data.getLoad(id);
         if (!cur) throw userErr('Truck not found');
-        if (claim ? cur.data.claim !== claim : !isOpen(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+        const ok = claim ? cur.data.claim === claim : pending ? cur.status === T.SHIP_PENDING && !cur.data.claim && !cur.data.depart : isOpen(cur);
+        if (!ok) throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
         if (!claim && ifSig(cur.data.ifs) !== ifSig(m.seenIfs)) throw userErr('This truck changed while it was being checked. Verify again.');
         data.updateLoad(cur, { status: T.NEEDS_FIX, data: Object.assign({ ifs: m.keep, verify: { at: c.now.stamp, by: c.actor, diffs: m.diffs }, claim: '', workingAt: 0, phase: '' },
-            claim ? { depart: null, plan: null, alloc: null, unplanned: null, bol: null, writes: null, departPallets: null } : {}) });
+            claim ? { depart: null, plan: null, alloc: null, unplanned: null, bol: null, writes: null, departPallets: null } : {}, claim || pending ? { shipReq: null } : {}) });
         const x = mustTruck(id), view = truckView(x, c);
         return { needsFix: true, match: false, diffs: pubDiffs(m.diffs, m.ps), suggestions: view.suggestions, view: view };
     }
@@ -587,13 +589,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_planned', false, (a, c) => {
         const trucks = allTrucks(), taken = {}, dp = defPcs(c);
         trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
-        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.DEPARTING), counts = data.palletStatusCounts(open.map(x => x.id));
+        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING), counts = data.palletStatusCounts(open.map(x => x.id));
         return { planned: ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)),
             open: open.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt() };
     });
 
-    // A trailer is on one truck at a time until it leaves ('ship_pending' arrives with ship confirm).
-    const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, 'ship_pending', T.DEPARTING];
+    // A trailer is on one truck at a time until it leaves.
+    const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.DEPARTING];
     const normTrailer = t => String(t || '').trim().toUpperCase();
     act('truck_start', false, (a, c) => {
         const ids = (a.ifIds || []).map(String), trailer = String(a.trailer || '').trim();
@@ -866,20 +868,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             view: truckView(vv.x, c, { planned: vv.planned, trucks: vv.trucks }) };
     });
     function correctGuardErr(x) {
+        if (x.status === T.SHIP_PENDING) return waitingErr();
         if (x.data.claim || x.data.depart) return userErr((truckLabel(x) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
         return userErr(x.status === T.LOADING ? 'Verify the load first' : 'This truck is ' + x.status + ', nothing to correct');
     }
-
-    act('depart_preview', false, (a, c) => {
-        const x = mustTruck(a.truckId);
-        mustReady(x);
-        const inp = departInput(a, x, c);
-        const v = verifyTruck(x.id, c, { truck: x, poll: true });    // an unchanged load keeps verify at/by
-        if (!v.r.match) return Object.assign({ needsFix: true }, verifyOut(v, c));
-        const d = departPlan(v.x, inp, c, v), pm = planMismatch(d.plan);
-        if (pm.length) return toNeedsFix(x.id, { keep: v.r.keep, diffs: pm, ps: v.ps, seenIfs: v.x.data.ifs }, c);
-        return { input: inp, truckNo: d.truckNo, plan: pubPlan(d.plan) };
-    });
 
     // What the claim write carries, so a departing truck always has its plan (no claimed-but-unplanned state).
     function departData(d, inp, c) {
@@ -895,27 +887,65 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (pm.length) throw mismatch(chk, pm, x);
         return d;
     }
-    act('depart_confirm', false, (a, c) => {
+    // Shipments (spec 2026-10-06 §2). The floor marks a Ready truck shipped with its seal; it re-verifies and locks the truck.
+    act('ship_mark', false, (a, c) => {
+        const x = mustTruck(a.truckId);
+        mustReady(x);
+        const inp = { trailer: String(x.data.trailer || '').trim(), seal: String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
+        if (!inp.seal) throw userErr('Enter the seal #');
+        sealTaken(inp.seal, x.id);
+        const v = verifyTruck(x.id, c, { truck: x, poll: true });    // an unchanged load keeps verify at/by
+        if (!v.r.match) return Object.assign({ needsFix: true }, verifyOut(v, c));
+        const d = departPlan(v.x, inp, c, v), pm = planMismatch(d.plan);
+        if (pm.length) return toNeedsFix(x.id, { keep: v.r.keep, diffs: pm, ps: v.ps, seenIfs: v.x.data.ifs }, c);
+        const cur = data.getLoad(x.id);               // right before the write: never merge over a stale copy
+        mustReady(cur);
+        if (ifSig(cur.data.ifs) !== ifSig(v.x.data.ifs) || palletKey(data.palletsByLoad(x.id, [VP.LOADED])) !== d.palletKey) throw userErr('This truck changed while it was being checked. Verify again.');
+        data.updateLoad(cur, { status: T.SHIP_PENDING, data: { shipReq: Object.assign(inp, { by: c.actor, at: c.now.stamp }), sentBack: null } });
+        return { view: truckView(mustTruck(x.id), c) };
+    });
+
+    // Confirm shipped (manager): the departure as the floor marked it. Departure time and Truck # day = the floor's mark time.
+    function shipInput(x) {
+        const q = x.data.shipReq || {};
+        return { trailer: String(x.data.trailer || q.trailer || '').trim(), seal: q.seal, carrier: q.carrier, markedBy: q.by };
+    }
+    function markCtx(x, c) {
+        const at = (x.data.shipReq || {}).at || c.now.stamp, p = core.parseNsStamp(at);
+        return Object.assign({}, c, { now: { stamp: at, dayIso: p ? p.dayIso : c.now.dayIso, hour: p ? p.hour : c.now.hour } });
+    }
+    act('ship_confirm', true, (a, c) => {
         const x0 = mustTruck(a.truckId);
-        mustReady(x0);
-        const inp = departInput(a, x0, c);
+        mustPending(x0);
+        const inp = shipInput(x0), mc = markCtx(x0, c);
+        sealTaken(inp.seal, x0.id);
         let d = null, cl;
         try {
             // Re-verified from the guarded copy, and the plan is written with the claim.
-            cl = claimLoad(x0, T.DEPARTING, 'depart', mustReady, cur => { d = planOrMismatch(cur, inp, c); return departData(d, inp, c); });
-        } catch (e) { if (e.mismatch) return toNeedsFix(x0.id, e.mismatch, c); throw e; }
-        // A scan or take-off that landed between that check and the claim: check again from the claimed state (now frozen).
+            cl = claimLoad(x0, T.DEPARTING, 'depart', mustPending, cur => { d = planOrMismatch(cur, inp, mc); return departData(d, inp, mc); });
+        } catch (e) { if (e.mismatch) return toNeedsFix(x0.id, e.mismatch, c, null, true); throw e; }
+        // A pallet change that landed between that check and the claim: check again from the claimed state (now frozen).
         if (palletKey(data.palletsByLoad(x0.id, [VP.LOADED])) !== d.palletKey) {
             let again;
-            try { again = planOrMismatch(Object.assign({}, cl.Ld, { data: Object.assign({}, cl.Ld.data, { ifs: x0.data.ifs }) }), inp, c); }
+            try { again = planOrMismatch(Object.assign({}, cl.Ld, { data: Object.assign({}, cl.Ld.data, { ifs: x0.data.ifs }) }), inp, mc); }
             catch (e) {
                 if (e.mismatch) return toNeedsFix(x0.id, e.mismatch, c, cl.claim);
                 throw e;
             }
             assertClaim(x0.id, cl.claim, truckLabel(cl.Ld), 'depart');
-            data.updateLoad(data.getLoad(x0.id), { data: departData(again, inp, c) });
+            data.updateLoad(data.getLoad(x0.id), { data: departData(again, inp, mc) });
         }
         return finishDepart(mustTruck(x0.id), c, cl.claim);
+    });
+
+    // Send back (manager, note required): the floor gets the truck back as loading, with the note on its screen.
+    act('ship_sendback', true, (a, c) => {
+        const note = String(a.note || '').trim().slice(0, 300);
+        if (!note) throw userErr('Enter a note for the floor');
+        const cur = mustTruck(a.truckId);            // fresh read, guarded, then the write
+        mustPending(cur);
+        data.updateLoad(cur, { status: T.LOADING, data: { sentBack: { note: note, by: c.user, at: c.now.stamp }, shipReq: null } });
+        return { view: truckView(mustTruck(cur.id), c) };
     });
 
     // A stuck departure that wrote no stamp yet: a manager sends it back to needs_fix (the seal is free again) and it re-verifies.
@@ -936,7 +966,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         assertClaim(cl.Ld.id, cl.claim, truckLabel(cl.Ld), 'release');
         // verify cleared too: a re-verify that fails below must not leave the old (ready) result on a needs_fix truck.
         data.updateLoad(data.getLoad(cl.Ld.id), { status: T.NEEDS_FIX, data: { claim: '', workingAt: 0, phase: '', error: '', depart: null, plan: null, alloc: null,
-            unplanned: null, bol: null, writes: null, departPallets: null, verify: null } });
+            unplanned: null, bol: null, writes: null, departPallets: null, verify: null, shipReq: null } });
         return verifyOut(verifyTruck(cl.Ld.id, c), c);
     });
 
@@ -1138,7 +1168,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                     corrections: x.data.corrections || [], correctError: x.data.correctError || '', orphans: orphanCreates(x), stuck: stuckCorrect(x), writeMode: writeMode(c), verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '' };
             });
         }
+        const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
+            const q = x.data.shipReq;
+            return { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
+                ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
+                otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '' };
+        });
         return {
+            shipPending: shipPending,
             needsFix: needsFix,
             freeIfs: freeIfs,
             retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { canRelease: !stampWritten(x) })),
