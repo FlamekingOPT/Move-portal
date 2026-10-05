@@ -77,7 +77,7 @@ test('memoFor, sealUsed, truckNoForDay', () => {
 
 test('planDeparture: exact match → only stamps, no manager', () => {
     const p = v.planDeparture({ ifs: IFS, pallets: loaded(42), toLines: TOS, stamp });
-    assert.deepEqual(p.ops, [{ op: 'if_stamp', ifId: '9001', ifNum: 'IF9001', trailer: '537224', seal: '5249330', memo: 'Truck 3 · 10/05' }]);
+    assert.deepEqual(p.ops, [{ op: 'if_stamp', ifId: '9001', ifNum: 'IF9001', trailer: '537224', seal: '5249330', memo: 'Truck 3 · 10/05', lines: { 975: 504 } }]);
     assert.equal(p.needsManager, false);
     assert.deepEqual(p.bol, { number: 'TO500', changed: false, ifNums: ['IF9001'] });
     assert.deepEqual(p.alloc, [{ ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', lines: { 975: 504 }, addOn: false }]);

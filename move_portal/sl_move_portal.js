@@ -316,13 +316,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return plan.corrections.map(o => ({ key: 'plan:' + verify.opKey(o), kind: 'plan_mismatch', op: o.op, ifNum: o.ifNum || '', ifId: o.ifId || '' }))
             .concat(plan.unplanned.map(u => ({ key: 'plan:unplanned:' + u.ifId, kind: 'plan_mismatch', op: 'unplanned', ifNum: u.ifNum, ifId: String(u.ifId) })));
     }
-    function mismatch(chk, diffs) { return Object.assign(new Error('mismatch'), { mismatch: { keep: chk.r.keep, diffs: diffs || chk.r.diffs, ps: chk.ps } }); }
+    // seenIfs: the IFs on the truck copy the check ran on, so the needs_fix write never lands over IFs changed meanwhile.
+    function mismatch(chk, diffs, x) { return Object.assign(new Error('mismatch'), { mismatch: { keep: chk.r.keep, diffs: diffs || chk.r.diffs, ps: chk.ps, seenIfs: x.data.ifs } }); }
     // Back to needs_fix with the new diffs. Without `claim` the truck must still be open; with it the claim must still be ours,
     // and the departure state written with the claim is cleared. Always a fresh read right before the write.
     function toNeedsFix(id, m, c, claim) {
         const cur = data.getLoad(id);
         if (!cur) throw userErr('Truck not found');
         if (claim ? cur.data.claim !== claim : !isOpen(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+        if (!claim && ifSig(cur.data.ifs) !== ifSig(m.seenIfs)) throw userErr('This truck changed while it was being checked. Verify again.');
         data.updateLoad(cur, { status: T.NEEDS_FIX, data: Object.assign({ ifs: m.keep, verify: { at: c.now.stamp, by: c.actor, diffs: m.diffs }, claim: '', workingAt: 0, phase: '' },
             claim ? { depart: null, plan: null, alloc: null, unplanned: null, bol: null, writes: null, departPallets: null } : {}) });
         const x = mustTruck(id), view = truckView(x, c);
@@ -708,10 +710,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustTruck(a.truckId);
         mustReady(x);
         const inp = departInput(a, x, c);
-        const v = verifyTruck(x.id, c);
+        const v = verifyTruck(x.id, c, { truck: x, poll: true });    // an unchanged load keeps verify at/by
         if (!v.r.match) return Object.assign({ needsFix: true }, verifyOut(v, c));
         const d = departPlan(v.x, inp, c, v), pm = planMismatch(d.plan);
-        if (pm.length) return toNeedsFix(x.id, { keep: v.r.keep, diffs: pm, ps: v.ps }, c);
+        if (pm.length) return toNeedsFix(x.id, { keep: v.r.keep, diffs: pm, ps: v.ps, seenIfs: v.x.data.ifs }, c);
         return { input: inp, truckNo: d.truckNo, plan: pubPlan(d.plan) };
     });
 
@@ -724,9 +726,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // Re-verify and plan from a truck copy; a mismatch is thrown, so a claim is never taken (or is released) on a load that no longer matches.
     function planOrMismatch(x, inp, c) {
         const chk = checkTruck(x, c);
-        if (!chk.r.match) throw mismatch(chk);
+        if (!chk.r.match) throw mismatch(chk, null, x);
         const d = departPlan(x, inp, c, chk), pm = planMismatch(d.plan);
-        if (pm.length) throw mismatch(chk, pm);
+        if (pm.length) throw mismatch(chk, pm, x);
         return d;
     }
     act('depart_confirm', false, (a, c) => {
@@ -750,6 +752,22 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             data.updateLoad(data.getLoad(x0.id), { data: departData(again, inp, c) });
         }
         return finishDepart(mustTruck(x0.id), c, cl.claim);
+    });
+
+    // A stuck departure that wrote no stamp yet: a manager sends it back to needs_fix (the seal is free again) and it re-verifies.
+    function stampWritten(x) { return Object.keys(x.data.writes || {}).some(k => k.indexOf('if_stamp:') === 0); }
+    act('depart_release', true, (a, c) => {
+        const guard = cur => {
+            if (cur.status !== T.DEPARTING || !cur.data.depart) throw userErr('Nothing to release on this truck');
+            if (stampWritten(cur)) throw userErr('This truck is already stamped in NetSuite. Press Retry to finish the departure.');
+            if (!cur.data.error && !stale(cur)) throw userErr('This departure is still running. Wait a minute, then try again.');
+        };
+        guard(mustTruck(a.truckId));
+        const cl = claimLoad(mustTruck(a.truckId), T.DEPARTING, 'release', guard, { releasedBy: c.user, releasedAt: c.now.stamp });
+        assertClaim(cl.Ld.id, cl.claim, truckLabel(cl.Ld), 'release');
+        data.updateLoad(data.getLoad(cl.Ld.id), { status: T.NEEDS_FIX, data: { claim: '', workingAt: 0, phase: '', error: '', depart: null, plan: null, alloc: null,
+            unplanned: null, bol: null, writes: null, departPallets: null } });
+        return verifyOut(verifyTruck(cl.Ld.id, c), c);
     });
 
     act('depart_retry', true, (a, c) => {
@@ -925,7 +943,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const counts = data.palletStatusCounts(trucks.filter(x => OPEN.indexOf(x.status) === -1).map(x => x.id));
         const sum = x => truckSummary(x, counts);
         return {
-            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(sum),
+            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { canRelease: !stampWritten(x) })),
             receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;
                 try {

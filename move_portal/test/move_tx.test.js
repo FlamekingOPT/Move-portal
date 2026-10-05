@@ -109,3 +109,32 @@ test('if_qty already at the target qty counts as done and saves nothing', () => 
     const c = setup({ status: 'C', ifLines: [{ item: '975', quantity: 480 }] });
     assert.throws(() => c.tx.apply(qop(480)), /no longer Picked\/Packed/);
 });
+
+test('if_stamp checks the expected lines against the ticked IF lines', () => {
+    const st = lines => ({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'm', lines: lines });
+    let s = setup({ ifLines: split() });
+    s.tx.apply(st({ 975: 504 }));
+    assert.deepEqual([s.f.values.shipstatus, s.f.saved], ['C', 1]);
+    s = setup({ ifLines: split() });                                                   // office lowered nothing, plan says 480
+    assert.throws(() => s.tx.apply(st({ 975: 480 })), /^Error: IF changed in NetSuite.*IF1/);
+    assert.equal(s.f.saved, 0);
+    s = setup({ ifLines: [{ item: '975', quantity: 300 }, { item: '975', quantity: 204, itemreceive: false }] });   // unticked line does not count
+    assert.throws(() => s.tx.apply(st({ 975: 504 })), /IF changed in NetSuite/);
+    s = setup({ ifLines: [{ item: '975', quantity: 300 }, { item: '975', quantity: 204, itemreceive: false }] });
+    s.tx.apply(st({ 975: 300 }));
+    assert.equal(s.f.saved, 1);
+    s = setup({ ifLines: split().concat([{ item: '111', quantity: 5 }]) });            // an item the plan does not expect
+    assert.throws(() => s.tx.apply(st({ 975: 504 })), /IF changed in NetSuite/);
+    assert.equal(s.f.saved, 0);
+});
+
+test('if_stamp is idempotent: an IF already shipped with this trailer and seal is done, nothing saved', () => {
+    const s = setup({ status: 'C', ifLines: split() });
+    Object.assign(s.f.values, { custbody7: 'SEAL: 123', custbody_rsm_container_no: 'T5' });
+    assert.equal(s.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'm', lines: { 975: 504 } }), '9');
+    assert.equal(s.f.saved, 0);
+    const o = setup({ status: 'C', ifLines: split() });
+    Object.assign(o.f.values, { custbody7: 'SEAL: 999', custbody_rsm_container_no: 'T5' });
+    assert.throws(() => o.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'm' }), /no longer Picked\/Packed/);
+    assert.equal(o.f.saved, 0);
+});

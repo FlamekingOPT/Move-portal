@@ -70,10 +70,29 @@ define(['N/record', 'N/search'], function (record, search) {
         }
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
+    // Per-item qty on the ticked lines only.
+    function tickedQty(rec) {
+        const out = {}, n = rec.getLineCount({ sublistId: 'item' });
+        for (let i = 0; i < n; i++) {
+            if (rec.getSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i }) === false) continue;
+            const k = String(rec.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i })), q = Number(rec.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0;
+            if (q > 0) out[k] = (out[k] || 0) + q;
+        }
+        return out;
+    }
+    function qtyText(m) { return Object.keys(m).sort().map(k => k + '×' + m[k]).join(', ') || 'nothing'; }
     function stampShip(op) {
         const f = record.load({ type: record.Type.ITEM_FULFILLMENT, id: op.ifId, isDynamic: true });
         const st = String(f.getValue({ fieldId: 'shipstatus' }));
+        // Already shipped with this trailer and seal: an earlier write landed but the request died before it was recorded.
+        if (st === 'C' && String(f.getValue({ fieldId: 'custbody7' }) || '') === 'SEAL: ' + op.seal &&
+            String(f.getValue({ fieldId: 'custbody_rsm_container_no' }) || '') === String(op.trailer)) return String(op.ifId);
         if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
+        if (op.lines) {                               // the qty the portal verified; an office edit since then must not ship unseen
+            const want = {}, have = tickedQty(f);
+            Object.keys(op.lines).forEach(k => { if (Number(op.lines[k]) > 0) want[String(k)] = Number(op.lines[k]); });
+            if (qtyText(want) !== qtyText(have)) throw changed(op.ifNum + ' holds ' + qtyText(have) + ', the load was verified for ' + qtyText(want));
+        }
         stampOn(f, op);
         f.setValue({ fieldId: 'shipstatus', value: 'C' });
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));

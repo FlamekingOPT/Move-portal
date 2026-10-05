@@ -144,7 +144,9 @@ define([], function () {
                 const from = ifQty(f, k);
                 if (a[k] !== from) ops.push({ op: 'if_qty', ifId: String(f.ifId), ifNum: f.ifNum, toId: String(f.toId), item: k, from: from, to: a[k] });
             });
-            ops.push(Object.assign({ op: 'if_stamp', ifId: String(f.ifId), ifNum: f.ifNum }, st));
+            const expect = {};                         // what the IF must hold when it is stamped (after any qty edit)
+            Object.keys(a).forEach(k => { if (a[k] > 0) expect[k] = a[k]; });
+            ops.push(Object.assign({ op: 'if_stamp', ifId: String(f.ifId), ifNum: f.ifNum }, st, { lines: expect }));
             allocOut.push({ ifId: String(f.ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: f.toNum, lines: a, addOn: false });
         });
         Object.keys(addOns).sort((x, y) => Number(x) - Number(y)).forEach(t => {
