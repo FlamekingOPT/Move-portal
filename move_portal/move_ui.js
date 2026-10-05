@@ -51,8 +51,8 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 .card.amberc{border:2px solid var(--amber);background:#fffbeb}.card.greenc{border:2px solid var(--green);background:#f0fdf4}
 .diffs div{padding:6px 0;border-bottom:1px solid var(--line);font-size:14px;overflow-wrap:anywhere}.diffs div:last-child{border:0}
 .drow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}.drow:last-child{border:0}.drow span{overflow-wrap:anywhere;min-width:0}.drow button{flex:0 0 auto}
-.banner{position:fixed;top:0;left:0;right:0;z-index:20;padding:8px 12px}
-.banner div{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--green);color:#fff;border-radius:12px;padding:12px;margin-bottom:6px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.banner{position:fixed;bottom:0;left:0;right:0;z-index:20;padding:8px 12px}
+.banner div{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--green);color:#fff;border-radius:12px;padding:12px;margin-top:6px;font-weight:700;box-shadow:0 -4px 14px rgba(0,0,0,.25)}
 .banner span{flex:1 1 180px;min-width:0;overflow-wrap:anywhere}.banner button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;background:rgba(255,255,255,.25);color:#fff;font-size:15px}
 .flash{border-radius:14px;padding:16px;margin:10px 0;color:#fff}
 .flash .big{font-size:24px;font-weight:800;line-height:1.15}.flash .mid{font-size:18px;font-weight:700;margin-top:4px}.flash .sm{font-size:14px;margin-top:6px}
@@ -204,15 +204,17 @@ h3{font-size:15px;margin:16px 0 8px}
             S.rcBusy = true;
             try {
                 const r = await api('trucks_recheck');
-                if (!r.ok || !r.nowReady) return;
-                const seen = alerted(), fresh = r.nowReady.filter(t => seen.indexOf(String(t.id)) === -1);
-                if (!fresh.length) return;
-                put('mv_alerted', JSON.stringify(seen.concat(fresh.map(t => String(t.id))).slice(-300)));
-                fresh.forEach(t => { if (!S.banner.some(x => String(x.id) === String(t.id))) S.banner.push({ id: String(t.id), label: t.label }); });
-                paintBanner();
-                tone('ready');
-                if (fresh.some(t => String(t.id) === String(S.truckId)) && $('tfoot') && S.tv && S.tv.truck.status === 'needs_fix') truckDetail();
-                else if (S.side === 'out' && S.tab === 'trucks' && !S.truckId) truckList();
+                if (!r.ok || !r.ready) return;
+                // One alert per ready event (truck id + verify time) on every device, also after needs_fix → ready again.
+                const key = t => String(t.id + '|' + t.at), seen = alerted(), fresh = r.ready.filter(t => seen.indexOf(key(t)) === -1);
+                if (fresh.length) {
+                    put('mv_alerted', JSON.stringify(seen.concat(fresh.map(key)).slice(-300)));
+                    fresh.forEach(t => { S.banner = S.banner.filter(x => String(x.id) !== String(t.id)).concat([{ id: String(t.id), label: t.label }]); });
+                    paintBanner();
+                    tone('ready');
+                }
+                if (r.ready.some(t => String(t.id) === String(S.truckId)) && $('tfoot') && S.tv && S.tv.truck.status === 'needs_fix') truckDetail();
+                else if (fresh.length && S.side === 'out' && S.tab === 'trucks' && !S.truckId) truckList();
             } finally { S.rcBusy = false; }
         }
         function startRecheck() { if (!isMgr && !S.rc && !document.hidden) S.rc = setInterval(recheck, 30000); }
@@ -903,6 +905,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const t = n.truck, id = esc(t.id), lab = esc(t.label), wm = esc(n.writeMode), diffs = n.diffs || [], live = {};
             diffs.forEach(d => { live[d.key] = 1; });
             const can = d => d.kind === 'if_short' || d.kind === 'if_over' || (d.kind === 'no_if' && d.toId);
+            const drops = diffs.filter(d => d.kind === 'if_gone' || d.kind === 'if_empty').length;
             const rows = diffs.map(d => '<div class="drow"><span>' + esc(d.text) + '</span>' +
                 (d.kind === 'if_empty' || d.kind === 'if_gone' ? '<button class="dbtn gh" data-act="apdrop" data-id="' + id + '" data-ifid="' + esc(d.ifId) + '" data-label="' + esc(d.ifNum) + '">Drop</button>'
                     : can(d) ? '<button class="dbtn gh" data-act="apcorrect" data-id="' + id + '" data-key="' + esc(d.key) + '" data-label="' + lab + '" data-wm="' + wm + '">Correct</button>' : '') + '</div>').join('');
@@ -915,7 +918,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 (n.orphans || []).map(o => '<div class="muted warn">⚠ Add-on ' + esc(o.text) + '</div>').join('') +
                 sugHtml(n.suggestions, true, t.id) +
                 '<div class="muted">Correct the IF: ' + esc(wmText(n.writeMode)) + '</div>' +
-                '<div class="row2">' + (diffs.some(can) ? '<button class="dbtn pri" data-act="apcorrect" data-id="' + id + '" data-label="' + lab + '" data-wm="' + wm + '">Correct the IF</button>' : '') +
+                '<div class="row2">' + (diffs.some(can) || drops ? '<button class="dbtn pri" data-act="apcorrect" data-id="' + id + '" data-label="' + lab + '" data-wm="' + wm + '" data-drops="' + drops + '">Correct the IF</button>' : '') +
                 '<button class="dbtn gh" data-act="apverify" data-id="' + id + '" data-label="' + lab + '">Re-check</button>' +
                 '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">Open truck</button></div></div>';
         }
@@ -942,7 +945,7 @@ h3{font-size:15px;margin:16px 0 8px}
         };
         ACT.apretry = async el => { if (!confirm('Retry departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
         ACT.aprelease = async el => {
-            if (!confirm('Release ' + (el.dataset.label || 'this truck') + ' to Needs IF fix? Nothing was stamped in NetSuite; the seal is freed and the load is checked again.')) return;
+            if (!confirm('Release ' + (el.dataset.label || 'this truck') + ' to Needs IF fix? No stamp is recorded for this truck; the seal is freed and the load is checked again.')) return;
             busy(el, true);
             const r = await api('depart_release', { truckId: el.dataset.id });
             tone(r.ok ? 'ok' : 'bad');
@@ -955,7 +958,9 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         ACT.apcorrect = async el => {
             const label = el.dataset.label || 'this truck';
-            if (!confirm('Correct the IF on ' + label + (el.dataset.key ? ' (this line)' : ' (every line it can)') + '?\n' + wmText(el.dataset.wm))) return;
+            const drops = el.dataset.key ? 0 : Number(el.dataset.drops) || 0;
+            if (!confirm('Correct the IF on ' + label + (el.dataset.key ? ' (this line)' : ' (every line it can)') + '?\n' + wmText(el.dataset.wm) +
+                (drops ? ', and takes ' + drops + ' IF(s) off the truck (portal only)' : ''))) return;
             busy(el, true);
             const body = { truckId: el.dataset.id };
             if (el.dataset.key) body.keys = [el.dataset.key];

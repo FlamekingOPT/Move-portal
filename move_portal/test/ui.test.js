@@ -111,3 +111,11 @@ test('verify-load UI: approvals needs-fix cards, write-mode wording, release, sk
         assert.ok(i !== -1 && src.slice(i, i + 500).indexOf('confirm(') !== -1, 'no confirm in ' + n);
     });
 });
+
+test('review fixes: ready alert per ready event on every device; confirm and banner wording', () => {
+    const src = ui._clientMain.toString();
+    ["r.ready", "t.id + '|' + t.at", 'No stamp is recorded for this truck', 'off the truck (portal only)'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    assert.equal(src.indexOf('Nothing was stamped'), -1);
+    const css = ui.buildPage({ url: '/x?a=1', mode: 'floor', me: 'X', roster: [], fromName: 'R', toName: 'T', maxPrint: 1 });
+    assert.match(css, /\.banner\{position:fixed;bottom:0/);
+});

@@ -667,15 +667,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // An office fix in NetSuite (IF qty edited, IF added) can turn a needs_fix truck ready without anyone scanning.
     act('trucks_recheck', false, (a, c) => {
         const trucks = allTrucks(), nowReady = [];
+        // ready: every truck ready now, with its verify time, so each device alerts once per ready event (not only the one that saw nowReady).
+        const readyOut = list => list.map(x => ({ id: x.id, label: truckLabel(x), at: (x.data.verify || {}).at || '' }));
+        const ready = trucks.filter(x => x.status === T.READY && isOpen(x));
         const fix = trucks.filter(x => x.status === T.NEEDS_FIX && isOpen(x));
-        if (!fix.length) return { nowReady: nowReady };
+        if (!fix.length) return { nowReady: nowReady, ready: readyOut(ready) };
         const shared = { trucks: trucks, planned: ns.plannedIfs(), openTo: ns.openToLines(), loadedAll: data.palletsByStatus([VP.LOADED]), poll: true };
         fix.forEach(x => {
             let v;
             try { v = verifyTruck(x.id, c, Object.assign({ truck: x }, shared)); } catch (e) { if (e.user) return; throw e; }
-            if (v.r.match) nowReady.push({ id: v.x.id, label: truckLabel(v.x) });
+            if (v.r.match) { nowReady.push({ id: v.x.id, label: truckLabel(v.x) }); ready.push(v.x); }
         });
-        return { nowReady: nowReady };
+        return { nowReady: nowReady, ready: readyOut(ready) };
     });
 
     // Floor: only an IF the verify suggests. Manager: any Picked/Packed IF no truck has.

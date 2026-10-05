@@ -991,6 +991,26 @@ test('recheck: an office fix in NetSuite turns a needs_fix truck ready', () => {
     assert.equal(ctx.data.getLoad(t.id).status, 'ready');
 });
 
+test('recheck lists every ready truck with its verify time, so a device that missed nowReady still alerts', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    const real = ctx.ns.plannedIfs;
+    ctx.ns.plannedIfs = () => real().map(f => f.ifId === '9001' ? Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: 480 })] }) : f);
+    const r1 = ctx.run('trucks_recheck', {}, false);
+    const at = ctx.data.getLoad(t.id).data.verify.at;
+    assert.deepEqual(r1.ready, [{ id: t.id, label: r1.nowReady[0].label, at: at }]);
+    const r2 = ctx.run('trucks_recheck', {}, false);                         // no needs_fix truck left: still listed
+    assert.deepEqual([r2.nowReady, r2.ready.map(x => [x.id, x.at])], [[], [[t.id, at]]]);
+});
+
+test('recheck does not list a truck that is not ready', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.deepEqual(ctx.run('trucks_recheck', {}, false).ready, []);
+});
+
 test('new IF suggestion: floor can add a suggested IF; not an IF on another truck', () => {
     const ctx = setup();
     const { t } = truckWith(ctx, 43);                                         // 516 on a 504 IF → over
