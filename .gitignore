@@ -3,3 +3,4 @@ node_modules/
 .superpowers/
 move_portal/local/store.json
 move_portal/snapshot/
+move_portal/local/store.json.tmp
