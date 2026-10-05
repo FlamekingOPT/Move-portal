@@ -99,8 +99,8 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     }
     function createIf(op) {
         const f = record.transform({ fromType: record.Type.TRANSFER_ORDER, fromId: op.toId, toType: record.Type.ITEM_FULFILLMENT, isDynamic: true });
-        f.setValue({ fieldId: 'shipstatus', value: 'C' });
-        stampOn(f, op);
+        if (op.ship === false) f.setValue({ fieldId: 'shipstatus', value: 'B' });   // a correction add-on: Packed, stamped at departure
+        else { f.setValue({ fieldId: 'shipstatus', value: 'C' }); stampOn(f, op); }
         setLines(f, op.lines);
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }

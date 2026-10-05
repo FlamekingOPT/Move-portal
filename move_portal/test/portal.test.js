@@ -1312,3 +1312,105 @@ test('depart_preview on an unchanged load keeps verify at/by', () => {
     ctx.run('depart_preview', { truckId: t.id, trailer: '537224', seal: 'PV1', actor: 'Bo' }, false);
     assert.deepEqual([ctx.data.getLoad(t.id).data.verify.by, n.n], ['Ana', 0]);
 });
+
+// ── Correct the IF (manager) ──
+test('truck_correct: manager only; qty mode writes if_qty and the truck verifies ready', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.throws(() => ctx.run('truck_correct', { truckId: t.id }, false), /Managers only/);
+    const real = ctx.ns.plannedIfs;
+    ctx.tx._t.onApply = op => { if (op.op === 'if_qty') ctx.ns.plannedIfs = () => real().map(f => f.ifId === '9001' ? Object.assign({}, f, { lines: [Object.assign({}, f.lines[0], { qty: op.to })] }) : f); };
+    const r = ctx.run('truck_correct', { truckId: t.id });
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.to]), [['if_qty', 480]]);
+    assert.deepEqual([r.verify.match, r.view.truck.status], [true, 'ready']);
+    assert.equal(ctx.data.getLoad(t.id).data.claim, '');
+});
+
+test('truck_correct: off mode is plan-only; on mode creates a Packed add-on IF and attaches it', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Jc1', [L975]).concat(printLabels(ctx, 1, 'Jc2', [{ item: '11', sku: 'YSN201', cfg: 'A', pcs: 120 }]));
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    ctx.run('truck_verify', { truckId: t.id });
+    const off = ctx.run('truck_correct', { truckId: t.id });
+    assert.deepEqual([off.written, off.planOnly], [[], ['if_create:700']]);
+    ctx.data.db.settings.writeMode = 'on';
+    const on = ctx.run('truck_correct', { truckId: t.id });
+    const created = ctx.tx._t.ops.find(o => o.op === 'if_create');
+    assert.deepEqual([created.toId, created.ship], ['700', false]);
+    assert.deepEqual(on.written, ['if_create:700']);
+    // The re-verify reads NetSuite: the snapshot fixture doesn't know the new IF, so it isn't kept on the truck here.
+    // Live NetSuite returns it as Packed, so it stays. The 'on'-mode attach is checked in the Stage 2 prod checklist.
+});
+
+test('approvals lists needs_fix trucks with instruction text', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    const a = ctx.run('approvals');
+    assert.equal(a.needsFix[0].truck.id, t.id);
+    assert.match(a.needsFix[0].diffs[0].text, /IF needs −24/);
+});
+
+test('truck_correct: a refused write surfaces correctError, keeps the truck needs_fix and frees the claim', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.throws(() => ctx.run('truck_correct', { truckId: t.id, keys: ['nope'] }), /Nothing the portal can correct/);
+    ctx.tx._t.failOn = 'if_qty:9001:975';
+    assert.throws(() => ctx.run('truck_correct', { truckId: t.id }), /^Error: Correction refused: .*fix it in NetSuite/);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.claim], ['needs_fix', '']);
+    assert.match(x.data.correctError, /IF changed in NetSuite/);
+    assert.deepEqual(x.data.corrections.map(k => k.key), ['if_short:9001:975']);
+    assert.equal(x.data.corrections[0].by.name, 'Jack K');
+    assert.match(ctx.run('approvals').needsFix[0].correctError, /IF changed/);
+    assert.throws(() => ctx.run('truck_correct', { truckId: ctx.run('truck_start', { ifIds: ['9002'] }).view.truck.id }), /needs a fix|Verify/);
+});
+
+test('truck_correct on mode: the created Packed IF is attached and kept when NetSuite returns it', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const ps = printLabels(ctx, 42, 'Jd1', [L975]).concat(printLabels(ctx, 1, 'Jd2', [LINE201]));
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    ctx.run('truck_verify', { truckId: t.id });
+    const real = ctx.ns.plannedIfs;
+    ctx.tx._t.onApply = op => { const id = String(ctx.tx._t.seq + 1); if (op.op === 'if_create') ctx.ns.plannedIfs = () => real().concat([{ ifId: id, ifNum: 'IF' + id, status: 'B', trandate: '2026-10-14', toId: '700', toNum: 'TO700', lines: [{ item: '11', sku: 'YSN201', qty: 120 }] }]); };
+    const r = ctx.run('truck_correct', { truckId: t.id });
+    assert.deepEqual([r.verify.match, r.view.truck.status], [true, 'ready']);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual(x.data.ifs.map(f => [f.ifId, !!f.gone]), [['901', false], ['9001', false]]);
+    assert.equal(x.data.correctionWrites['if_create:700'].id, '901');
+});
+
+test('truck_correct: a later correction of the same IF item with new numbers is written again', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_correct', { truckId: t.id });                 // 504 → 480; NetSuite still says 504 in the fixture
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.equal(ctx.tx._t.ops.length, 1);
+    printLabels(ctx, 1, 'Jmore', [L975]).forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('truck_correct', { truckId: t.id });                 // now 504 → 492: same opKey, new numbers
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.from, o.to]), [[504, 480], [504, 492]]);
+});
+
+test('report lists plan-only corrections as IF fix needed until the diff closes', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Je1', [L975]).concat(printLabels(ctx, 1, 'Je2', [LINE201]));
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    ctx.run('truck_verify', { truckId: t.id });
+    ctx.run('truck_correct', { truckId: t.id });
+    const rows = ctx.run('report').rows.filter(r => r.check === 'IF fix needed');
+    assert.deepEqual(rows.map(r => [r.ifNum, r.portal, r.ok]), [['(new)', 'new IF from TO700: YSN201 ×120', false]]);
+    ctx.run('truck_remove', { truckId: t.id, palletId: ps[42].id });
+    ctx.run('truck_verify', { truckId: t.id });
+    assert.deepEqual(ctx.run('report').rows.filter(r => r.check === 'IF fix needed'), []);
+});

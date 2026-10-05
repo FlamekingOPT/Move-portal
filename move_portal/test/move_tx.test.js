@@ -145,3 +145,13 @@ test('if_stamp idempotence compares seal digits: SEAL:5249330 on the IF is the s
     assert.equal(s.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: '537224', seal: '5249330', memo: 'm', lines: { 975: 504 } }), '9');
     assert.equal(s.f.saved, 0);
 });
+
+test('if_create with ship:false creates the IF Packed (B) with no trailer, seal or memo stamp', () => {
+    const s = setup({ ifLines: split() });
+    assert.equal(s.tx.apply({ op: 'if_create', toId: '600', lines: { 975: 24 }, ship: false }), '888');
+    const r = s.log.last;
+    assert.equal(r.values.shipstatus, 'B');
+    assert.equal('custbody7' in r.values, false);
+    assert.equal('custbody_rsm_container_no' in r.values, false);
+    assert.deepEqual(q(r), [24, 0]);
+});
