@@ -13,7 +13,7 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - `move_portal/local/`: node-only `snapshot_ns.js` (reads a prod snapshot) and `local_store.js` (persists to `local/store.json`, gitignored).
 - `move_portal/snapshot/` (gitignored): `prod-<date>.json` snapshots pulled read-only via the SuiteQL connector.
 - `move_portal/test/`: node tests with in-memory fakes, plus `preview_server.js` = the **local beta** on port 8765 (launch config `move-preview` / `move-preview-beta`). Manager view `http://localhost:8765/`, floor view `/?floor=1`. It serves the newest `snapshot/prod-*.json` (else the test fixture) and saves to `local/store.json`.
-- **Tests:** `node --test "move_portal/test/*.test.js"` → **133/133 pass** (2026-10-05, v3 + final-review fix wave). A bare folder path fails on Windows.
+- **Tests:** `node --test "move_portal/test/*.test.js"` → **141/141 pass** (2026-10-05, v3 + fix wave + local labels). A bare folder path fails on Windows.
 - **Spec:** `docs/superpowers/specs/2026-09-27-move-portal-design.md`. **D2 is SUPERSEDED** by `docs/superpowers/specs/2026-09-28-move-portal-bulk-to-design.md`.
 - **Plan:** `docs/superpowers/plans/2026-09-27-move-portal.md` (Tasks 0–15).
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
