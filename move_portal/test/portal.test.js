@@ -1648,3 +1648,59 @@ test('departure carries other items, clears the short note and frees the trailer
     assert.equal(ctx.run('unload_other_tick', { truckId: t.id, id: oid, on: false }, false).view.otherItems[0].in, false);
     assert.throws(() => ctx.run('unload_other_tick', { truckId: t.id, id: 'nope', on: true }, false), /not on this truck/);
 });
+
+// ── Task 1 follow-ups ──
+test('manager verify on a short truck needs no note (a note given is still saved)', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    const r = ctx.run('truck_verify', { truckId: t.id });                      // manager Re-check
+    assert.deepEqual([r.needsNote, r.view.truck.status, ctx.data.getLoad(t.id).data.shortNote], [undefined, 'needs_fix', undefined]);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'office knows' });
+    assert.equal(ctx.data.getLoad(t.id).data.shortNote.text, 'office knows');
+});
+
+test('the needsNote path writes nothing: no verify result, no note', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    assert.equal(ctx.run('truck_verify', { truckId: t.id, shortNote: '   ' }, false).needsNote, true);
+    const d = ctx.data.getLoad(t.id).data;
+    assert.deepEqual([d.verify, d.shortNote], [undefined, undefined]);
+});
+
+test('the short note is kept through depart_release and cleared only when the truck departs', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = readyTruck(ctx, 42);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'trailer full' }, false);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, seal: 'RN1' }), /NetSuite write failed/);
+    assert.equal(ctx.data.getLoad(t.id).data.shortNote.text, 'trailer full');
+    ctx.run('depart_release', { truckId: t.id });
+    assert.equal(ctx.data.getLoad(t.id).data.shortNote.text, 'trailer full');
+    ctx.tx._t.failOn = '';
+    assert.equal(ctx.run('depart_confirm', { truckId: t.id, seal: 'RN1' }).departed, true);
+    assert.equal(ctx.data.getLoad(t.id).data.shortNote, null);
+});
+
+test('caps: the short note is trimmed to 300 chars; a trailer over 20 chars or blank is refused', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 40);
+    ctx.run('truck_verify', { truckId: t.id, shortNote: '  ' + 'x'.repeat(400) + '  ' }, false);
+    assert.equal(ctx.data.getLoad(t.id).data.shortNote.text.length, 300);
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9002'], trailer: '   ' }, false), /Enter the trailer/);
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9002'], trailer: '1'.repeat(21) }, false), /20 characters/);
+    assert.equal(ctx.run('truck_start', { ifIds: ['9002'], trailer: ' ' + '1'.repeat(20) + ' ' }, false).view.trailer, '1'.repeat(20));
+});
+
+test('a needs_fix truck blocks its trailer; trailer collisions ignore case', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 40, 'Jnf', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'ab12' }, false).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'short' }, false);
+    assert.equal(ctx.data.getLoad(t.id).status, 'needs_fix');
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9002'], trailer: 'AB12' }, false), /already on an open truck/);
+    const extra = extraIfs(ctx, 1)[0];
+    ctx.run('truck_start', { ifIds: ['9002'], trailer: 'Zz9' }, false);          // two loading trucks
+    assert.throws(() => ctx.run('truck_start', { ifIds: [extra], trailer: ' zZ9 ' }, false), /already on an open truck/);
+});

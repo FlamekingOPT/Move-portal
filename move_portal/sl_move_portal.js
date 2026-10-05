@@ -367,7 +367,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (!planned || planned.indexOf(String(p.id)) !== -1) data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day });
             else data.updatePallet(p, { status: VP.LABELED, load: '', data: { flag: 'left_at_dock', leftAt: (c.now || {}).stamp || '', leftTruck: x.id } });
         });
-        data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
+        data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { error: '', writes: writes, workingAt: 0, claim: '', phase: '', shortNote: null } });   // the note lives until the truck leaves
         return { departed: true, view: truckView(mustTruck(x.id), c) };
     }
 
@@ -598,6 +598,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_start', false, (a, c) => {
         const ids = (a.ifIds || []).map(String), trailer = String(a.trailer || '').trim();
         if (!trailer) throw userErr('Enter the trailer #');
+        if (trailer.length > 20) throw userErr('The trailer # is too long (20 characters max)');
         if (!ids.length) throw userErr('Pick at least one IF');
         if (data.loadsByStatus(TRAILER_BUSY).some(x => x.data && x.data.v3 && normTrailer(x.data.trailer) === normTrailer(trailer))) throw userErr('Trailer ' + trailer + ' is already on an open truck');
         const planned = ns.plannedIfs(), taken = {};
@@ -681,7 +682,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { view: truckView(mustTruck(x.id), c) };
     });
 
-    act('truck_verify', false, (a, c) => verifyOut(verifyTruck(a.truckId, c, { needNote: true, note: String(a.shortNote || '').trim() }), c));
+    // A floor Verify that finds a short needs a note; a manager's Re-check never does (a note given is still saved).
+    act('truck_verify', false, (a, c) => verifyOut(verifyTruck(a.truckId, c, { needNote: !c.mgr, note: String(a.shortNote || '').trim().slice(0, 300) }), c));
 
     // Other (non-inventory) items: typed lines, not in NetSuite, ignored by Verify. An edit sends a ready truck back to loading.
     function editOther(id, fn) {
@@ -882,7 +884,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // What the claim write carries, so a departing truck always has its plan (no claimed-but-unplanned state).
     function departData(d, inp, c) {
         return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
-            approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '', otherItems: d.otherItems || [] }, inp), shortNote: null, plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
+            approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '', otherItems: d.otherItems || [] }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
             bol: d.plan.bol, ifs: d.ifs, departPallets: d.palletKey, writes: {} };
     }
     // Re-verify and plan from a truck copy; a mismatch is thrown, so a claim is never taken (or is released) on a load that no longer matches.
