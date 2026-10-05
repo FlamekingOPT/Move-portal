@@ -71,6 +71,7 @@ h3{font-size:15px;margin:16px 0 8px}
         const isMgr = B.mode === 'manager';
         const S = { side: get('mv_side') === 'in' ? 'in' : 'out', tab: null, who: get('mv_who') || '', poll: null,
             ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
+        if (isMgr) S.who = B.me;   // the manager page is a NetSuite login: that user is the actor, no "I am" pick
 
         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function put(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
@@ -131,16 +132,17 @@ h3{font-size:15px;margin:16px 0 8px}
         };
 
         function shell() {
-            const whoCtl = B.roster.length
-                ? '<select id="who"><option value="">— pick —</option>' + B.roster.map(n => '<option' + (n === S.who ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
-                : '<input id="who" value="' + esc(S.who) + '" placeholder="your name">';
+            const whoCtl = isMgr ? ''
+                : B.roster.length
+                    ? '<select id="who"><option value="">— pick —</option>' + B.roster.map(n => '<option' + (n === S.who ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
+                    : '<input id="who" value="' + esc(S.who) + '" placeholder="your name">';
             document.body.innerHTML = '<div class="top"><div class="ttl"><b>Move Portal</b><span>' + esc(B.me) + (isMgr ? ' · manager' : '') + '</span></div>' +
-                '<div class="who">I am ' + whoCtl + '</div>' +
+                (isMgr ? '' : '<div class="who">I am ' + whoCtl + '</div>') +
                 '<div class="toggle"><button data-act="side" data-v="out" class="' + (S.side === 'out' ? 'on out' : '') + '">📤 Outbound · ' + esc(B.fromName) + '</button>' +
                 '<button data-act="side" data-v="in" class="' + (S.side === 'in' ? 'on in' : '') + '">📥 Inbound · ' + esc(B.toName) + '</button></div></div>' +
                 '<div class="subnav" id="subnav"></div><main id="main"></main>';
             const w = $('who');
-            w.onchange = w.oninput = () => { S.who = w.value.trim(); put('mv_who', S.who); };
+            if (w) w.onchange = w.oninput = () => { S.who = w.value.trim(); put('mv_who', S.who); };
             renderNav();
         }
 

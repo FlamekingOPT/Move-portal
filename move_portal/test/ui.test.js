@@ -74,3 +74,10 @@ test('fix11: departure confirm text, stuck receipt button, scrollable report', (
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.split("x.stuck ? 'Re-approve receipt'").length - 1, 2);
 });
+
+test('manager page uses the NetSuite login, no "I am" picker; floor keeps it', () => {
+    const src = ui._clientMain.toString();
+    assert.ok(src.indexOf('if (isMgr) S.who = B.me;') !== -1, 'manager who defaults to the NetSuite user');
+    assert.ok(/const whoCtl = isMgr \? ''/.test(src), 'no picker on the manager page');
+    assert.ok(src.indexOf("if (w) w.onchange") !== -1, 'picker wiring guarded');
+});
