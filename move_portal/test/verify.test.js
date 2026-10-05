@@ -405,3 +405,10 @@ test('ship_pending: reserves loaded surplus like ready; its shipReq seal is take
     const r = v.classifyUnloadScan({ pallet: pal(1, VP.LOADED, '5', []), truckId: '7', trucks: { 5: { status: T.SHIP_PENDING, label: 'Trailer X' } } });
     assert.equal(r.result, 'locked');
 });
+
+test('buildReads.onHand and SQL.onHand', () => {
+    const r = v.buildReads(Object.assign({}, raw, { onHand: [{ item: 975, onhand: 12000 }, { item: 11, onhand: 300 }] }));
+    assert.deepEqual(r.onHand(), { 975: 12000, 11: 300 });
+    assert.deepEqual(v.buildReads(raw).onHand(), {});
+    assert.match(v.SQL('35', '46').onHand, /aggregateItemLocation ail WHERE ail.location = 35/);
+});

@@ -174,7 +174,7 @@ define([], function () {
         if (!m) return null;
         let h = Number(m[4]);
         if (m[6]) { const pm = /pm/i.test(m[6]); if (pm && h < 12) h += 12; if (!pm && h === 12) h = 0; }
-        return { dayIso: m[3] + '-' + pad2(m[1]) + '-' + pad2(m[2]), hour: h };
+        return { dayIso: m[3] + '-' + pad2(m[1]) + '-' + pad2(m[2]), hour: h, minute: Number(m[5]) };
     }
 
     // ── tracker ───────────────────────────────────────────────────────────

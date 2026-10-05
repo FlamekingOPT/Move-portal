@@ -315,7 +315,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (x.status === T.SHIP_PENDING || x.status === T.DEPARTING) throw userErr((truckLabel(x) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
         throw userErr('This truck is ' + x.status + ', not waiting for a ship confirmation');
     }
-    function sealTaken(seal, id) { if (verify.sealUsed(allTrucks(), seal, id)) throw userErr('Seal ' + seal + ' was already used on another truck'); }
+    function sealTaken(seal, id) {
+        const h = verify.sealHolder(allTrucks(), seal, id);
+        if (!h) return;
+        const tr = (h.data.depart && h.data.depart.trailer) || h.data.trailer;
+        throw userErr('Seal ' + seal + ' is already on ' + (tr ? 'Trailer ' + tr : truckLabel(h)));
+    }
     // chk: a checkTruck result that matched. The plan comes from the IFs and pallets it checked.
     function departPlan(x, inp, c, chk) {
         const truckNo = verify.truckNoForDay(chk.trucks, c.now.dayIso, x.id), ps = chk.ps;
@@ -892,6 +897,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustTruck(a.truckId);
         mustReady(x);
         const inp = { trailer: String(x.data.trailer || '').trim(), seal: String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
+        if (!inp.trailer) throw userErr('Enter the trailer # (start the truck again with its trailer)');
         if (!inp.seal) throw userErr('Enter the seal #');
         sealTaken(inp.seal, x.id);
         const v = verifyTruck(x.id, c, { truck: x, poll: true });    // an unchanged load keeps verify at/by
@@ -1147,6 +1153,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     // ── v3 manager approvals and shadow report ───────────────────────────
+    const FIX_KINDS = ['if_short', 'if_over', 'no_if'];
+    // Whole minutes from a NetSuite stamp to now (null when either can't be read).
+    function minutesSince(stamp, c) {
+        const abs = p => p ? Date.UTC(Number(p.dayIso.slice(0, 4)), Number(p.dayIso.slice(5, 7)) - 1, Number(p.dayIso.slice(8, 10))) / 60000 + p.hour * 60 + (p.minute || 0) : null;
+        const a = abs(core.parseNsStamp(stamp)), b = abs(core.parseNsStamp(c.now.stamp));
+        return a == null || b == null ? null : Math.max(0, b - a);
+    }
     function whoName(w) { return w && typeof w === 'object' ? String(w.name || w.id || '') : String(w == null ? '' : w); }
     act('approvals', true, (a, c) => {
         const trucks = allTrucks();
@@ -1155,29 +1168,39 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const sum = x => truckSummary(x, counts);
         // needs_fix: the stored diffs (only the manager's Re-check calls truck_verify again); one grouped read of loaded pallets.
         const fix = trucks.filter(x => x.status === T.NEEDS_FIX);
-        let needsFix = [], freeIfs = [];
+        let fixes = [], fixTrucks = [], freeIfs = [];
         if (fix.length) {
             const loaded = {}, dp = defPcs(c), planned = ns.plannedIfs(), taken = takenByOthers(trucks, null);
             // Spec §7: a manager may add any Picked/Packed IF that no truck has (the card's picker), not only the suggested ones.
             freeIfs = planned.filter(f => !taken[String(f.ifId)]).map(f => ({ ifId: f.ifId, ifNum: f.ifNum, toNum: f.toNum, lines: f.lines }));
             data.palletsByStatus([VP.LOADED]).forEach(p => { (loaded[String(p.loadId)] = loaded[String(p.loadId)] || []).push(p); });
             const sk = skuNames([...new Set(fix.reduce((s, x) => s.concat(((x.data.verify || {}).diffs || []).filter(d => d.item).map(d => String(d.item))), []))]);
-            needsFix = fix.map(x => {
-                const ps = loaded[String(x.id)] || [], diffs = (x.data.verify || {}).diffs || [];
-                return { truck: truckSummary(x, countsFromPallets(x.id, ps)), diffs: pubDiffs(diffs, ps, sk), suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned),
-                    corrections: x.data.corrections || [], correctError: x.data.correctError || '', orphans: orphanCreates(x), stuck: stuckCorrect(x), writeMode: writeMode(c), verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '' };
+            // fixes: one Correct-the-IF card per correctable diff; trucks: one card per waiting truck (its IFs, add/drop).
+            fix.forEach(x => {
+                const ps = loaded[String(x.id)] || [], diffs = (x.data.verify || {}).diffs || [], label = truckLabel(x), corr = x.data.corrections || [];
+                pubDiffs(diffs, ps, sk).filter(d => FIX_KINDS.indexOf(d.kind) !== -1).forEach(d => fixes.push(Object.assign({ truckId: x.id, truckLabel: label, key: d.key, kind: d.kind, text: d.text },
+                    d.ifId ? { ifId: d.ifId, ifNum: d.ifNum } : {}, d.toNum ? { toNum: d.toNum } : {}, d.toId ? { toId: d.toId } : {}, d.item ? { item: d.item, sku: d.sku } : {},
+                    { shortNote: x.data.shortNote || null, corrections: corr.filter(k => k.key === d.key), correctError: x.data.correctError || '' })));
+                const flag = kind => { const o = {}; diffs.filter(d => d.kind === kind).forEach(d => { o[String(d.ifId)] = true; }); return o; };
+                const gone = flag('if_gone'), empty = flag('if_empty');
+                fixTrucks.push({ truck: truckSummary(x, countsFromPallets(x.id, ps)), trailer: x.data.trailer || '',
+                    ifs: (x.data.ifs || []).map(f => ({ ifId: f.ifId, ifNum: f.ifNum, toNum: f.toNum, lines: f.lines, gone: !!(f.gone || gone[String(f.ifId)]), empty: !!empty[String(f.ifId)] })),
+                    suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned), orphans: orphanCreates(x), stuck: stuckCorrect(x), correctError: x.data.correctError || '',
+                    shortNote: x.data.shortNote || null, verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '' });
             });
         }
         const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
             const q = x.data.shipReq;
             return { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
                 ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
-                otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '' };
+                otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) };
         });
         return {
             shipPending: shipPending,
-            needsFix: needsFix,
+            fixes: fixes,
+            trucks: fixTrucks,
             freeIfs: freeIfs,
+            writeMode: writeMode(c),
             retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { canRelease: !stampWritten(x) })),
             receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;

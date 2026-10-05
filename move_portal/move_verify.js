@@ -96,10 +96,12 @@ define([], function () {
     function departOf(t) { return (t && t.data && t.data.depart) || null; }
     // A seal is taken once a truck departed with it, or while the floor's Mark shipped holds it (shipReq).
     function sealOf(t) { const d = departOf(t), q = t && t.data && t.data.shipReq; return d ? d.seal : q ? q.seal : null; }
-    function sealUsed(trucks, seal, exceptId) {
+    // The other truck holding this seal (or null).
+    function sealHolder(trucks, seal, exceptId) {
         const n = sealKey(seal);
-        return !!n && (trucks || []).some(t => String(t.id) !== String(exceptId) && sealOf(t) != null && sealKey(sealOf(t)) === n);
+        return (n && (trucks || []).find(t => String(t.id) !== String(exceptId) && sealOf(t) != null && sealKey(sealOf(t)) === n)) || null;
     }
+    function sealUsed(trucks, seal, exceptId) { return !!sealHolder(trucks, seal, exceptId); }
     function truckNoForDay(trucks, dayIso, exceptId) {
         return 1 + (trucks || []).filter(t => String(t.id) !== String(exceptId) && departOf(t) && departOf(t).day === dayIso).length;
     }
@@ -230,7 +232,8 @@ define([], function () {
             case VP.IN_TRANSIT: return pt === me ? { result: 'ok', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
             case VP.MISSING: return pt === me ? { result: 'late', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
             case VP.RECEIVED: return pt === me ? { result: 'dup' } : Object.assign({ result: 'dup_other' }, ref);
-            case VP.LOADED: if (other.status === TRUCK.DEPARTING || other.status === TRUCK.SHIP_PENDING) return Object.assign({ result: 'locked' }, ref);
+            case VP.LOADED: if (other.status === TRUCK.SHIP_PENDING) return Object.assign({ result: 'locked', reason: 'ship_pending' }, ref);
+                if (other.status === TRUCK.DEPARTING) return Object.assign({ result: 'locked' }, ref);
                 return { result: 'never_loaded' };
             default: return { result: 'never_loaded' };
         }
@@ -343,7 +346,9 @@ define([], function () {
             links: "SELECT ptl.previousdoc AS ifid, ptl.nextdoc AS rcptid FROM previoustransactionlink ptl WHERE ptl.linktype = 'TOrdCost' AND ptl.previousdoc IN ({IDS})",
             receipts: "SELECT r.id AS rcptid, r.tranid AS tranid, r.custbody_rsm_container_no AS trailer, r.custbody7 AS seal, tl.item AS item, tl.quantity AS qty " +
                 "FROM transaction r JOIN transactionline tl ON tl.transaction = r.id WHERE r.type = 'ItemRcpt' AND tl.location = " + T + " AND tl.quantity > 0 AND r.id IN ({IDS})",
-            items: "SELECT i.id AS item, i.itemid AS sku, i.displayname AS descr, i.upccode AS upc FROM item i WHERE i.id IN ({IDS})"
+            items: "SELECT i.id AS item, i.itemid AS sku, i.displayname AS descr, i.upccode AS upc FROM item i WHERE i.id IN ({IDS})",
+            // Riverside on hand, for the local print plan (in NetSuite the plan reads live stock through move_data).
+            onHand: "SELECT ail.item AS item, SUM(ail.quantityonhand) AS onhand FROM aggregateItemLocation ail WHERE ail.location = " + F + " AND ail.quantityonhand > 0 GROUP BY ail.item"
         };
     }
 
@@ -388,6 +393,7 @@ define([], function () {
             ifsByTo: () => JSON.parse(JSON.stringify(byTo)),
             receiptsByIf: () => JSON.parse(JSON.stringify(recs)),
             items: () => (raw.items || []).map(i => ({ item: S(i.item), sku: S(i.sku), desc: S(i.descr), upc: S(i.upc) })),
+            onHand: () => { const o = {}; (raw.onHand || []).forEach(r => { o[S(r.item)] = (o[S(r.item)] || 0) + Number(r.onhand || 0); }); return o; },
             pulledAt: () => S(raw.pulledAt),
             resetCache: () => {}
         };
@@ -457,7 +463,7 @@ define([], function () {
     }
 
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
-        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
+        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });

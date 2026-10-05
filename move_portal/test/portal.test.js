@@ -242,7 +242,7 @@ test('depart: exact match → floor departs, stamps planned only in off mode, pa
     assert.equal(ctx.tx._t.ops.length, 0);
     assert.equal(ctx.data.getPallet(ps[0].id).status, 'in_transit');
     const t2 = readyTruck(ctx, 1, '9002').t;                                  // IF9001 is taken by the departed truck
-    assert.throws(() => ship(ctx, { truckId: t2.id, seal: '5249330' }), /already used/);
+    assert.throws(() => ship(ctx, { truckId: t2.id, seal: '5249330' }), new RegExp('Seal 5249330 is already on ' + t.label));
 });
 
 test('depart: a failed write leaves the truck departing with an error; a manager retry finishes without rewriting', () => {
@@ -1227,7 +1227,7 @@ test('a pallet taken off right after the claim: re-verified from the claimed sta
     ctx.data.updateLoad = realUpd;
     assert.deepEqual([r.needsFix, r.diffs[0].kind], [true, 'if_short']);
     const d = ctx.data.getLoad(t.id);
-    assert.deepEqual([d.status, d.data.claim, d.data.workingAt, d.data.phase, d.data.depart, d.data.plan], ['needs_fix', '', 0, '', null, null]);
+    assert.deepEqual([d.status, d.data.claim, d.data.workingAt, d.data.phase, d.data.depart, d.data.plan, d.data.shipReq], ['needs_fix', '', 0, '', null, null, null]);
     assert.equal(ctx.data.getPallet(ps[1].id).status, 'loaded');
 });
 
@@ -1298,9 +1298,10 @@ test('depart_release is refused once a stamp landed, and while the departure is 
     assert.throws(() => c2.run('depart_release', { truckId: b.id }), /still running/);
 });
 
-test('toNeedsFix refuses when the IFs changed while the departure check ran', () => {
+test('toNeedsFix (pending) refuses when the IFs changed while ship_confirm checked the marked truck', () => {
     const ctx = setup();
     const { t } = readyTruck(ctx, 42);
+    ctx.run('ship_mark', { truckId: t.id, seal: 'TG1' }, false);
     const real = ctx.ns.plannedIfs;
     let armed = true;
     ctx.ns.plannedIfs = () => {
@@ -1308,8 +1309,9 @@ test('toNeedsFix refuses when the IFs changed while the departure check ran', ()
         if (armed) { armed = false; const x = ctx.data.getLoad(t.id); ctx.data.updateLoad(x, { data: { ifs: x.data.ifs.concat([real().find(f => f.ifId === '9002')]) } }); }
         return out;
     };
-    assert.throws(() => ship(ctx, { truckId: t.id, seal: 'TG1' }), /changed while it was being checked/);
-    assert.equal(ctx.data.getLoad(t.id).status, 'ready');
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }), /changed while it was being checked/);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.claim || '', x.data.shipReq.seal], ['ship_pending', '', 'TG1']);
 });
 
 test('post-claim match: two identical pallets swapped after the claim → the plan is rewritten and the truck departs', () => {
@@ -1379,8 +1381,8 @@ test('approvals lists needs_fix trucks with instruction text', () => {
     const { t } = truckWith(ctx, 40);
     ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     const a = ctx.run('approvals');
-    assert.equal(a.needsFix[0].truck.id, t.id);
-    assert.match(a.needsFix[0].diffs[0].text, /IF needs −24/);
+    assert.deepEqual([a.fixes[0].truckId, a.trucks[0].truck.id], [t.id, t.id]);
+    assert.match(a.fixes[0].text, /IF needs −24/);
 });
 
 test('approvals needs_fix entry says who verified and when (name, never an object)', () => {
@@ -1388,13 +1390,13 @@ test('approvals needs_fix entry says who verified and when (name, never an objec
     const { t } = truckWith(ctx, 40);
     ctx.run('truck_verify', { truckId: t.id, shortNote: 'short pick' }, false);
     const v = ctx.data.getLoad(t.id).data.verify;
-    let e = ctx.run('approvals').needsFix[0];
+    let e = ctx.run('approvals').trucks[0];
     assert.equal(typeof e.verifiedBy, 'string');
     assert.ok(e.verifiedBy);
     assert.deepEqual([e.verifiedBy, e.verifiedAt], [String(v.by), v.at]);
     const L = ctx.data.getLoad(t.id);
     ctx.data.updateLoad(L, { data: { verify: Object.assign({}, L.data.verify, { by: { id: '7', name: 'Ann Mgr' } }) } });
-    e = ctx.run('approvals').needsFix[0];
+    e = ctx.run('approvals').trucks[0];
     assert.equal(e.verifiedBy, 'Ann Mgr');
 });
 
@@ -1411,7 +1413,8 @@ test('truck_correct: a refused write surfaces correctError, keeps the truck need
     assert.match(x.data.correctError, /IF changed in NetSuite/);
     assert.deepEqual(x.data.corrections.map(k => k.key), ['if_short:9001:975']);
     assert.equal(x.data.corrections[0].by.name, 'Jack K');
-    assert.match(ctx.run('approvals').needsFix[0].correctError, /IF changed/);
+    assert.match(ctx.run('approvals').fixes[0].correctError, /IF changed/);
+    assert.deepEqual(ctx.run('approvals').fixes[0].corrections.map(k => k.key), ['if_short:9001:975']);
     assert.throws(() => ctx.run('truck_correct', { truckId: ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() }).view.truck.id }), /needs a fix|Verify/);
 });
 
@@ -1473,7 +1476,7 @@ test('a dropped add-on IF is not created again: Correct skips it with a reason, 
     assert.deepEqual(again.written, []);
     assert.equal(again.skipped[0].key, 'if_create:700');
     assert.match(again.skipped[0].reason, /already created as IF 901: add it from the suggestions/);
-    assert.match(ctx.run('approvals').needsFix[0].orphans[0].text, /already created as IF 901/);
+    assert.match(ctx.run('approvals').trucks[0].orphans[0].text, /already created as IF 901/);
     const row = ctx.run('report').rows.find(r => /Add-on IF 901 was dropped/.test(r.check + ' ' + r.portal));
     assert.ok(row, 'report row');
     assert.equal(row.ok, false);
@@ -1764,7 +1767,7 @@ test('ship_pending: holds its seal, is listed as open, refuses edits; a re-mark 
     const a = readyTruck(ctx, 42).t;
     const b = readyTruck(ctx, 42, '9002').t;
     ctx.run('ship_mark', { truckId: a.id, seal: '5250010' }, false);
-    assert.throws(() => ctx.run('ship_mark', { truckId: b.id, seal: '5250010' }, false), /already used/);
+    assert.throws(() => ctx.run('ship_mark', { truckId: b.id, seal: '5250010' }, false), new RegExp('Seal 5250010 is already on ' + a.label));
     assert.ok(ctx.run('truck_planned', {}, false).open.some(x => x.id === a.id && x.status === 'ship_pending'));
     assert.throws(() => ctx.run('truck_other_add', { truckId: a.id, desc: 'Desk', qty: 1 }, false), /waiting for a manager/);
     assert.throws(() => ctx.run('truck_correct', { truckId: a.id }), /waiting for a manager/);
@@ -1778,4 +1781,57 @@ test('ship_pending: holds its seal, is listed as open, refuses edits; a re-mark 
     assert.deepEqual([v.truck.status, v.truck.sentBack], ['ship_pending', null]);
     assert.equal(ctx.run('ship_confirm', { truckId: a.id }).view.truck.depart.markedBy, 'Miguel');
     assert.throws(() => ctx.run('ship_confirm', { truckId: a.id }), /departed, not waiting/);
+});
+
+// ── rework Task 3: approvals split; Task 2 minors ──
+test('approvals: fixes per diff (with short note) and trucks per needs_fix truck', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 40, 'Jap', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'AP1' }, false).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('truck_verify', { truckId: t.id, shortNote: 'trailer full' }, false);
+    const a = ctx.run('approvals');
+    assert.equal(a.needsFix, undefined);
+    assert.deepEqual([a.fixes.length, a.fixes[0].truckLabel, a.fixes[0].ifNum, a.fixes[0].shortNote.text], [1, 'Trailer AP1', 'IF9001', 'trailer full']);
+    assert.match(a.fixes[0].text, /IF needs −24/);
+    assert.deepEqual([a.trucks.length, a.trucks[0].trailer, a.trucks[0].ifs.map(f => f.ifNum)], [1, 'AP1', ['IF9001']]);
+});
+
+test('approvals: top-level keys; trucks flag empty/gone IFs; fixes skip diffs that are not if_short/if_over/no_if', () => {
+    const ctx = setup();
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'], trailer: 'AP2' }).view.truck;
+    printLabels(ctx, 42, 'Jap2', [L975]).forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    const real = ctx.ns.plannedIfs;
+    ctx.ns.plannedIfs = () => real().filter(f => f.ifId !== '9002');
+    ctx.run('truck_verify', { truckId: t.id });
+    const a = ctx.run('approvals');
+    assert.deepEqual(Object.keys(a).sort(), ['fixes', 'freeIfs', 'receipts', 'retries', 'shipPending', 'trucks', 'writeMode']);
+    assert.deepEqual(a.trucks[0].ifs.map(f => [f.ifNum, f.gone, f.empty]), [['IF9001', false, false], ['IF9002', true, false]]);
+    assert.deepEqual(a.fixes, []);
+    ctx.ns.plannedIfs = real;
+    ctx.run('truck_drop_if', { truckId: t.id, ifId: '9002' });
+    const t2 = ctx.run('truck_start', { ifIds: ['9002'], trailer: 'AP3' }).view.truck;
+    ctx.run('truck_verify', { truckId: t2.id });
+    assert.deepEqual(ctx.run('approvals').trucks.find(x => x.truck.id === t2.id).ifs.map(f => f.empty), [true]);
+});
+
+test('ship_mark refuses a truck with no trailer; shipPending carries ageMin', () => {
+    const ctx = setup();
+    const a = readyTruck(ctx, 42).t;
+    ctx.data.updateLoad(ctx.data.getLoad(a.id), { data: { trailer: '' } });
+    assert.throws(() => ctx.run('ship_mark', { truckId: a.id, seal: '5250020' }, false), /Enter the trailer/);
+    ctx.data.updateLoad(ctx.data.getLoad(a.id), { data: { trailer: 'AG1' } });
+    ctx.run('ship_mark', { truckId: a.id, seal: '5250020' }, false);
+    const L = ctx.data.getLoad(a.id);
+    ctx.data.updateLoad(L, { data: { shipReq: Object.assign({}, L.data.shipReq, { at: '10/14/2026 1:30:05 pm' }) } });
+    assert.equal(ctx.run('approvals').shipPending[0].ageMin, 44);       // now = 2:14:05 pm
+});
+
+test('unload scan of a pallet on a ship_pending truck: locked, with its label and reason', () => {
+    const ctx = setup();
+    const a = readyTruck(ctx, 42);
+    ctx.run('ship_mark', { truckId: a.t.id, seal: '5250030' }, false);
+    const d = departed(ctx, 42, '5250031', '9002');
+    const r = ctx.run('unload_scan', { truckId: d.t.id, raw: a.ps[0].code }, false);
+    assert.deepEqual([r.result, r.reason, r.otherLabel], ['locked', 'ship_pending', ctx.data.getLoad(a.t.id).data.trailer ? 'Trailer ' + ctx.data.getLoad(a.t.id).data.trailer : '']);
 });

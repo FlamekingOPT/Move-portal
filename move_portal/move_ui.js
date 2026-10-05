@@ -863,7 +863,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'dup_other': return flash('amber', '🟡 Already received on ' + esc(r.otherLabel), line, '');
                 case 'other_truck': return flash('amber', '🟡 Belongs to ' + esc(r.otherLabel), line, '', '<button data-act="uother" data-id="' + esc(p.id) + '">Receive it there</button><button data-act="clearres">Set aside</button>');
                 case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the office. Set it aside.');
-                case 'locked': return flash('red', '❌ Its truck is still departing', line, 'Wait a minute and scan again.');
+                case 'locked': return r.reason === 'ship_pending' ? flash('red', '❌ ' + esc(r.otherLabel) + ' is waiting for a manager to confirm shipping', line, 'Ask a manager to confirm it in Approvals, then scan again.')
+                    : flash('red', '❌ Its truck is still departing', line, 'Wait a minute and scan again.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Set aside and call the supervisor.');
                 default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), '');
             }
@@ -910,6 +911,15 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<button class="dbtn gh" data-act="apverify" data-id="' + id + '" data-label="' + lab + '">Re-check</button>' +
                 '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">Open truck</button></div></div>';
         }
+        // Bridge until Task 5 reworks this screen: one card per needs_fix truck from approvals.trucks + its approvals.fixes.
+        function fixCards(r) {
+            return (r.trucks || []).map(tk => {
+                const mine = (r.fixes || []).filter(fx => String(fx.truckId) === String(tk.truck.id));
+                const drops = (tk.ifs || []).filter(f => f.gone || f.empty).map(f => ({ key: (f.gone ? 'if_gone:' : 'if_empty:') + f.ifId, kind: f.gone ? 'if_gone' : 'if_empty',
+                    ifId: f.ifId, ifNum: f.ifNum, text: f.ifNum + (f.gone ? ' is no longer Picked/Packed' : ' has nothing loaded') + ' → drop it' }));
+                return Object.assign({}, tk, { diffs: mine.concat(drops), corrections: mine.reduce((a, fx) => a.concat(fx.corrections || []), []), writeMode: r.writeMode });
+            });
+        }
         // Manager only (spec §7): any Picked/Packed IF no truck has, not just the suggested ones.
         function anyIfHtml(free, truckId) {
             if (!free || !free.length) return '';
@@ -921,7 +931,8 @@ h3{font-size:15px;margin:16px 0 8px}
             main((msg || '') + '<div class="muted">Loading…</div>');
             const r = await api('approvals');
             if (!r.ok) { main(errBox(r.error)); return; }
-            const fix = (r.needsFix || []).length ? '<h3>Needs IF fix</h3>' + r.needsFix.map(n => fixCard(n, r.freeIfs)).join('') : '';
+            const fixList = fixCards(r);
+            const fix = fixList.length ? '<h3>Needs IF fix</h3>' + fixList.map(n => fixCard(n, r.freeIfs)).join('') : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
                 (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');

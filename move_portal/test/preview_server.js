@@ -33,7 +33,18 @@ if (!data.db.settings.v3seeded) {
 }
 data.db.settings.trailers = data.db.settings.trailers || [];
 TRAILERS.forEach(t => { if (data.db.settings.trailers.indexOf(t) < 0) data.db.settings.trailers.push(t); });
-ns.items().forEach(i => { if (!data.db.items.some(x => String(x.sku).toUpperCase() === String(i.sku).toUpperCase())) data.db.items.push(i); });
+ns.items().forEach(i => {
+    const have = data.db.items.find(x => String(x.sku).toUpperCase() === String(i.sku).toUpperCase());
+    if (!have) data.db.items.push(i);
+    else { if (i.desc) have.desc = i.desc; if (!have.item) have.item = i.item; }
+});
+// Riverside on hand for the print plan, from the snapshot's onHand rows. A snapshot without them leaves the stock as it is.
+const onHand = ns.onHand ? ns.onHand() : {};
+if (Object.keys(onHand).length) {
+    const stock = {};
+    Object.keys(onHand).forEach(k => { stock[k] = { onHand: onHand[k], avail: onHand[k] }; });
+    data.db.stock[String(data.db.settings.locFrom)] = stock;
+}
 store.save();
 
 let mgrNow = true;
