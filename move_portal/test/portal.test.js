@@ -851,3 +851,77 @@ test('a finished approval clears claim, workingAt and phase', () => {
     const d = ctx.data.getLoad(t.id);
     assert.deepEqual([d.status, d.data.claim, d.data.workingAt, d.data.phase], ['received', '', 0, '']);
 });
+
+// ── v3 unload: review round 1 ──
+test('approving: a stale or errored claim can be re-approved; a fresh one is refused; scans stay refused', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 2, 'SR1');
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { status: 'approving', data: { claim: 'old', workingAt: Date.now(), phase: 'receive', prevStatus: 'receiving' } });
+    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /already being approved/);
+    assert.throws(() => ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false), /not ready to unload/);
+    assert.equal(ctx.run('unload_get', { truckId: t.id }, false).view.counts.in, 2);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { workingAt: Date.now() - 11 * 60 * 1000 } });
+    ctx.run('receipt_approve', { truckId: t.id });
+    assert.equal(ctx.data.getLoad(t.id).status, 'received');
+});
+
+test('approving with a saved error restores the saved prevStatus on another failure', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = mixedOnTruck(ctx, 'SR2');
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { status: 'approving', data: { claim: 'old', workingAt: Date.now(), error: 'boom', prevStatus: 'receiving' } });
+    ctx.tx._t.failOn = 'receipt:9001:1';
+    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Receipt write failed/);
+    assert.equal(ctx.data.getLoad(t.id).status, 'receiving');
+});
+
+test('late arrival keeps the received truck in unload_list; rplan has each op once after a retry', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = mixedOnTruck(ctx, 'SR3');
+    ctx.tx._t.failOn = 'receipt:901:1';
+    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Receipt write failed/);
+    assert.equal((ctx.data.getLoad(t.id).data.rplan || []).length, 0);
+    ctx.run('receipt_approve', { truckId: t.id });
+    assert.deepEqual(ctx.data.getLoad(t.id).data.rplan.map(o => o.ifId + ':' + o.seq), ['9001:1', 'new:700:1']);
+    assert.deepEqual(ctx.run('unload_list', {}, false).trucks, []);
+    const ctx2 = setup();
+    const a = departed(ctx2, 2, 'SR4');
+    ctx2.run('unload_scan', { truckId: a.t.id, raw: a.ps[0].code }, false);
+    ctx2.run('receipt_approve', { truckId: a.t.id });
+    ctx2.run('unload_scan', { truckId: a.t.id, raw: a.ps[1].code }, false);
+    assert.deepEqual(ctx2.run('unload_list', {}, false).trucks.map(x => x.id), [a.t.id]);
+});
+
+test('postedSeq is stamped only on pallets in the plan', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 3, 'SR5');
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false);
+    ctx.data.db.settings.writeMode = 'on';
+    const realApply = ctx.tx.apply;
+    ctx.tx.apply = op => { ctx.data.updatePallet(ctx.data.getPallet(ps[1].id), { status: 'received' }); return realApply(op); };   // lands after the plan was computed
+    ctx.run('receipt_approve', { truckId: t.id });
+    ctx.tx.apply = realApply;
+    assert.equal(ctx.data.getPallet(ps[0].id).data.postedSeq, 1);
+    assert.equal(ctx.data.getPallet(ps[1].id).data.postedSeq, undefined);
+});
+
+test('unload_other and unload_damaged log scans; flagged, undo-skips-posted, damaged', () => {
+    const ctx = setup();
+    const A = departed(ctx, 2, 'SU1');
+    departed(ctx, 1, 'SU2', '9002');
+    const n0 = ctx.data.db.scans.length;
+    ctx.run('unload_other', { palletId: A.ps[0].id }, false);
+    assert.deepEqual(ctx.data.db.scans.slice(n0).map(s => s.result), ['ok']);
+    ctx.run('unload_damaged', { palletId: A.ps[0].id }, false);
+    assert.equal(ctx.data.getPallet(A.ps[0].id).damaged, true);
+    assert.equal(ctx.data.db.scans[ctx.data.db.scans.length - 1].result, 'damaged');
+    const stray = printLabels(ctx, 1, 'Jstray2', [L975]);
+    ctx.run('unload_scan', { truckId: A.t.id, raw: stray[0].code }, false);
+    assert.deepEqual(ctx.run('unload_get', { truckId: A.t.id }, false).view.flagged.map(p => p.id), [stray[0].id]);
+    ctx.run('unload_scan', { truckId: A.t.id, raw: A.ps[1].code }, false);
+    ctx.run('receipt_approve', { truckId: A.t.id });
+    assert.equal(ctx.run('unload_undo', { truckId: A.t.id }, false).view.counts.in, 2);   // posted pallets are not undone
+    assert.throws(() => ctx.run('unload_damaged', { palletId: stray[0].id }, false), /Scan the pallet in first/);
+});

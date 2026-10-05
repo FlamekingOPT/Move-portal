@@ -967,6 +967,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return x;
     }
     // Every update goes through a fresh read: updateLoad rebuilds data from the copy it is given.
+    function mustViewable(id) {
+        const x = mustTruck(id);
+        if (UNLOADABLE.indexOf(x.status) === -1 && x.status !== T.APPROVING) throw userErr('This truck is ' + x.status + ', not ready to unload');
+        return x;
+    }
     function receiveOn(x, p, prev, c) {
         data.updatePallet(p, { status: VP.RECEIVED, data: { receivedAt: c.now.stamp, receivedBy: c.actor } });
         pushStack(mustTruck(x.id), { id: String(p.id), prev: prev }, 'rstack');
@@ -975,9 +980,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
 
     act('unload_list', false, () => ({ trucks: allTrucks().filter(x => x.status === T.DEPARTED || x.status === T.RECEIVING ||
-        (x.status === T.RECEIVED && truckSummary(x).missing > 0)).map(truckSummary) }));
+        (x.status === T.RECEIVED && (truckSummary(x).missing > 0 || data.palletsByLoad(x.id, [VP.RECEIVED]).some(p => !p.data.postedSeq)))).map(truckSummary) }));
 
-    act('unload_get', false, (a, c) => ({ view: unloadView(mustUnloadable(a.truckId), c) }));
+    act('unload_get', false, (a, c) => ({ view: unloadView(mustViewable(a.truckId), c) }));
 
     act('unload_scan', false, (a, c) => {
         const x = mustUnloadable(a.truckId);
@@ -994,14 +999,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const p = mustPallet(a.palletId);
         const x = mustUnloadable(p.loadId);
         if (p.status !== VP.IN_TRANSIT && p.status !== VP.MISSING) throw userErr('That pallet is ' + p.status);
-        receiveOn(x, p, p.status, c);
+        const was = p.status;
+        receiveOn(x, p, was, c);
+        data.logScan({ pallet: p.id, load: x.id, result: was === VP.MISSING ? 'late' : 'ok', data: { raw: p.code || '', mode: 'unload', actor: c.actor, at: c.now.stamp, via: 'other_truck' } });
         return { view: unloadView(mustTruck(x.id), c) };
     });
 
     act('unload_damaged', false, (a, c) => {
         const p = mustPallet(a.palletId);
         if (p.status !== VP.RECEIVED) throw userErr('Scan the pallet in first');
+        const x = mustUnloadable(p.loadId);
         data.updatePallet(p, { damaged: true, data: { damagedAt: c.now.stamp, damagedBy: c.actor } });
+        data.logScan({ pallet: p.id, load: x.id, result: 'damaged', data: { raw: p.code || '', mode: 'unload', actor: c.actor, at: c.now.stamp } });
         return {};
     });
 
@@ -1022,8 +1031,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     function receiptPlan(x) {
-        return verify.planReceipts({ alloc: x.data.alloc || [], pallets: data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]),
-            received: x.data.received || {}, stamp: x.data.depart, seq: (Number(x.data.recvSeq) || 0) + 1 });
+        const ps = data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
+        const rp = verify.planReceipts({ alloc: x.data.alloc || [], pallets: ps, received: x.data.received || {}, stamp: x.data.depart, seq: (Number(x.data.recvSeq) || 0) + 1 });
+        rp.recvIds = ps.filter(p => p.status === VP.RECEIVED).map(p => p.id);
+        rp.transitIds = ps.filter(p => p.status === VP.IN_TRANSIT).map(p => p.id);
+        return rp;
     }
 
     act('receipt_preview', true, (a) => {
@@ -1032,16 +1044,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     act('receipt_approve', true, (a, c) => {
-        const x0 = mustUnloadable(a.truckId);
+        const canApprove = cur => UNLOADABLE.indexOf(cur.status) !== -1 || (cur.status === T.APPROVING && (cur.data.error || stale(cur)));
+        const x0 = mustTruck(a.truckId);
+        if (!canApprove(x0)) throw userErr(x0.status === T.APPROVING ? 'This truck is already being approved. Wait a few minutes, then try again.' : 'This truck is ' + x0.status + ', not ready to unload');
         if (!receiptPlan(x0).ops.length) throw userErr('Nothing new scanned in on this truck');
-        const prevStatus = x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
+        const prevStatus = x0.status === T.APPROVING ? (x0.data.prevStatus || T.RECEIVING) : x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
         const cl = claimLoad(x0, T.APPROVING, 'receive', cur => {
-            if (UNLOADABLE.indexOf(cur.status) === -1) throw userErr('This truck is ' + cur.status + ', not ready to approve');
+            if (!canApprove(cur)) throw userErr('This truck is ' + cur.status + ', not ready to approve');
         });
         const x = cl.Ld, claim = cl.claim, label = truckLabel(x);
         const rp = receiptPlan(x), seq = (Number(x.data.recvSeq) || 0) + 1;
         const writes = Object.assign({}, x.data.writes);
-        data.updateLoad(data.getLoad(x.id), { data: { rplan: (x.data.rplan || []).concat(rp.ops), recvApprovedBy: c.actor, recvApprovedAt: c.now.stamp } });
+        data.updateLoad(data.getLoad(x.id), { data: { prevStatus: prevStatus, recvApprovedBy: c.actor, recvApprovedAt: c.now.stamp } });
         let res;
         try {
             res = verify.runOps(rp.ops, writeMode(c), op => { assertClaim(x.id, claim, label, 'receive'); return tx.apply(verify.resolveNew(op, writes)); }, writes,
@@ -1053,9 +1067,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             throw userErr('Receipt write failed: ' + (e.message || e) + '. Fix it and approve again; finished receipts are not repeated.');
         }
         assertClaim(x.id, claim, label, 'receive');
-        data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).forEach(p => data.updatePallet(p, { data: { postedSeq: seq } }));
-        data.palletsByLoad(x.id, [VP.IN_TRANSIT]).forEach(p => data.updatePallet(p, { status: VP.MISSING }));
-        data.updateLoad(data.getLoad(x.id), { status: T.RECEIVED, data: { received: rp.cumulative, recvSeq: seq, recvRequested: null, error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
+        const planned = {}, transit = {};
+        rp.recvIds.forEach(id => { planned[String(id)] = 1; });
+        rp.transitIds.forEach(id => { transit[String(id)] = 1; });
+        data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => planned[String(p.id)] && !p.data.postedSeq).forEach(p => data.updatePallet(p, { data: { postedSeq: seq } }));
+        data.palletsByLoad(x.id, [VP.IN_TRANSIT]).filter(p => transit[String(p.id)]).forEach(p => data.updatePallet(p, { status: VP.MISSING }));
+        const fin = data.getLoad(x.id);
+        data.updateLoad(fin, { status: T.RECEIVED, data: { rplan: (fin.data.rplan || []).concat(rp.ops), prevStatus: '', received: rp.cumulative, recvSeq: seq, recvRequested: null, error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
         return { perIf: rp.perIf, missing: rp.missing, written: res.written, view: unloadView(mustTruck(x.id), c) };
     });
 
