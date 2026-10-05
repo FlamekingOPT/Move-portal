@@ -294,10 +294,6 @@ define([], function () {
             if (!dep) return;
             const label = memoFor(dep.truckNo, dep.day), sealK = sealKey(dep.seal);
             const row = (ifNum, check, portal, netsuite, ok) => rows.push({ truck: label, seal: dep.seal, ifNum: ifNum, check: check, portal: String(portal), netsuite: netsuite == null ? '—' : String(netsuite), ok: ok });
-            (d.skipped || []).forEach(s => {                       // a refused edit the truck departed without: the office must fix it
-                const op = (d.plan || []).find(o => opKey(o) === s.key) || {};
-                row(op.ifNum || s.key, 'Skipped edit ' + (op.ifNum || s.key), op.op === 'if_qty' ? op.from + '→' + op.to : (op.op || s.key), null, false);
-            });
             (d.alloc || []).forEach(a => {
                 let realId = a.addOn ? null : a.ifId;
                 if (a.addOn) {
@@ -397,6 +393,7 @@ define([], function () {
     function verifyLoad(o) {
         const fr = refreshIfs(o.savedIfs, o.freshIfs), ifs = byIfOrder(fr.ifs), diffs = [];
         fr.gone.forEach(g => diffs.push({ key: 'if_gone:' + g.ifId, kind: 'if_gone', ifId: String(g.ifId), ifNum: g.ifNum }));
+        if (!ifs.length) diffs.push({ key: 'no_ifs', kind: 'no_ifs' });          // no live IF: never ready, so never an empty departure
         const fill = fillExpected(ifs, sumLines(o.pallets));
         ifs.forEach(f => {
             const a = fill.alloc[String(f.ifId)] || {};
@@ -428,6 +425,8 @@ define([], function () {
     function fmt(n) { return Number(n).toLocaleString('en-US'); }
     function diffText(d, sku, pcsPerPallet) {
         const s = sku || d.item;
+        if (d.kind === 'no_ifs') return 'This truck has no IF → add one';
+        if (d.kind === 'plan_mismatch') return (d.ifNum ? d.ifNum + ': ' : '') + 'the departure plan still needs a change (' + d.op + ') → Verify again';
         if (d.kind === 'if_gone') return d.ifNum + ' is no longer Packed in NetSuite → take it off this truck';
         if (d.kind === 'if_empty') return d.ifNum + ' has nothing loaded → take it off this truck';
         if (d.kind === 'no_if') return s + ' ×' + fmt(d.qty) + ' loaded, not on any IF → ' + (d.toNum ? 'needs an IF from ' + d.toNum + ' (oldest open TO)' : 'no open TO: take it off the truck');

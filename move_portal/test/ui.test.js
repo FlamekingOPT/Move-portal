@@ -51,26 +51,22 @@ test('departing state, confirm prompts, null-screen guards', () => {
     const src = ui._clientMain.toString();
     assert.ok(src.indexOf("t.status === 'departed'") !== -1);
     assert.ok(src.indexOf('Departing… a NetSuite write is pending') !== -1);
-    ['apdepart', 'apretry', 'aprecv', 'dconfirm', 'apskip'].forEach(n => {
+    ['apretry', 'aprecv', 'dconfirm'].forEach(n => {
         const i = src.indexOf('ACT.' + n + ' =');
         assert.ok(i !== -1 && src.slice(i, i + 400).indexOf('confirm(') !== -1, 'no confirm in ' + n);
     });
     assert.ok(src.indexOf("if (!$('scanres')) return;") !== -1);
 });
 
-test('fix1: approvals retry card offers Depart without this edit', () => {
+test('removed: no pending, cancel or skip-write paths; a departure that needs a fix again repaints', () => {
     const src = ui._clientMain.toString();
-    assert.ok(src.indexOf("api('depart_skip_write'") !== -1);
-    assert.ok(src.indexOf('Depart without this edit') !== -1);
-});
-
-test('fix4: the plan view shows IFs changed in NetSuite', () => {
-    assert.ok(ui._clientMain.toString().indexOf('changed in NetSuite: ') !== -1);
+    ['depart_cancel', 'depart_skip_write', 'apskip', 'apdepart', 'dcancel', 't.pending', 'r.departures'].forEach(k => assert.equal(src.indexOf(k), -1, k));
+    assert.ok(src.indexOf('IF changed in NetSuite: needs a fix again') !== -1);
 });
 
 test('fix11: departure confirm text, stuck receipt button, scrollable report', () => {
     const src = ui._clientMain.toString();
-    ['Send this departure to a manager for approval?', 'Confirm departure? (plan only — NetSuite is updated by the office)', 'Confirm departure? Trailer and seal go on the IFs.', 'overflow-x:auto']
+    ['Confirm departure? (plan only — NetSuite is updated by the office)', 'Confirm departure? Trailer and seal go on the IFs.', 'overflow-x:auto']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.split("x.stuck ? 'Re-approve receipt'").length - 1, 2);
 });

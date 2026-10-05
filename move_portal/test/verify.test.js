@@ -383,3 +383,12 @@ test('reservationsFromTrucks skips a gone IF on an open truck', () => {
     assert.deepEqual(v.reservationsFromTrucks(Object.assign({ trucks: [live] }, o)), {});        // the IF covers the load
     assert.notDeepEqual(v.reservationsFromTrucks(Object.assign({ trucks: [gone] }, o)), {});     // a gone IF covers nothing: surplus takes TO room
 });
+
+test('verifyLoad: a truck with no live IF is never a match (no_ifs)', () => {
+    const r = v.verifyLoad({ savedIfs: [], freshIfs: [], pallets: [], toLines: TOS });
+    assert.deepEqual([r.match, r.diffs.map(d => d.kind)], [false, ['no_ifs']]);
+    assert.equal(v.diffText(r.diffs[0]), 'This truck has no IF → add one');
+    const g = v.verifyLoad({ savedIfs: [Object.assign(VIF(9001, 500, 504), { gone: true })], freshIfs: [], pallets: onTruck(1), toLines: TOS });
+    assert.deepEqual(g.diffs.map(d => d.kind), ['if_gone', 'no_ifs', 'no_if']);
+    assert.deepEqual(v.correctionOps([{ key: 'no_ifs', kind: 'no_ifs' }]), []);
+});
