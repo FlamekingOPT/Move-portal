@@ -18,3 +18,9 @@ test('buildPage embeds boot data safely and the client script parses', () => {
 test('client code never contains a closing script tag', () => {
     assert.equal(ui._clientMain.toString().toLowerCase().indexOf('</script'), -1);
 });
+
+test('v3 screens exist and old ones are gone', () => {
+    const src = ui._clientMain.toString();
+    ['SCREENS.trucks', "api('truck_scan'", "api('depart_confirm'", "api('truck_planned'"].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
+    ['SCREENS.ship', 'SCREENS.load ', "api('scan_load'"].forEach(s => assert.equal(src.indexOf(s), -1, 'still has ' + s));
+});

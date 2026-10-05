@@ -39,7 +39,7 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 .stepper .inp{text-align:center;font-size:22px;font-weight:700;margin:0}
 .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
 .card h4{margin:0 0 4px;font-size:15px}.card.bl{border-color:var(--blue)}.card.bt{border-color:var(--teal)}.card.bo{border-color:var(--orange)}.card.warnc{border-color:var(--red)}
-[data-act="openload"],[data-act="openrecv"]{cursor:pointer}
+[data-act="opentruck"],[data-act="openunload"],[data-act="openrecv"]{cursor:pointer}
 .muted{color:var(--muted);font-size:13px}.warn{color:var(--red)!important}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle}
 .p-blue{background:var(--blue-soft);color:var(--blue)}.p-green{background:var(--green-soft);color:var(--green)}.p-amber{background:var(--amber-soft);color:var(--amber)}.p-red{background:var(--red-soft);color:var(--red)}.p-gray{background:#f1f5f9;color:#475569}
@@ -57,6 +57,7 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 .prog{margin:8px 0 4px;font-weight:700}.progress{height:12px;background:#e2e8f0;border-radius:999px;overflow:hidden}.progress div{height:100%;background:var(--teal);width:0}
 .warnrow{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}.warnrow:last-child{border:0}
 .tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff}.tbl th{text-align:left;color:var(--muted);font-weight:600;padding:7px 6px;border-bottom:1px solid var(--line)}.tbl td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl tr.okrow{background:#ecfdf5}.tbl tr.warnrow{display:table-row;background:#fffbeb}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}.kpi small{color:var(--muted);font-size:12px}.kpi b{display:block;font-size:26px;margin-top:2px}.kpi span{font-size:12px;color:var(--muted)}
 .kpi.good{border-color:#86efac;background:#f0fdf4}.kpi.bad{border-color:#fca5a5;background:#fef2f2}
@@ -69,7 +70,7 @@ h3{font-size:15px;margin:16px 0 8px}
         'use strict';
         const isMgr = B.mode === 'manager';
         const S = { side: get('mv_side') === 'in' ? 'in' : 'out', tab: null, who: get('mv_who') || '', poll: null,
-            ed: null, edRender: null, loadId: null, lv: null, recvId: null, rv: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
+            ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, recvId: null, rv: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
 
         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function put(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
@@ -112,11 +113,10 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         function errBox(msg) { return flash('red', '❌ ' + esc(msg)); }
 
-        const PILL = { loading: ['Loading', 'p-blue'], ready: ['⏳ Waiting for approval', 'p-amber'], shipping: ['Shipping…', 'p-amber'],
-            shipped: ['In transit', 'p-blue'], receiving: ['Unloading', 'p-blue'], recv_ready: ['⏳ Receipt approval', 'p-amber'],
-            receiving_tx: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], received_short: ['Received · short', 'p-red'], error: ['Needs attention', 'p-red'] };
+        const PILL = { loading: ['Loading', 'p-blue'], departing: ['Departing…', 'p-amber'], departed: ['In transit', 'p-blue'],
+            receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], waiting: ['⏳ Waiting for manager', 'p-amber'],
+            recv_ready: ['⏳ Receipt approval', 'p-amber'], receiving_tx: ['Receiving…', 'p-amber'], received_short: ['Received · short', 'p-red'], error: ['Needs attention', 'p-red'] };
         function statusPill(s) { const p = PILL[s] || [s, 'p-gray']; return '<span class="pill ' + p[1] + '">' + esc(p[0]) + '</span>'; }
-        function loadSub(L) { return [L.carrier, L.trailer && 'Trailer ' + L.trailer, L.seal && 'Seal ' + L.seal].filter(Boolean).join(' · '); }
 
         function needWho() {
             if (S.who) return false;
@@ -126,7 +126,7 @@ h3{font-size:15px;margin:16px 0 8px}
 
         // ── shell ────────────────────────────────────────────────────────
         const TABS = {
-            out: [['req', 'Request label'], ['load', 'Load'], ['void', 'Void']].concat(isMgr ? [['ship', 'To ship'], ['queue', 'Print queue'],
+            out: [['req', 'Request label'], ['trucks', 'Load out'], ['void', 'Void']].concat(isMgr ? [['queue', 'Print queue'],
                 ['plan', 'Print plan'], ['sku', 'Print a SKU'], ['configs', 'SKU configs'], ['reprint', 'Reprint'], ['dash', 'Dashboard']] : []),
             in: [['recv', 'Receive']].concat(isMgr ? [['toreceive', 'To receive'], ['catchup', 'Catch-ups'], ['dash', 'Dashboard']] : [])
         };
@@ -167,7 +167,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (i && !(a && a.matches && a.matches('input,select,textarea'))) i.focus();
         }
         ACT.side = el => { S.side = el.dataset.v; put('mv_side', S.side); shell(); };
-        ACT.tab = el => { S.tab = el.dataset.v; S.loadId = null; S.recvId = null; renderNav(); };
+        ACT.tab = el => { S.tab = el.dataset.v; S.truckId = null; S.unloadId = null; S.recvId = null; renderNav(); };
         ACT.clearres = () => { const r = $('scanres'); if (r) r.innerHTML = ''; };
         ACT.typecode = el => { const i = $(el.dataset.v); if (i) { i.setAttribute('inputmode', 'text'); i.focus(); } };
 
@@ -398,159 +398,121 @@ h3{font-size:15px;margin:16px 0 8px}
             $('ptmsg').innerHTML = flash('green', '✅ New label ' + esc(r.code) + ' printing; ' + esc(S.pt.code) + ' voided');
         };
 
-        // ── Outbound: load ───────────────────────────────────────────────
-        SCREENS.load = () => (S.loadId ? loadDetail() : loadList());
-        async function loadList() {
-            main('<div class="muted">Loading…</div>');
-            const r = await api('load_list');
-            if (!r.ok) { main(errBox(r.error)); return; }
-            main(r.loads.map(L => '<div class="card' + (L.status === 'loading' ? ' bl' : '') + '" data-act="openload" data-id="' + L.id + '"><h4>' + esc(L.number) +
-                (L.door ? ' · Door ' + esc(L.door) : '') + ' ' + statusPill(L.status) + '</h4><div class="muted">' + esc(loadSub(L)) + ' · ' + L.pallets + ' pallets</div></div>').join('') ||
-                '<div class="muted">No open loads</div>') ;
-            $('main').insertAdjacentHTML('beforeend', '<div class="card"><h4>New load</h4><input class="inp" id="nl_door" placeholder="Door"><input class="inp" id="nl_carrier" placeholder="Carrier">' +
-                '<input class="inp" id="nl_trailer" placeholder="Trailer #"><input class="inp" id="nl_seal" placeholder="Seal #"><div id="nlmsg"></div>' +
-                '<button class="btn pri" data-act="newload">Open load</button></div>');
+        // ── Outbound: load out (v3) ──────────────────────────────────────
+        SCREENS.trucks = () => (S.truckId ? truckDetail() : truckList());
+        function ifRow(f, pick) {
+            return '<label class="it"><div>' + (pick ? '<input type="checkbox" data-if="' + esc(f.ifId) + '"> ' : '') + '<b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) +
+                ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</div><div class="muted">' + (f.estPallets ? '≈ ' + f.estPallets + ' pallets' : '') + '</div></label>';
         }
-        ACT.newload = async el => {
+        async function truckList() {
+            main('<div class="muted">Loading…</div>');
+            const r = await api('truck_planned');
+            if (!r.ok) { main(errBox(r.error)); return; }
+            main((r.open.length ? '<h3>Trucks loading</h3>' + r.open.map(t => '<div class="card bl" data-act="opentruck" data-id="' + t.id + '"><h4>' + esc(t.label) + ' ' +
+                statusPill(t.pending ? 'waiting' : t.status) + '</h4><div class="muted">' + t.pallets + ' pallets</div></div>').join('') : '') +
+                '<h3>Planned trucks · Picked/Packed IFs</h3><div class="card plist">' + (r.planned.map(f => ifRow(f, true)).join('') || '<div class="muted">No planned IFs. The office creates them in NetSuite.</div>') + '</div>' +
+                '<div id="tmsg"></div><button class="btn pri" data-act="starttruck">Start truck with selected IFs</button>' +
+                (r.pulledAt ? '<div class="muted sm">Data from ' + esc(r.pulledAt) + '</div>' : ''));
+        }
+        ACT.starttruck = async el => {
+            if (needWho()) return;
+            const ids = Array.from(document.querySelectorAll('[data-if]:checked')).map(x => x.dataset.if);
+            if (!ids.length) { $('tmsg').innerHTML = errBox('Tick at least one IF'); return; }
+            busy(el, true);
+            const r = await api('truck_start', { ifIds: ids });
+            busy(el, false);
+            if (!r.ok) { $('tmsg').innerHTML = errBox(r.error); return; }
+            S.truckId = r.view.truck.id;
+            truckDetail(r);
+        };
+        ACT.opentruck = el => { S.truckId = el.dataset.id; truckDetail(); };
+        ACT.backtruck = () => { S.truckId = null; truckList(); };
+        async function truckDetail(pre) {
+            const r = pre || await api('truck_get', { truckId: S.truckId });
+            if (!r.ok) { main(errBox(r.error)); return; }
+            main('<button class="btn ghost sm" data-act="backtruck">← All trucks</button><div class="card bl"><h4 id="thead"></h4><div class="muted" id="tsub"></div></div>' +
+                '<div id="tscan"></div><div id="scanres"></div><div class="card" id="tlines"></div><div class="card plist" id="plist"></div><div id="tfoot"></div>');
+            paintTruck(r.view, true);
+        }
+        function paintTruck(v, first) {
+            S.tv = v;
+            const t = v.truck, open = t.status === 'loading' && !t.pending;
+            $('thead').innerHTML = esc(t.label) + ' ' + statusPill(t.pending ? 'waiting' : t.status);
+            $('tsub').textContent = t.depart ? [t.depart.carrier, 'Trailer ' + t.depart.trailer, 'Seal ' + t.depart.seal].join(' · ') : v.totals.pallets + ' pallets · ' + num(v.totals.pieces) + ' pcs';
+            if (first) {
+                $('tscan').innerHTML = open ? scanBox('scan') : '';
+                if (open) wireScan('scan', doTruckScan);
+            }
+            $('tlines').innerHTML = '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' +
+                v.lines.map(l => '<tr class="' + (l.scanned === l.expected ? 'okrow' : l.scanned > l.expected ? 'warnrow' : '') + '"><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) +
+                    '</td><td><b>' + num(l.scanned) + '</b> / ' + num(l.expected) + (l.estPallets ? ' <span class="muted">(' + l.estPallets + ' plt)</span>' : '') + '</td></tr>').join('') +
+                v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td><b>' + num(x.scanned) + '</b> extra</td></tr>').join('') + '</table>';
+            $('plist').innerHTML = v.pallets.slice().reverse().map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
+                (open ? '<div class="ac"><button data-act="tremove" data-id="' + p.id + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
+            $('tfoot').innerHTML = (t.error ? errBox(t.error) : '') + (t.pending ? flash('amber', '⏳ Waiting for manager approval', esc('Trailer ' + t.pending.trailer + ' · Seal ' + t.pending.seal), 'Requested by ' + esc(t.pending.by), '<button data-act="dcancel">Cancel request, keep loading</button>')
+                : open ? '<button class="btn ghost sm" data-act="tundo">↶ Undo last scan</button><div class="card"><h4>Departure</h4>' +
+                    '<select class="inp" id="d_trailer"><option value="">Trailer #</option>' + v.trailers.map(x => '<option>' + esc(x) + '</option>').join('') + '<option value="__other">Other…</option></select>' +
+                    '<input class="inp" id="d_trailer2" placeholder="Other trailer #" style="display:none"><input class="inp" id="d_seal" placeholder="Seal #">' +
+                    '<input class="inp" id="d_carrier" value="' + esc(v.carrier) + '"><div id="dmsg"></div><button class="btn pri" data-act="dpreview">Review departure</button></div>'
+                : t.depart ? flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal), t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged') : '');
+            const sel = $('d_trailer');
+            if (sel) sel.onchange = () => { $('d_trailer2').style.display = sel.value === '__other' ? '' : 'none'; };
+        }
+        function departBody() {
+            const sel = $('d_trailer').value;
+            return { truckId: S.truckId, trailer: sel === '__other' ? $('d_trailer2').value : sel, seal: $('d_seal').value, carrier: $('d_carrier').value };
+        }
+        function planHtml(p) {
+            const line = o => o.op === 'if_qty' ? (o.to < o.from ? '⬇ Lower ' : '⬆ Raise ') + esc(o.ifNum + ' ' + o.sku + ' ' + num(o.from) + ' → ' + num(o.to))
+                : o.op === 'if_create' ? '➕ Add-on IF from ' + esc(o.toNum + ': ' + o.skus.join(', ')) : '🔖 Stamp ' + esc(o.ifNum) + ' · Shipped';
+            return '<div class="card"><h4>Plan</h4>' + p.ops.map(o => '<div>' + line(o) + '</div>').join('') +
+                p.unplanned.map(u => '<div>↩ ' + esc(u.ifNum) + ' has nothing scanned: back to planned</div>').join('') +
+                (p.bol.changed ? '<div><b>BOL REV 2</b> · BOL # ' + esc(p.bol.number) + ' · IFs ' + esc(p.bol.ifNums.join(', ')) + '</div>' : '') + '</div>';
+        }
+        ACT.dpreview = async el => {
             if (needWho()) return;
             busy(el, true);
-            const r = await api('load_create', { door: $('nl_door').value, carrier: $('nl_carrier').value, trailer: $('nl_trailer').value, seal: $('nl_seal').value });
+            const r = await api('depart_preview', departBody());
             busy(el, false);
-            if (!r.ok) { $('nlmsg').innerHTML = errBox(r.error); return; }
-            S.loadId = r.load.id;
-            loadDetail();
+            if (!r.ok) { $('dmsg').innerHTML = errBox(r.error); return; }
+            $('dmsg').innerHTML = flash(r.plan.needsManager ? 'amber' : 'green', 'Truck ' + r.truckNo + ' of the day', r.plan.needsManager ? r.plan.corrections + ' correction(s): a manager must approve' : 'Matches the IFs') +
+                planHtml(r.plan) + '<button class="btn go" data-act="dconfirm">' + (r.plan.needsManager && !isMgr ? 'Send to manager' : 'Confirm departure') + '</button>';
         };
-        ACT.openload = el => { S.loadId = el.dataset.id; loadDetail(); };
-        ACT.backload = () => { S.loadId = null; loadList(); };
-        async function loadDetail() {
-            main('<div class="muted">Loading…</div>');
-            const r = await api('load_get', { loadId: S.loadId });
-            if (!r.ok) { main(errBox(r.error)); return; }
-            main('<button class="btn ghost sm" data-act="backload">← All loads</button><div class="card bl"><h4 id="lhead"></h4><div class="muted" id="lsub"></div></div>' +
-                '<div id="lscan"></div><div id="scanres"></div><div class="totals" id="ltot"></div><div class="card plist" id="plist"></div><div id="lfoot"></div>');
-            paintLoad(r, true);
-        }
-        function paintLoad(r, first) {
-            S.lv = r;
-            const L = r.load, open = L.status === 'loading';
-            $('lhead').innerHTML = esc(L.number) + (L.door ? ' · Door ' + esc(L.door) : '') + ' ' + statusPill(L.status);
-            $('lsub').textContent = loadSub(L);
-            if (first) {
-                $('lscan').innerHTML = open ? scanBox('scan') : '<div class="muted">' + (L.status === 'ready' ? '⏳ Waiting for manager approval. Scanning is closed.' : 'Scanning is closed (' + esc(L.status) + ').') + '</div>';
-                if (open) wireScan('scan', doLoadScan);
-            }
-            $('ltot').innerHTML = '<div><b>' + r.totals.pallets + '</b><small>pallets</small></div><div><b>' + num(r.totals.pieces) + '</b><small>pieces</small></div><div><b>' + r.totals.skus + '</b><small>SKUs</small></div>';
-            $('plist').innerHTML = r.pallets.map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + (p.edited ? ' <span class="pill p-amber">EDITED</span>' : '') + '</div>' +
-                (open ? '<div class="ac"><button data-act="pedit" data-id="' + p.id + '">Edit</button><button data-act="premove" data-id="' + p.id + '">✕</button></div>' : '') + '</div>').join('') ||
-                '<div class="muted">No pallets yet</div>';
-            $('lfoot').innerHTML = open ? '<button class="btn go" data-act="loadready">Load done: send for approval</button>' : '';
-        }
-        function loadResultHtml(r) {
+        ACT.dconfirm = async el => {
+            busy(el, true);
+            const r = await api('depart_confirm', departBody());
+            busy(el, false);
+            if (!r.ok) { tone('bad'); $('dmsg').innerHTML = errBox(r.error); return; }
+            tone('ok');
+            paintTruck(r.view, true);
+        };
+        ACT.dcancel = async () => { const r = await api('depart_cancel', { truckId: S.truckId }); if (r.ok) paintTruck(r.view, true); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.tundo = async () => { const r = await api('truck_undo', { truckId: S.truckId }); if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.tremove = async el => { const r = await api('truck_remove', { truckId: S.truckId, palletId: el.dataset.id }); if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.tmovehere = async el => { const r = await api('truck_move_here', { truckId: S.truckId, palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('green', '✅ Moved here') : errBox(r.error); if (r.ok) paintTruck(r.view, false); };
+        function truckResultHtml(r) {
             const p = r.pallet, line = p ? esc(p.code + ' · ' + p.summary) : '';
             switch (r.result) {
-                case 'ok': return flash('green', '✅ ' + esc(p.headline), esc(p.pieces + ' pcs · ' + p.code), 'Added to ' + esc(r.loadNumber) + ' · ' + r.view.totals.pallets + ' pallets',
-                    '<button data-act="pedit" data-id="' + p.id + '">Edit count</button><button data-act="premove" data-id="' + p.id + '">Remove</button>');
-                case 'dup': return flash('amber', '🟡 Already on this load', line, 'No change.');
-                case 'other_load': return flash('amber', '🟡 On load ' + esc(r.otherNumber), line, '',
-                    '<button data-act="movehere" data-id="' + p.id + '">Move it to ' + esc(r.loadNumber) + '</button><button data-act="clearres">Leave it</button>');
-                case 'locked_load': return flash('red', '❌ On ' + esc(r.otherNumber) + ', awaiting approval', line, 'That load is closed for scanning. Check with the supervisor.');
-                case 'void': return flash('red', '❌ Label cancelled', line, "Don't load it. Request a new label for this pallet.");
-                case 'shipped': return flash('red', '❌ Already shipped', esc(p.code + (r.otherNumber ? ' · on ' + r.otherNumber : '')), 'This pallet already left. Check with the supervisor.');
+                case 'ok': return flash('green', '✅ ' + esc(p.headline), esc(p.pieces + ' pcs · ' + p.code), r.view.totals.pallets + ' pallets on the truck');
+                case 'over': return flash('amber', '🟡 Over the IF qty', line, 'The IF will be raised at departure (manager OK).');
+                case 'addon': return flash('amber', '🟡 Add-on IF', line, 'Not on this truck\'s IFs. An add-on IF from ' + esc(r.addonTo ? r.addonTo.toNum : 'an office TO') + ' will be made (manager OK).');
+                case 'no_to': return flash('red', '❌ No open TO for ' + esc(r.sku), line, 'Set it aside and call the office.');
+                case 'dup': return flash('amber', '🟡 Already on this truck', line, 'No change.');
+                case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + p.id + '">Move here</button><button data-act="clearres">Leave it</button>');
+                case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + ', departing', line, 'Check with the supervisor.');
+                case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
+                case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
                 default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), 'Not a move label. Maybe a product barcode?');
             }
         }
-        async function doLoadScan(v) {
+        async function doTruckScan(v) {
             if (!S.who) { tone('bad'); $('scanres').innerHTML = errBox('Pick your name in "I am" first, then scan again.'); return; }
-            const r = await api('scan_load', { loadId: S.loadId, raw: v });
+            const r = await api('truck_scan', { truckId: S.truckId, raw: v });
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
             tone(r.tone);
-            $('scanres').innerHTML = loadResultHtml(r);
-            if (r.view) paintLoad(r.view, false);
+            $('scanres').innerHTML = truckResultHtml(r);
+            if (r.view) paintTruck(r.view, false);
         }
-        function findPallet(id) {
-            const all = (S.lv ? S.lv.pallets : []);
-            return all.find(x => String(x.id) === String(id));
-        }
-        ACT.pedit = async el => {
-            const p = findPallet(el.dataset.id);
-            if (!p) return;
-            const lines = [];
-            for (const l of p.lines) {
-                const v = prompt(l.sku + ': pieces on this pallet', l.pcs);
-                if (v === null) return;
-                const n = Math.floor(Number(v));
-                if (!(n > 0)) { alert('Pieces must be above 0'); return; }
-                lines.push({ item: l.item, pcs: n });
-            }
-            const r = await api('pallet_edit', { palletId: p.id, loadId: S.loadId, lines: lines });
-            if (!r.ok) { alert(r.error); return; }
-            paintLoad(r.view, false);
-            $('scanres').innerHTML = flash('amber', '✏️ ' + esc(p.code) + ' updated', esc(r.pallet.summary), 'Flagged EDITED');
-        };
-        ACT.premove = async el => {
-            const p = findPallet(el.dataset.id);
-            if (!p || !confirm('Take ' + p.code + ' off this load?')) return;
-            const r = await api('pallet_remove', { palletId: p.id, loadId: S.loadId });
-            if (!r.ok) { alert(r.error); return; }
-            paintLoad(r.view, false);
-            $('scanres').innerHTML = flash('amber', '↩ ' + esc(p.code) + ' removed');
-        };
-        ACT.movehere = async el => {
-            const r = await api('load_move_here', { palletId: el.dataset.id, loadId: S.loadId });
-            if (!r.ok) { alert(r.error); return; }
-            tone('ok');
-            paintLoad(r.view, false);
-            $('scanres').innerHTML = flash('green', '✅ Moved to this load', esc(r.pallet.code + ' · ' + r.pallet.summary));
-        };
-        ACT.loadready = async el => {
-            if (!confirm('Done loading? A manager will approve and ship it.')) return;
-            busy(el, true);
-            const r = await api('load_ready', { loadId: S.loadId });
-            busy(el, false);
-            if (!r.ok) { alert(r.error); return; }
-            loadDetail();
-        };
-
-        // ── Outbound: manager "To ship" ──────────────────────────────────
-        SCREENS.ship = async (msg) => {
-            main('<div class="muted">Loading…</div>');
-            const r = await api('ship_list');
-            if (!r.ok) { main(errBox(r.error)); return; }
-            main('<div id="shipmsg">' + (msg || '') + '</div>' + (r.loads.map(shipCard).join('') || '<div class="muted">Nothing waiting for approval</div>') +
-                '<h3>Recently shipped</h3>' + (r.recent.map(L => '<div class="card"><h4>' + esc(L.number) + ' ' + statusPill(L.status) + '</h4><div class="muted">' + L.pallets + ' pallets · ' +
-                    esc(L.toNumber) + ' · ' + esc(L.ifNumber) + ' · ' + esc(L.approvedAt) + '</div><button class="dbtn gh" data-act="sheet" data-id="' + L.id + '">Reprint load sheet</button></div>').join('') ||
-                    '<div class="muted">None yet</div>'));
-        };
-        function shipCard(L) {
-            const bad = L.rows.filter(x => !x.ok);
-            const retry = L.status === 'error' || L.status === 'shipping';
-            return '<div class="card' + (L.status === 'error' ? ' warnc' : '') + '"><h4>' + esc(L.number) + (L.door ? ' · Door ' + esc(L.door) : '') + ' ' + statusPill(L.status) + '</h4>' +
-                '<div class="muted">' + L.pallets + ' pallets · ' + num(L.pieces) + ' pcs · loaded by ' + esc(L.readyBy) + ' ' + esc(L.readyAt) + '</div>' +
-                '<table class="tbl"><tr><th>SKU</th><th>On truck</th><th>Available</th><th></th></tr>' + L.rows.map(x => '<tr><td>' + esc(x.sku) + '</td><td>' + num(x.qty) + '</td><td>' +
-                    num(x.avail) + '</td><td>' + (x.ok ? '✅' : '❌') + '</td></tr>').join('') + '</table>' +
-                (bad.length ? '<div class="muted warn">⚠ ' + bad.map(x => esc(x.sku) + ': truck has ' + x.qty + ', only ' + x.avail + ' available').join('; ') +
-                    '. Remove a pallet or check the count.</div>' : '') +
-                (L.error ? '<div class="muted warn">Last error: ' + esc(L.error) + '</div>' : '') +
-                '<div class="row2">' + (L.canSendBack ? '<button class="dbtn gh" data-act="sendback" data-id="' + L.id + '">Send back</button>' : '') +
-                '<button class="dbtn go" data-act="approveship" data-id="' + L.id + '"' + (bad.length && !L.to ? ' disabled' : '') + '>' + (retry ? 'Retry' : 'Approve & Ship') + '</button></div></div>';
-        }
-        ACT.approveship = async el => {
-            if (!confirm('Create the transfer order and ship this load? ' + B.fromName + ' inventory goes down now.')) return;
-            const w = window.open('about:blank');
-            busy(el, true);
-            const r = await api('load_approve', { loadId: el.dataset.id });
-            busy(el, false);
-            if (!r.ok) { if (w) w.close(); tone('bad'); SCREENS.ship(errBox(r.error)); return; }
-            if (w) w.location = pdfUrl('type=loadsheet&loadId=' + el.dataset.id);
-            tone('ok');
-            SCREENS.ship(flash('green', '✅ ' + esc(r.number) + ' shipped', esc(r.toNumber + ' · ' + r.ifNumber), 'Load sheet opened in a new tab.'));
-        };
-        ACT.sendback = async el => {
-            if (!confirm('Send this load back to the dock for changes?')) return;
-            const r = await api('load_sendback', { loadId: el.dataset.id });
-            SCREENS.ship(r.ok ? flash('amber', 'Sent back to the dock') : errBox(r.error));
-        };
-        ACT.sheet = el => { window.open(pdfUrl('type=loadsheet&loadId=' + el.dataset.id)); };
 
         // ── Outbound: manager print queue / plan / print a SKU ────────────
         SCREENS.queue = () => {
