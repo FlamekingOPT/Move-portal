@@ -769,3 +769,81 @@ test('fix2: unload_list and approvals do not search pallets per truck for fully 
     ['truck_planned', 'dashboard', 'report'].forEach(a => { const b = byLoad.n; ctx.run(a); assert.equal(byLoad.n, b, a + ' searched pallets per truck'); });
     assert.equal(grouped.n, 5);
 });
+
+test('fix3: a truck scan re-checks the truck right before loading the pallet', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 2, 'Jrc', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const orig = ctx.ns.openToLines;
+    ctx.ns.openToLines = () => { ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { pending: { by: 'X', seal: 'Q', trailer: '1' } } }); return orig(); };
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code }), /Scanning is closed/);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'labeled');
+    ctx.ns.openToLines = orig;
+    ctx.run('depart_cancel', { truckId: t.id });
+    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    ctx.run('truck_scan', { truckId: t.id, raw: ps[1].code });
+    ctx.ns.openToLines = () => { ctx.data.updateLoad(ctx.data.getLoad(b.id), { status: 'departing', data: { claim: 'c1' } }); return orig(); };
+    assert.throws(() => ctx.run('truck_move_here', { truckId: b.id, palletId: ps[1].id }), /Scanning is closed/);
+    assert.equal(ctx.data.getPallet(ps[1].id).loadId, t.id);
+});
+
+test('fix3: the scan stack is not written over a truck that closed meanwhile; undo too', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 2, 'Jst', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code });
+    const realUp = ctx.data.updatePallet;
+    ctx.data.updatePallet = (p, patch) => { realUp(p, patch); ctx.data.updateLoad(ctx.data.getLoad(t.id), { status: 'departing', data: { claim: 'other' } }); };
+    ctx.run('truck_scan', { truckId: t.id, raw: ps[1].code });
+    ctx.data.updatePallet = realUp;
+    let d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.status, d.data.claim, d.data.stack], ['departing', 'other', [String(ps[0].id)]]);
+    ctx.data.updateLoad(d, { status: 'loading', data: { claim: '' } });
+    ctx.data.updatePallet = (p, patch) => { realUp(p, patch); ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { pending: { by: 'Y', seal: 'Z', trailer: '1' } } }); };
+    ctx.run('truck_undo', { truckId: t.id });
+    ctx.data.updatePallet = realUp;
+    d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.data.pending.by, d.data.stack.length], ['Y', 1]);
+});
+
+test('fix3: an unload scan re-checks the truck right before receiving the pallet', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 2, 'U3');
+    const realTrucks = ctx.data.loadsByStatus;
+    ctx.data.loadsByStatus = function () { const r = realTrucks.apply(this, arguments); ctx.data.updateLoad(ctx.data.getLoad(t.id), { status: 'approving', data: { claim: 'c' } }); return r; };
+    assert.throws(() => ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false), /not ready to unload/);
+    ctx.data.loadsByStatus = realTrucks;
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'in_transit');
+});
+
+test('fix3: depart_confirm plans from the claimed state; a floor confirm that now needs a manager releases the claim', () => {
+    const ctx = setup();
+    const { t, ps } = truckWith(ctx, 42);
+    const realUpd = ctx.data.updateLoad;
+    let armed = true;
+    ctx.data.updateLoad = (L, patch) => {
+        realUpd(L, patch);
+        if (armed && patch.status === 'departing') { armed = false; ctx.data.updatePallet(ctx.data.getPallet(ps[0].id), { status: 'labeled', load: '' }); }   // a remove lands right after the claim
+    };
+    const r = ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'C3' }, false);
+    ctx.data.updateLoad = realUpd;
+    assert.equal(r.waiting, true);
+    const d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.status, d.data.claim, d.data.pending.seal, d.data.depart || null, d.data.plan || null], ['loading', '', 'C3', null, null]);
+    assert.equal(ctx.data.getPallet(ps[1].id).status, 'loaded');
+    const m = ctx.run('depart_confirm', { truckId: t.id }, true);                // a manager approves the 41-pallet plan
+    assert.equal(m.departed, true);
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 492);
+});
+
+test('fix3: the claim write carries depart, plan, alloc and writes', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    const realUpd = ctx.data.updateLoad;
+    let seen = null;
+    ctx.data.updateLoad = (L, patch) => { if (patch.status === 'departing' && !seen) seen = patch.data; realUpd(L, patch); };
+    ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'C4' }, false);
+    ctx.data.updateLoad = realUpd;
+    assert.ok(seen.claim && seen.depart && seen.plan && seen.alloc && seen.writes);
+    assert.equal(seen.depart.seal, 'C4');
+});

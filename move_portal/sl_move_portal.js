@@ -170,17 +170,21 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
             trailers: c.S.trailers || ['537224', '416460', '105488', '522051', '211659'], carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c) };
     }
-    function pushStack(x, entry, key) {
-        const k = key || 'stack';
-        data.updateLoad(x, { data: { [k]: ((x.data && x.data[k]) || []).concat([entry]).slice(-60) } });
+    function isOpen(x) { return x.status === T.LOADING && !x.data.pending && !x.data.claim && !x.data.depart; }
+    // Re-reads; never writes the stack over a truck that closed meanwhile (the pallet update itself is already done).
+    function pushStack(id, entry) {
+        const cur = data.getLoad(id);
+        if (!cur || !isOpen(cur)) return;
+        data.updateLoad(cur, { data: { stack: (cur.data.stack || []).concat([entry]).slice(-STACK_MAX) } });
     }
     function scanCtx(x) {
         return { truckId: x.id, trucks: truckMap(allTrucks()), ifs: x.data.ifs, toLines: ns.openToLines(),
             loadedByItem: verify.sumLines(data.palletsByLoad(x.id, [VP.LOADED])) };
     }
+    // Called at the start and again right before a pallet changes, so a scan never lands on a truck that is departing.
     function mustOpenTruck(id) {
         const x = mustTruck(id);
-        if (x.status !== T.LOADING || x.data.pending) throw userErr('Scanning is closed on this truck');
+        if (!isOpen(x)) throw userErr('Scanning is closed on this truck');
         return x;
     }
     function pubPlan(p) {
@@ -199,11 +203,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (verify.sealUsed(allTrucks(), inp.seal, x.id)) throw userErr('Seal ' + inp.seal + ' was already used on another truck');
         return inp;
     }
-    function departPlan(x, inp, c) {
+    // baseIfs: the truck's IFs before any claim (a claim write already drops unplanned IFs from x.data.ifs).
+    function departPlan(x, inp, c, baseIfs) {
         const truckNo = verify.truckNoForDay(allTrucks(), c.now.dayIso, x.id);
+        const ps = data.palletsByLoad(x.id, [VP.LOADED]);
         try {
-            return { truckNo: truckNo, plan: verify.planDeparture({ ifs: x.data.ifs, pallets: data.palletsByLoad(x.id, [VP.LOADED]), toLines: ns.openToLines(),
-                stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } }) };
+            return { truckNo: truckNo, palletKey: ps.map(p => p.id).sort((m, n) => m - n).join(','),
+                plan: verify.planDeparture({ ifs: baseIfs || x.data.ifs, pallets: ps, toLines: ns.openToLines(),
+                    stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } }) };
         } catch (e) { if (/^No open transfer order covers/.test(e.message || '')) throw userErr(e.message); throw e; }
     }
     function finishDepart(x, c, claim) {
@@ -475,8 +482,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const p = s.palletId ? data.getPallet(s.palletId) : null;
         const r = verify.classifyLoadScan(Object.assign({ pallet: p }, scanCtx(x)));
         if (r.set) {
+            mustOpenTruck(x.id);
             data.updatePallet(p, { status: r.set.status, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
-            pushStack(x, String(p.id));
+            pushStack(x.id, String(p.id));
         }
         data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: 'load', actor: c.actor, at: c.now.stamp } });
         return Object.assign({}, r, { raw: s.raw, tone: verify.toneFor(r.result), pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: truckView(mustTruck(x.id), c) });
@@ -488,8 +496,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (p.status !== VP.LOADED || !from || from.status !== T.LOADING || from.data.pending) throw userErr('That pallet can no longer be moved');
         const r = verify.fitOnTruck(p, scanCtx(x));
         if (r.result === 'no_to') throw userErr('No open transfer order for ' + r.sku + ' on this truck. Set it aside and call the office.');
+        mustOpenTruck(x.id);
         data.updatePallet(p, { load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
-        pushStack(x, String(p.id));
+        pushStack(x.id, String(p.id));
         return { view: truckView(mustTruck(x.id), c) };
     });
 
@@ -504,9 +513,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustOpenTruck(a.truckId), st = (x.data.stack || []).slice();
         while (st.length) {
             const p = data.getPallet(st.pop());
-            if (p && p.status === VP.LOADED && p.loadId === x.id) { data.updatePallet(p, { status: VP.LABELED, load: '' }); break; }
+            if (p && p.status === VP.LOADED && p.loadId === x.id) { mustOpenTruck(x.id); data.updatePallet(p, { status: VP.LABELED, load: '' }); break; }
         }
-        data.updateLoad(x, { data: { stack: st } });
+        const cur = data.getLoad(x.id);
+        if (cur && isOpen(cur)) data.updateLoad(cur, { data: { stack: st } });
         return { view: truckView(mustTruck(x.id), c) };
     });
 
@@ -515,23 +525,50 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { input: inp, truckNo: d.truckNo, plan: pubPlan(d.plan) };
     });
 
+    // What the claim write carries, so a departing truck always has its plan (no claimed-but-unplanned state).
+    function departData(cur, d, inp, c) {
+        const gone = {};
+        d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
+        return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
+            approvedBy: d.plan.needsManager ? c.actor : '', requestedBy: (cur.data.pending || {}).by || '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
+            bol: d.plan.bol, ifs: (cur.data.ifs || []).filter(f => !gone[f.ifId]), writes: {}, pending: null };
+    }
+    function savePending(id, inp, c) {
+        const cur = mustTruck(id);
+        if (cur.status !== T.LOADING || cur.data.claim || cur.data.depart) throw userErr('This truck is already ' + cur.status);
+        data.updateLoad(cur, { data: { pending: Object.assign({ by: c.actor, at: c.now.stamp }, inp) } });
+    }
+    const NEEDS_MGR = 'needs-manager';
     act('depart_confirm', false, (a, c) => {
         const x0 = mustTruck(a.truckId);
         if (x0.status !== T.LOADING) throw userErr('This truck is already ' + x0.status);
-        const inp = departInput(a, x0, c), d = departPlan(x0, inp, c);
-        if (d.plan.needsManager && !c.mgr) {
-            data.updateLoad(x0, { data: { pending: Object.assign({ by: c.actor, at: c.now.stamp }, inp) } });
-            return { waiting: true, plan: pubPlan(d.plan), view: truckView(mustTruck(x0.id), c) };
+        const inp = departInput(a, x0, c);
+        const waiting = d => { savePending(x0.id, inp, c); return { waiting: true, plan: pubPlan(d.plan), view: truckView(mustTruck(x0.id), c) }; };
+        const pre = departPlan(x0, inp, c);
+        if (pre.plan.needsManager && !c.mgr) return waiting(pre);
+        let d = null, cl;
+        try {
+            cl = claimLoad(x0, T.DEPARTING, 'depart', cur => {
+                if (cur.status !== T.LOADING || cur.data.depart || cur.data.claim) throw userErr('This truck is already departing');
+            }, cur => {
+                d = departPlan(cur, inp, c);
+                if (d.plan.needsManager && !c.mgr) throw Object.assign(new Error(NEEDS_MGR), { needsMgr: true });
+                return departData(cur, d, inp, c);
+            });
+        } catch (e) { if (e.needsMgr) return waiting(d); throw e; }
+        // Plan again from the claimed state: a scan or remove that landed just before the claim changes the pallets.
+        const again = departPlan(cl.Ld, inp, c, x0.data.ifs);
+        if (again.palletKey !== d.palletKey) {
+            if (again.plan.needsManager && !c.mgr) {
+                assertClaim(x0.id, cl.claim, truckLabel(cl.Ld), 'depart');
+                data.updateLoad(data.getLoad(x0.id), { status: T.LOADING, data: { claim: '', workingAt: 0, phase: '', depart: null, plan: null, alloc: null, unplanned: null, bol: null, writes: null,
+                    ifs: x0.data.ifs, pending: Object.assign({ by: c.actor, at: c.now.stamp }, inp) } });
+                return { waiting: true, plan: pubPlan(again.plan), view: truckView(mustTruck(x0.id), c) };
+            }
+            assertClaim(x0.id, cl.claim, truckLabel(cl.Ld), 'depart');
+            data.updateLoad(data.getLoad(x0.id), { data: departData(x0, again, inp, c) });   // x0: the pre-claim IFs and requester
         }
-        const cl = claimLoad(x0, T.DEPARTING, 'depart', cur => {
-            if (cur.status !== T.LOADING || cur.data.depart) throw userErr('This truck is already departing');
-        }), x = cl.Ld;
-        const gone = {};
-        d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
-        data.updateLoad(x, { data: { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
-            approvedBy: d.plan.needsManager ? c.actor : '', requestedBy: (x0.data.pending || {}).by || '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
-            bol: d.plan.bol, ifs: x.data.ifs.filter(f => !gone[f.ifId]), writes: {}, pending: null } });
-        return finishDepart(mustTruck(x.id), c, cl.claim);
+        return finishDepart(mustTruck(x0.id), c, cl.claim);
     });
 
     act('depart_cancel', false, (a, c) => {
@@ -588,6 +625,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return x;
     }
     function receiveOn(x, p, prev, c) {
+        mustUnloadable(x.id);                               // re-check right before the pallet changes: approving closes scanning
         data.updatePallet(p, { status: VP.RECEIVED, data: { receivedAt: c.now.stamp, receivedBy: c.actor } });
         const cur = mustTruck(x.id), d = cur.data;          // fresh read: stack and counters merge over the current copy
         const patch = { data: { rstack: (d.rstack || []).concat([{ id: String(p.id), prev: prev }]).slice(-STACK_MAX),
