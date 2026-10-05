@@ -187,7 +187,75 @@ define([], function () {
         return { ops, perIf, missing, cumulative };
     }
 
+    // ── write gate ───────────────────────────────────────────────────────
+    function opKey(op) {
+        if (op.op === 'if_qty') return 'if_qty:' + op.ifId + ':' + op.item;
+        if (op.op === 'if_create') return 'if_create:' + op.toId;
+        if (op.op === 'receipt') return 'receipt:' + op.ifId + ':' + op.seq;
+        return op.op + ':' + op.ifId;
+    }
+    function normMode(m) { return m === 'qty' || m === 'on' ? m : 'off'; }
+    function opAllowed(op, mode) { const m = normMode(mode); return m === 'on' || (m === 'qty' && op.op === 'if_qty'); }
+    function runOps(ops, mode, apply, done, onWrite) {
+        const written = [], planOnly = [];
+        (ops || []).forEach(op => {
+            const key = opKey(op);
+            if (!opAllowed(op, mode)) { planOnly.push(key); return; }
+            if (done && done[key]) return;
+            const id = String(apply(op));
+            if (onWrite) onWrite(key, id);
+            written.push(key);
+        });
+        return { written, planOnly };
+    }
+    function resolveNew(op, writes) {
+        if (!op.ifId || String(op.ifId).indexOf('new:') !== 0) return op;
+        const id = writes && writes['if_create:' + op.toId];
+        if (!id) throw new Error('The add-on IF from TO ' + op.toId + ' was not created yet');
+        return Object.assign({}, op, { ifId: String(id) });
+    }
+
+    // ── shadow compare (beta) ────────────────────────────────────────────
+    function shadowRows(o) {
+        const rows = [], sku = o.sku || {};
+        const planned = {};
+        (o.trucks || []).forEach(t => ((t.data && t.data.alloc) || []).forEach(a => { if (!a.addOn) planned[a.ifId] = true; }));
+        (o.trucks || []).forEach(t => {
+            const d = t.data || {}, dep = d.depart;
+            if (!dep) return;
+            const label = memoFor(dep.truckNo, dep.day), sealTxt = 'SEAL: ' + normSeal(dep.seal);
+            const row = (ifNum, check, portal, netsuite, ok) => rows.push({ truck: label, seal: dep.seal, ifNum: ifNum, check: check, portal: String(portal), netsuite: netsuite == null ? '—' : String(netsuite), ok: ok });
+            (d.alloc || []).forEach(a => {
+                let realId = a.addOn ? null : a.ifId;
+                if (a.addOn) {
+                    realId = ((o.ifsByTo || {})[a.toId] || []).find(id => !planned[id] && ((o.receipts || {})[id] || []).some(r => normSeal(r.seal) === sealTxt)) || null;
+                    const f = realId && o.ifInfo[realId];
+                    row(f ? f.ifNum : '(new)', 'Add-on IF on ' + a.toNum, 'needed', f ? f.ifNum : null, f ? true : null);
+                }
+                const info = realId ? (o.ifInfo || {})[realId] : null;
+                const ifNum = info ? info.ifNum : a.ifNum;
+                if (!info) return;
+                Object.keys(a.lines).forEach(k => {
+                    const ns = (info.lines || []).filter(l => String(l.item) === k).reduce((s, l) => s + Number(l.qty || 0), 0);
+                    row(ifNum, 'IF qty ' + (sku[k] || k), a.lines[k], ns, info.status === 'C' ? ns === a.lines[k] : null);
+                });
+                row(ifNum, 'Shipped', 'yes', info.status === 'C' ? 'yes' : info.status, info.status === 'C' ? true : null);
+                const rs = (o.receipts || {})[realId] || [];
+                if (!rs.length) return;
+                row(ifNum, 'Trailer', dep.trailer, rs.map(r => r.trailer).join(', '), rs.every(r => normSeal(r.trailer) === normSeal(dep.trailer)));
+                row(ifNum, 'Seal', dep.seal, rs.map(r => r.seal).join(', '), rs.every(r => normSeal(r.seal) === sealTxt));
+                const mine = (d.received || {})[a.ifId] || null;
+                Object.keys(a.lines).forEach(k => {
+                    const ns = rs.reduce((s, r) => s + (Number(r.lines[k]) || 0), 0);
+                    const p = mine ? Number(mine[k]) || 0 : null;
+                    row(ifNum, 'Receipt qty ' + (sku[k] || k), p == null ? 'not approved' : p, ns, p == null ? null : p === ns);
+                });
+            });
+        });
+        return rows;
+    }
+
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealUsed, truckNoForDay, planDeparture,
-        classifyUnloadScan, planReceipts };
+        classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows };
 });
