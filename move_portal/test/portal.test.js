@@ -988,3 +988,50 @@ test('report compares plan with the snapshot', () => {
     assert.ok(r.rows.some(x => x.ifNum === 'IF9001' && x.check === 'IF qty YSN100' && x.ok === null));   // IF9001 is still B in the snapshot
     assert.deepEqual([r.days[0].trucks, r.days[0].pallets, r.writeMode], [1, 42, 'off']);
 });
+
+test('approvals: one truck whose plan throws shows an error and does not fail the list', () => {
+    const ctx = setup();
+    const a = truckWith(ctx, 2, '9001'), b = truckWith(ctx, 2, '9002');
+    ctx.run('depart_confirm', { truckId: a.t.id, trailer: '1', seal: 'E1' }, false);
+    ctx.run('depart_confirm', { truckId: b.t.id, trailer: '2', seal: 'E2' }, false);
+    const orig = ctx.ns.openToLines;
+    let n = 0;
+    ctx.ns.openToLines = () => { if (++n === 1) throw new Error('snapshot broke'); return orig(); };
+    const r = ctx.run('approvals');
+    assert.equal(r.departures.length, 2);
+    const bad = r.departures.filter(x => x.error), good = r.departures.filter(x => !x.error);
+    assert.deepEqual([bad.length, bad[0].error, bad[0].plan, good.length], [1, 'snapshot broke', null, 1]);
+    assert.ok(good[0].plan);
+});
+
+test('approvals: a receipt entry that throws becomes an error entry; stuck approving without unposted pallets is still listed', () => {
+    const ctx = setup();
+    const a = departed(ctx, 2, 'R1', '9001'), b = departed(ctx, 2, 'R2', '9002');
+    [a, b].forEach(d => { ctx.run('unload_scan', { truckId: d.t.id, raw: d.ps[0].code }, false); ctx.run('unload_done', { truckId: d.t.id }, false); });
+    const orig = verify.planReceipts;
+    let n = 0;
+    verify.planReceipts = function () { if (++n === 1) throw new Error('plan broke'); return orig.apply(this, arguments); };
+    let r;
+    try { r = ctx.run('approvals').receipts; } finally { verify.planReceipts = orig; }
+    assert.equal(r.length, 2);
+    const bad = r.filter(x => x.error), good = r.filter(x => !x.error);
+    assert.deepEqual([bad.length, bad[0].error, Object.keys(bad[0].truck).sort(), good.length], [1, 'plan broke', ['id', 'label'], 1]);
+    // stuck approving with every received pallet already posted
+    ctx.data.palletsByLoad(a.t.id, ['received']).forEach(p => ctx.data.updatePallet(p, { data: { postedSeq: 1 } }));
+    ctx.data.updateLoad(ctx.data.getLoad(a.t.id), { status: 'approving', data: { claim: 'old', workingAt: Date.now(), error: 'boom', prevStatus: 'receiving' } });
+    const s = ctx.run('approvals').receipts.filter(x => x.truck.id === a.t.id);
+    assert.deepEqual([s.length, s[0].stuck], [1, true]);
+});
+
+test('report counts a differing shipped IF qty as a diff, and lists days newest first', () => {
+    const ctx = setup();
+    const a = departed(ctx, 42, 'D1', '9001'), b = departed(ctx, 42, 'D2', '9002');
+    const lb = ctx.data.getLoad(b.t.id);
+    ctx.data.updateLoad(lb, { data: { depart: Object.assign({}, lb.data.depart, { day: '2026-10-13' }) } });
+    const orig = ctx.ns.ifInfo;
+    ctx.ns.ifInfo = () => { const o = orig(); o['9001'].status = 'C'; o['9001'].lines[0].qty = 500; return o; };
+    const r = ctx.run('report');
+    assert.ok(r.rows.some(x => x.ifNum === 'IF9001' && x.check === 'IF qty YSN100' && x.ok === false));
+    assert.deepEqual(r.days.map(d => d.day), ['2026-10-14', '2026-10-13']);
+    assert.deepEqual(r.days.map(d => d.diffs), [1, 0]);
+});

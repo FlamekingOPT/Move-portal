@@ -1089,13 +1089,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             }),
             retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(truckSummary),
             receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
-                const unposted = data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).length;
                 const isStuck = x.status === T.APPROVING;
-                if (!unposted || (!isStuck && x.status !== T.RECEIVED && !x.data.recvRequested)) return null;
-                const rp = receiptPlan(x);
-                const o = { truck: truckSummary(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED };
-                if (isStuck) o.stuck = true;
-                return o;
+                try {
+                    const unposted = data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).length;
+                    if (!isStuck && (!unposted || (x.status !== T.RECEIVED && !x.data.recvRequested))) return null;
+                    const rp = receiptPlan(x);
+                    const o = { truck: truckSummary(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED };
+                    if (isStuck) o.stuck = true;
+                    return o;
+                } catch (e) {
+                    log.error({ title: 'move approvals receipt ' + x.id, details: (e && e.stack) || String(e) });
+                    const o = { truck: { id: x.id, label: truckLabel(x) }, error: (e && e.message) || String(e) };
+                    if (isStuck) o.stuck = true;
+                    return o;
+                }
             }).filter(Boolean)
         };
     });
@@ -1105,13 +1112,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const ids = {};
         trucks.forEach(x => (x.data.alloc || []).forEach(al => Object.keys(al.lines).forEach(k => { ids[k] = 1; })));
         const rows = verify.shadowRows({ trucks: trucks, ifInfo: ns.ifInfo(), ifsByTo: ns.ifsByTo(), receipts: ns.receiptsByIf(), sku: skuNames(Object.keys(ids)) });
-        const days = {};
+        const days = {}, diffsBy = {};
+        rows.forEach(r => { if (r.ok === false) diffsBy[r.truck] = (diffsBy[r.truck] || 0) + 1; });
         trucks.forEach(x => {
             const dd = days[x.data.depart.day] = days[x.data.depart.day] || { day: x.data.depart.day, trucks: 0, pallets: 0, pieces: 0, diffs: 0 };
             const ps = data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
             dd.trucks++; dd.pallets += ps.length; dd.pieces += ps.reduce((s, p) => s + p.pieces, 0);
-            const label = truckLabel(x);
-            dd.diffs += rows.filter(r => r.truck === label && r.ok === false).length;
+            dd.diffs += diffsBy[truckLabel(x)] || 0;
         });
         return { rows: rows, days: Object.values(days).sort((p, q) => (p.day < q.day ? 1 : -1)), pulledAt: ns.pulledAt(), writeMode: writeMode(c) };
     });
