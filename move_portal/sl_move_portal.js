@@ -444,10 +444,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const moved = data.movedByDay();
         const end = c.now.dayIso < c.S.target ? c.now.dayIso : c.S.target;
         const days = core.moveDays(c.S.start, end, c.S.skip || []).map(d => ({ day: d, n: moved[d] || 0 }));
-        const trucks = allTrucks().slice(0, 15), counts = data.palletStatusCounts(trucks.map(x => x.id));
+        const every = allTrucks(), trucks = every.slice(0, 15), counts = data.palletStatusCounts(trucks.map(x => x.id));
         const exc = {
             missing: data.countPallets({ status: [VP.MISSING] }),
-            neverLoaded: data.findPalletsWhere({ status: [VP.LABELED, VP.LOADED] }).filter(p => p.data.flag === 'never_loaded').length,
+            neverLoaded: stillFlagged([].concat.apply([], every.map(x => x.data.flagged || []))).length,
             damaged: data.countPallets({ damaged: true }),
             edited: data.countPallets({ edited: true, status: [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING] }),
             stale: data.countPallets({ status: [VP.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
@@ -625,9 +625,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const ps = data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
         const rp = verify.planReceipts({ alloc: x.data.alloc || [], pallets: ps, received: x.data.received || {}, stamp: x.data.depart || {}, seq: 0 });
         const got = ps.filter(p => p.status === VP.RECEIVED);
-        const flagged = data.findPalletsWhere({ status: [VP.LABELED, VP.LOADED] }).filter(p => p.data.flag === 'never_loaded' && p.data.flaggedTruck === x.id);
+        const flagged = stillFlagged(x.data.flagged).filter(p => p.data.flaggedTruck === x.id);
         return { truck: truckSummary(x, countsFromPallets(x.id, ps)), perIf: rp.perIf, expected: ps.filter(p => p.status !== VP.RECEIVED).map(p => pubPallet(p)),
             recent: got.slice(-5).reverse().map(p => pubPallet(p)), counts: { in: got.length, of: ps.length }, flagged: flagged.map(p => pubPallet(p)) };
+    }
+    // Never-loaded pallets are listed on the truck that flagged them (data.flagged) and read back by id.
+    function stillFlagged(ids) {
+        const u = [...new Set((ids || []).map(String))];
+        return u.length ? data.palletsByIds(u).filter(p => p.data.flag === 'never_loaded' && (p.status === VP.LABELED || p.status === VP.LOADED)) : [];
     }
     function mustUnloadable(id) {
         const x = mustTruck(id);
@@ -666,7 +671,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const p = s.palletId ? data.getPallet(s.palletId) : null;
         const r = verify.classifyUnloadScan({ pallet: p, truckId: x.id, trucks: truckMap(allTrucks()) });
         if (r.set) receiveOn(x, p, p.status, c);
-        if (r.result === 'never_loaded') data.updatePallet(p, { data: { flag: 'never_loaded', flaggedAt: c.now.stamp, flaggedBy: c.actor, flaggedTruck: x.id } });
+        if (r.result === 'never_loaded') {
+            data.updatePallet(p, { data: { flag: 'never_loaded', flaggedAt: c.now.stamp, flaggedBy: c.actor, flaggedTruck: x.id } });
+            const cur = mustTruck(x.id), fl = cur.data.flagged || [];
+            if (fl.indexOf(String(p.id)) === -1) data.updateLoad(cur, { data: { flagged: fl.concat([String(p.id)]) } });
+        }
         data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: 'unload', actor: c.actor, at: c.now.stamp } });
         return Object.assign({}, r, { raw: s.raw, tone: verify.toneFor(r.result), pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: unloadView(mustTruck(x.id), c) });
     });

@@ -935,3 +935,20 @@ test('fix8: the scan stack keeps the last 30 entries', () => {
     const st = ctx.data.getLoad(t.id).data.stack;
     assert.deepEqual([st.length, st[29]], [30, String(ps[34].id)]);
 });
+
+test('fix9: never-loaded flags live on the truck; unload view and dashboard read them by id, not by a broad search', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 2, 'N9');
+    const stray = printLabels(ctx, 2, 'Jstray9', [L975]);
+    const broad = countCalls(ctx, 'findPalletsWhere');
+    ctx.run('unload_scan', { truckId: t.id, raw: stray[0].code }, false);
+    ctx.run('unload_scan', { truckId: t.id, raw: stray[0].code }, false);           // same stray twice: flagged once
+    const v = ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false).view;
+    assert.deepEqual(v.flagged.map(p => p.id), [stray[0].id]);
+    assert.deepEqual(ctx.data.getLoad(t.id).data.flagged, [String(stray[0].id)]);
+    assert.equal(ctx.run('dashboard').exc.neverLoaded, 1);
+    assert.equal(broad.n, 0);
+    ctx.data.updatePallet(ctx.data.getPallet(stray[0].id), { status: 'void' });           // dealt with: no longer counted
+    assert.equal(ctx.run('dashboard').exc.neverLoaded, 0);
+    assert.deepEqual(ctx.run('unload_get', { truckId: t.id }, false).view.flagged, []);
+});
