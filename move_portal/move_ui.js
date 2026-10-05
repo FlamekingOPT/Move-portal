@@ -748,7 +748,14 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!r.ok) { main(errBox(r.error)); return; }
             const dep = r.departures.map(d => '<div class="card"><h4>🚚 ' + esc(d.truck.label) + ' · departure</h4><div class="muted">' + esc('Trailer ' + d.pending.trailer + ' · Seal ' + d.pending.seal + ' · by ' + d.pending.by) + '</div>' +
                 (d.plan ? planHtml(d.plan) + '<button class="btn go" data-act="apdepart" data-id="' + d.truck.id + '" data-label="' + esc(d.truck.label) + '">Approve departure</button>' : errBox(d.error)) + '</div>').join('');
-            const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') + '<button class="btn pri" data-act="apretry" data-id="' + t.id + '" data-label="' + esc(t.label) + '">Retry</button></div>').join('');
+            const ret = r.retries.map(t => {
+                const op = t.errorOp, canSkip = op && op.op === 'if_qty';
+                return '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
+                    (canSkip ? '<div class="muted">Failed edit: ' + esc(op.ifNum + ' ' + num(op.from) + ' → ' + num(op.to)) + '</div>' : '') +
+                    '<button class="btn pri" data-act="apretry" data-id="' + t.id + '" data-label="' + esc(t.label) + '">Retry</button>' +
+                    (canSkip ? ' <button class="btn ghost" data-act="apskip" data-id="' + t.id + '" data-key="' + esc(t.errorKey) + '" data-label="' + esc(t.label) +
+                        '" data-if="' + esc(op.ifNum + ' ' + num(op.from) + ' → ' + num(op.to)) + '">Depart without this edit</button>' : '') + '</div>';
+            }).join('');
             const rec = r.receipts.map(x => {
                 const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
                 if (!x.perIf) return '<div class="card warnc">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + errBox(x.error || 'Could not build the receipt') +
@@ -764,6 +771,13 @@ h3{font-size:15px;margin:16px 0 8px}
         };
         ACT.apdepart = async el => { if (!confirm('Approve departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_confirm', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
         ACT.apretry = async el => { if (!confirm('Retry departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
+        ACT.apskip = async el => {
+            if (!confirm('Depart ' + (el.dataset.label || 'this truck') + ' without the edit to ' + el.dataset.if + '? NetSuite keeps the old qty; the office must fix it (it shows in the Report).')) return;
+            busy(el, true);
+            const r = await api('depart_skip_write', { truckId: el.dataset.id, key: el.dataset.key });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? flash('green', '✅ Departed', 'Edit skipped: ' + esc(el.dataset.if)) : errBox(r.error));
+        };
         ACT.aprecv = async el => {
             if (!confirm('Approve receipt for ' + ((el.dataset.label) || 'this truck') + '? This posts in NetSuite when writes are on.')) return;
             busy(el, true);

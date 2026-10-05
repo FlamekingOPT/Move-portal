@@ -49,6 +49,7 @@ define(['N/record', 'N/search'], function (record, search) {
         if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
         const lines = itemLines(f, op.item);
         const cur = lines.reduce((a, i) => a + (Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0), 0);
+        if (cur === Number(op.to)) return String(op.ifId);   // an earlier write landed but the request died before it was recorded
         if (cur !== Number(op.from)) throw changed(op.ifNum + ' item ' + op.item + ' is ' + cur + ', expected ' + op.from);
         if (Number(op.to) > Number(op.from) && Number(op.to) - Number(op.from) > toRemaining(op.toId, op.item)) throw changed('TO ' + op.toId + ' has no room to raise ' + op.ifNum + ' to ' + op.to);
         if (Number(op.to) <= 0) {

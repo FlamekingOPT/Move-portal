@@ -677,3 +677,36 @@ test('report counts a differing shipped IF qty as a diff, and lists days newest 
     assert.deepEqual(r.days.map(d => d.day), ['2026-10-14', '2026-10-13']);
     assert.deepEqual(r.days.map(d => d.diffs), [1, 0]);
 });
+
+// ── final-review fix wave ──
+test('fix1: a refused if_qty saves errorKey; a manager can depart without it; the report flags the skipped edit', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t, ps } = truckWith(ctx, 40);
+    ctx.tx._t.failOn = 'if_qty:9001:975';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'K1' }), /NetSuite write failed/);
+    assert.equal(ctx.data.getLoad(t.id).data.errorKey, 'if_qty:9001:975');
+    const rt = ctx.run('approvals').retries;
+    assert.deepEqual(rt.map(x => [x.id, x.errorKey, x.errorOp.ifNum, x.errorOp.from, x.errorOp.to]), [[t.id, 'if_qty:9001:975', 'IF9001', 504, 480]]);
+    assert.throws(() => ctx.run('depart_skip_write', { truckId: t.id, key: 'if_qty:9001:975' }, false), /Managers only/);
+    assert.throws(() => ctx.run('depart_skip_write', { truckId: t.id, key: 'if_stamp:9001' }), /not the failed write/);
+    const r = ctx.run('depart_skip_write', { truckId: t.id, key: 'if_qty:9001:975' });
+    assert.equal(r.departed, true);
+    const d = ctx.data.getLoad(t.id).data;
+    assert.match(d.writes['if_qty:9001:975'], /^skipped:IF changed in NetSuite/);
+    assert.deepEqual([d.skipped.length, d.skipped[0].key, d.skipped[0].by.name, d.errorKey], [1, 'if_qty:9001:975', 'Jack K', '']);
+    assert.deepEqual(ctx.tx._t.ops.map(o => o.op), ['if_stamp']);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'in_transit');
+    assert.throws(() => ctx.run('depart_skip_write', { truckId: t.id, key: 'if_qty:9001:975' }), /Nothing to skip/);
+    const row = ctx.run('report').rows.find(x => x.check === 'Skipped edit IF9001');
+    assert.deepEqual([row.portal, row.netsuite, row.ok], ['504→480', '—', false]);
+});
+
+test('fix1: only a refused IF quantity edit can be skipped', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = truckWith(ctx, 42);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'K2' }), /NetSuite write failed/);
+    assert.throws(() => ctx.run('depart_skip_write', { truckId: t.id, key: 'if_stamp:9001' }), /Only an IF quantity edit/);
+});

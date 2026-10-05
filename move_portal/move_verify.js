@@ -228,6 +228,10 @@ define([], function () {
             if (!dep) return;
             const label = memoFor(dep.truckNo, dep.day), sealK = sealKey(dep.seal);
             const row = (ifNum, check, portal, netsuite, ok) => rows.push({ truck: label, seal: dep.seal, ifNum: ifNum, check: check, portal: String(portal), netsuite: netsuite == null ? '—' : String(netsuite), ok: ok });
+            (d.skipped || []).forEach(s => {                       // a refused edit the truck departed without: the office must fix it
+                const op = (d.plan || []).find(o => opKey(o) === s.key) || {};
+                row(op.ifNum || s.key, 'Skipped edit ' + (op.ifNum || s.key), op.op === 'if_qty' ? op.from + '→' + op.to : (op.op || s.key), null, false);
+            });
             (d.alloc || []).forEach(a => {
                 let realId = a.addOn ? null : a.ifId;
                 if (a.addOn) {

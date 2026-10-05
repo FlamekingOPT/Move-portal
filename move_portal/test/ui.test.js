@@ -51,9 +51,15 @@ test('departing state, confirm prompts, null-screen guards', () => {
     const src = ui._clientMain.toString();
     assert.ok(src.indexOf("t.status === 'departed'") !== -1);
     assert.ok(src.indexOf('Departing… a NetSuite write is pending') !== -1);
-    ['apdepart', 'apretry', 'aprecv', 'dconfirm'].forEach(n => {
+    ['apdepart', 'apretry', 'aprecv', 'dconfirm', 'apskip'].forEach(n => {
         const i = src.indexOf('ACT.' + n + ' =');
         assert.ok(i !== -1 && src.slice(i, i + 400).indexOf('confirm(') !== -1, 'no confirm in ' + n);
     });
     assert.ok(src.indexOf("if (!$('scanres')) return;") !== -1);
+});
+
+test('fix1: approvals retry card offers Depart without this edit', () => {
+    const src = ui._clientMain.toString();
+    assert.ok(src.indexOf("api('depart_skip_write'") !== -1);
+    assert.ok(src.indexOf('Depart without this edit') !== -1);
 });

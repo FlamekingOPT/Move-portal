@@ -55,8 +55,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (!cur) throw userErr('Load not found');
         if (mustBe) mustBe(cur);
         Ld = cur;
+        const extra = typeof extraData === 'function' ? extraData(cur) : extraData;   // computed from the guarded copy, written with the claim
         const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
-        data.updateLoad(Ld, { status: status, data: Object.assign({ workingAt: Date.now(), error: '', phase: phase, claim: claim }, extraData || {}) });
+        data.updateLoad(Ld, { status: status, data: Object.assign({ workingAt: Date.now(), error: '', phase: phase, claim: claim }, extra || {}) });
         const fresh = data.getLoad(Ld.id);
         if (fresh.data.claim !== claim) throw userErr((Ld.number || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
         return { Ld: fresh, claim: claim };
@@ -192,18 +193,25 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function finishDepart(x, c, claim) {
         const writes = Object.assign({}, x.data.writes);
+        let curKey = '';                              // the op being applied when an exception hits, so a manager can skip it
         try {
-            verify.runOps(x.data.plan, writeMode(c), op => { assertClaim(x.id, claim, truckLabel(x), 'depart'); return tx.apply(verify.resolveNew(op, writes)); }, writes,
+            verify.runOps(x.data.plan, writeMode(c), op => {
+                assertClaim(x.id, claim, truckLabel(x), 'depart');
+                curKey = verify.opKey(op);
+                const id = tx.apply(verify.resolveNew(op, writes));
+                curKey = '';
+                return id;
+            }, writes,
                 (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });  // fresh read so a stale copy never rewrites the claim
         } catch (e) {
             if (e.user) throw e;                      // claim lost: another request owns the truck now, leave its state alone
             log.error({ title: 'move depart ' + x.id, details: (e && e.stack) || String(e) });
-            data.updateLoad(data.getLoad(x.id), { data: { error: e.message || String(e), writes: writes } });
+            data.updateLoad(data.getLoad(x.id), { data: { error: e.message || String(e), errorKey: curKey, writes: writes } });
             throw userErr('Departure saved but a NetSuite write failed: ' + (e.message || e) + '. A manager can press Retry.');
         }
         assertClaim(x.id, claim, truckLabel(x), 'depart');
         data.palletsByLoad(x.id, [VP.LOADED]).forEach(p => data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day }));
-        data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
+        data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { error: '', errorKey: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
         return { departed: true, view: truckView(mustTruck(x.id), c) };
     }
 
@@ -527,6 +535,21 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return finishDepart(cl.Ld, c, cl.claim);
     });
 
+    // A refused NetSuite edit must not strand a truck: the manager departs it anyway and the report tells the office to fix it.
+    act('depart_skip_write', true, (a, c) => {
+        const key = String(a.key || '');
+        const guard = cur => {
+            if (cur.status !== T.DEPARTING || !cur.data.depart || !cur.data.error || !cur.data.errorKey) throw userErr('Nothing to skip on this truck');
+            if (cur.data.errorKey !== key) throw userErr('That is not the failed write on this truck. Refresh Approvals.');
+            if (key.indexOf('if_qty:') !== 0) throw userErr('Only an IF quantity edit can be skipped. Press Retry.');
+        };
+        guard(mustTruck(a.truckId));
+        const cl = claimLoad(mustTruck(a.truckId), T.DEPARTING, 'depart', guard, cur => ({
+            writes: Object.assign({}, cur.data.writes, { [key]: 'skipped:' + cur.data.error }), errorKey: '',
+            skipped: (cur.data.skipped || []).concat([{ key: key, error: cur.data.error, by: c.user, at: c.now.stamp }]) }));
+        return finishDepart(cl.Ld, c, cl.claim);
+    });
+
     // ── v3 unload and receipt approval ───────────────────────────────────
     const UNLOADABLE = [T.DEPARTED, T.RECEIVING, T.RECEIVED];
     function unloadView(x, c) {
@@ -663,7 +686,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 try { plan = pubPlan(departPlan(x, x.data.pending, c).plan); } catch (e) { error = e.message; }
                 return { truck: truckSummary(x), pending: x.data.pending, plan: plan, error: error };
             }),
-            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(truckSummary),
+            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => {
+                const k = x.data.errorKey || '', op = k ? (x.data.plan || []).find(o => verify.opKey(o) === k) : null;
+                return Object.assign(truckSummary(x), { errorKey: k, errorOp: op ? { op: op.op, ifNum: op.ifNum || '', item: op.item || '', from: op.from, to: op.to } : null });
+            }),
             receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;
                 try {
@@ -706,7 +732,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (def.m && !mgr) throw userErr('Managers only');
         data.resetCache();
         const body = a || {};
-        const c = { mgr: !!mgr, S: settings(), now: nowInfo(),
+        const u = runtime.getCurrentUser();
+        const c = { mgr: !!mgr, S: settings(), now: nowInfo(), user: { id: String(u.id), name: u.name },
             actor: String(body.actor || '').trim().slice(0, 60) || runtime.getCurrentUser().name };
         return def.fn(body, c) || {};
     }

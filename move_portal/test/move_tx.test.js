@@ -101,3 +101,11 @@ test('receipt transforms with itemfulfillment default and default memo', () => {
 test('unknown op throws', () => {
     assert.throws(() => setup({ ifLines: split() }).tx.apply({ op: 'nope' }), /Unknown op/);
 });
+
+test('if_qty already at the target qty counts as done and saves nothing', () => {
+    const s = setup({ ifLines: [{ item: '975', quantity: 300 }, { item: '975', quantity: 180 }] });
+    assert.equal(s.tx.apply(qop(480)), '9');
+    assert.equal(s.f.saved, 0);
+    const c = setup({ status: 'C', ifLines: [{ item: '975', quantity: 480 }] });
+    assert.throws(() => c.tx.apply(qop(480)), /no longer Picked\/Packed/);
+});
