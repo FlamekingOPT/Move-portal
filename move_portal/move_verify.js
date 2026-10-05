@@ -147,6 +147,47 @@ define([], function () {
                 ifNums: kept.map(f => f.ifNum).concat(Object.keys(addOns).sort((x, y) => Number(x) - Number(y)).map(t => '(new from ' + addOns[t].toNum + ')')) } };
     }
 
+    // ── unload and receipts ──────────────────────────────────────────────
+    function classifyUnloadScan(o) {
+        const p = o.pallet;
+        if (!p) return { result: 'unknown' };
+        if (p.status === VP.VOID) return { result: 'void' };
+        const me = String(o.truckId), pt = p.loadId ? String(p.loadId) : '';
+        const other = (o.trucks && o.trucks[pt]) || {};
+        const ref = { otherTruckId: pt, otherLabel: other.label || '' };
+        switch (p.status) {
+            case VP.IN_TRANSIT: return pt === me ? { result: 'ok', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
+            case VP.MISSING: return pt === me ? { result: 'late', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
+            case VP.RECEIVED: return pt === me ? { result: 'dup' } : Object.assign({ result: 'dup_other' }, ref);
+            case VP.LOADED: if (other.status === TRUCK.DEPARTING) return Object.assign({ result: 'locked' }, ref);
+                return { result: 'never_loaded' };
+            default: return { result: 'never_loaded' };
+        }
+    }
+
+    function planReceipts(o) {
+        const left = sumLines((o.pallets || []).filter(p => p.status === VP.RECEIVED));
+        const ops = [], perIf = [], cumulative = {};
+        (o.alloc || []).forEach(a => {
+            const lines = {}, cum = cumulative[a.ifId] = {};
+            let shipped = 0, got = 0;
+            Object.keys(a.lines).forEach(k => {
+                const g = Math.min(left[k] || 0, Number(a.lines[k]) || 0);
+                left[k] = (left[k] || 0) - g;
+                const before = Number(((o.received || {})[a.ifId] || {})[k]) || 0;
+                if (g > before) lines[k] = g - before;
+                cum[k] = g;
+                shipped += Number(a.lines[k]) || 0;
+                got += g;
+            });
+            if (Object.keys(lines).length) ops.push({ op: 'receipt', ifId: a.ifId, ifNum: a.ifNum, toId: a.toId, lines: lines, trailer: o.stamp.trailer, seal: o.stamp.seal, seq: o.seq });
+            perIf.push({ ifId: a.ifId, ifNum: a.ifNum, shipped: shipped, received: got, short: shipped - got });
+        });
+        const missing = (o.pallets || []).filter(p => p.status === VP.IN_TRANSIT || p.status === VP.MISSING).map(p => p.code);
+        return { ops, perIf, missing, cumulative };
+    }
+
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
-        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealUsed, truckNoForDay, planDeparture };
+        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealUsed, truckNoForDay, planDeparture,
+        classifyUnloadScan, planReceipts };
 });
