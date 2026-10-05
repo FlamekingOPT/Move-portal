@@ -30,7 +30,7 @@ function setup(spec) {
     };
     recs['itemfulfillment:9'] = makeRec({ shipstatus: spec.status || 'B' }, spec.ifLines);
     recs['transferorder:600'] = makeRec({}, spec.to || [{ item: '975', quantity: 600, quantityfulfilled: 0 }]);
-    const tx = loadAmd('move_tx.js', { 'N/record': fakeRecord, 'N/search': {} });
+    const tx = loadAmd('move_tx.js', { 'N/record': fakeRecord, 'N/search': {}, './move_verify': loadAmd('move_verify.js') });
     return { tx, f: recs['itemfulfillment:9'], log };
 }
 const split = () => [{ item: '975', quantity: 300 }, { item: '975', quantity: 204 }];
@@ -137,4 +137,11 @@ test('if_stamp is idempotent: an IF already shipped with this trailer and seal i
     Object.assign(o.f.values, { custbody7: 'SEAL: 999', custbody_rsm_container_no: 'T5' });
     assert.throws(() => o.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'm' }), /no longer Picked\/Packed/);
     assert.equal(o.f.saved, 0);
+});
+
+test('if_stamp idempotence compares seal digits: SEAL:5249330 on the IF is the same seal as 5249330', () => {
+    const s = setup({ status: 'C', ifLines: split() });
+    Object.assign(s.f.values, { custbody7: 'SEAL:5249330', custbody_rsm_container_no: '537224' });
+    assert.equal(s.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: '537224', seal: '5249330', memo: 'm', lines: { 975: 504 } }), '9');
+    assert.equal(s.f.saved, 0);
 });
