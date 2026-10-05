@@ -951,6 +951,114 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return finishDepart(cl.Ld, c, cl.claim);
     });
 
+    // ── v3 unload and receipt approval ───────────────────────────────────
+    const UNLOADABLE = [T.DEPARTED, T.RECEIVING, T.RECEIVED];
+    function unloadView(x, c) {
+        const ps = data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
+        const rp = verify.planReceipts({ alloc: x.data.alloc || [], pallets: ps, received: x.data.received || {}, stamp: x.data.depart || {}, seq: 0 });
+        const got = ps.filter(p => p.status === VP.RECEIVED);
+        const flagged = data.findPalletsWhere({ status: [VP.LABELED, VP.LOADED] }).filter(p => p.data.flag === 'never_loaded' && p.data.flaggedTruck === x.id);
+        return { truck: truckSummary(x), perIf: rp.perIf, expected: ps.filter(p => p.status !== VP.RECEIVED).map(p => pubPallet(p)),
+            recent: got.slice(-5).reverse().map(p => pubPallet(p)), counts: { in: got.length, of: ps.length }, flagged: flagged.map(p => pubPallet(p)) };
+    }
+    function mustUnloadable(id) {
+        const x = mustTruck(id);
+        if (UNLOADABLE.indexOf(x.status) === -1) throw userErr('This truck is ' + x.status + ', not ready to unload');
+        return x;
+    }
+    // Every update goes through a fresh read: updateLoad rebuilds data from the copy it is given.
+    function receiveOn(x, p, prev, c) {
+        data.updatePallet(p, { status: VP.RECEIVED, data: { receivedAt: c.now.stamp, receivedBy: c.actor } });
+        pushStack(mustTruck(x.id), { id: String(p.id), prev: prev }, 'rstack');
+        const cur = mustTruck(x.id);
+        if (cur.status === T.DEPARTED) data.updateLoad(cur, { status: T.RECEIVING });
+    }
+
+    act('unload_list', false, () => ({ trucks: allTrucks().filter(x => x.status === T.DEPARTED || x.status === T.RECEIVING ||
+        (x.status === T.RECEIVED && truckSummary(x).missing > 0)).map(truckSummary) }));
+
+    act('unload_get', false, (a, c) => ({ view: unloadView(mustUnloadable(a.truckId), c) }));
+
+    act('unload_scan', false, (a, c) => {
+        const x = mustUnloadable(a.truckId);
+        const s = core.parseScan(a.raw);
+        const p = s.palletId ? data.getPallet(s.palletId) : null;
+        const r = verify.classifyUnloadScan({ pallet: p, truckId: x.id, trucks: truckMap(allTrucks()) });
+        if (r.set) receiveOn(x, p, p.status, c);
+        if (r.result === 'never_loaded') data.updatePallet(p, { data: { flag: 'never_loaded', flaggedAt: c.now.stamp, flaggedBy: c.actor, flaggedTruck: x.id } });
+        data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: 'unload', actor: c.actor, at: c.now.stamp } });
+        return Object.assign({}, r, { raw: s.raw, tone: verify.toneFor(r.result), pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: unloadView(mustTruck(x.id), c) });
+    });
+
+    act('unload_other', false, (a, c) => {
+        const p = mustPallet(a.palletId);
+        const x = mustUnloadable(p.loadId);
+        if (p.status !== VP.IN_TRANSIT && p.status !== VP.MISSING) throw userErr('That pallet is ' + p.status);
+        receiveOn(x, p, p.status, c);
+        return { view: unloadView(mustTruck(x.id), c) };
+    });
+
+    act('unload_damaged', false, (a, c) => {
+        const p = mustPallet(a.palletId);
+        if (p.status !== VP.RECEIVED) throw userErr('Scan the pallet in first');
+        data.updatePallet(p, { damaged: true, data: { damagedAt: c.now.stamp, damagedBy: c.actor } });
+        return {};
+    });
+
+    act('unload_undo', false, (a, c) => {
+        const x = mustUnloadable(a.truckId), st = (x.data.rstack || []).slice();
+        while (st.length) {
+            const e = st.pop(), p = data.getPallet(e.id);
+            if (p && p.status === VP.RECEIVED && p.loadId === x.id && !p.data.postedSeq) { data.updatePallet(p, { status: e.prev, damaged: false }); break; }
+        }
+        data.updateLoad(mustTruck(x.id), { data: { rstack: st } });
+        return { view: unloadView(mustTruck(x.id), c) };
+    });
+
+    act('unload_done', false, (a, c) => {
+        const x = mustUnloadable(a.truckId);
+        data.updateLoad(x, { data: { recvRequested: { by: c.actor, at: c.now.stamp } } });
+        return { view: unloadView(mustTruck(x.id), c) };
+    });
+
+    function receiptPlan(x) {
+        return verify.planReceipts({ alloc: x.data.alloc || [], pallets: data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]),
+            received: x.data.received || {}, stamp: x.data.depart, seq: (Number(x.data.recvSeq) || 0) + 1 });
+    }
+
+    act('receipt_preview', true, (a) => {
+        const x = mustUnloadable(a.truckId), rp = receiptPlan(x);
+        return { perIf: rp.perIf, missing: rp.missing, ops: rp.ops };
+    });
+
+    act('receipt_approve', true, (a, c) => {
+        const x0 = mustUnloadable(a.truckId);
+        if (!receiptPlan(x0).ops.length) throw userErr('Nothing new scanned in on this truck');
+        const prevStatus = x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
+        const cl = claimLoad(x0, T.APPROVING, 'receive', cur => {
+            if (UNLOADABLE.indexOf(cur.status) === -1) throw userErr('This truck is ' + cur.status + ', not ready to approve');
+        });
+        const x = cl.Ld, claim = cl.claim, label = truckLabel(x);
+        const rp = receiptPlan(x), seq = (Number(x.data.recvSeq) || 0) + 1;
+        const writes = Object.assign({}, x.data.writes);
+        data.updateLoad(data.getLoad(x.id), { data: { rplan: (x.data.rplan || []).concat(rp.ops), recvApprovedBy: c.actor, recvApprovedAt: c.now.stamp } });
+        let res;
+        try {
+            res = verify.runOps(rp.ops, writeMode(c), op => { assertClaim(x.id, claim, label, 'receive'); return tx.apply(verify.resolveNew(op, writes)); }, writes,
+                (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });
+        } catch (e) {
+            if (e.user) throw e;                      // claim lost: another request owns the truck now, leave its state alone
+            log.error({ title: 'move receive ' + x.id, details: (e && e.stack) || String(e) });
+            data.updateLoad(data.getLoad(x.id), { status: prevStatus, data: { error: e.message || String(e), writes: writes } });
+            throw userErr('Receipt write failed: ' + (e.message || e) + '. Fix it and approve again; finished receipts are not repeated.');
+        }
+        assertClaim(x.id, claim, label, 'receive');
+        data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).forEach(p => data.updatePallet(p, { data: { postedSeq: seq } }));
+        data.palletsByLoad(x.id, [VP.IN_TRANSIT]).forEach(p => data.updatePallet(p, { status: VP.MISSING }));
+        data.updateLoad(data.getLoad(x.id), { status: T.RECEIVED, data: { received: rp.cumulative, recvSeq: seq, recvRequested: null, error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
+        return { perIf: rp.perIf, missing: rp.missing, written: res.written, view: unloadView(mustTruck(x.id), c) };
+    });
+
     // ── entry points ─────────────────────────────────────────────────────
     function runAction(action, a, mgr) {
         const def = A[action];
