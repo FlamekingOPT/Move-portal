@@ -218,6 +218,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function departPlan(x, inp, c, baseIfs) {
         const trucks = allTrucks(), truckNo = verify.truckNoForDay(trucks, c.now.dayIso, x.id);
         const ps = data.palletsByLoad(x.id, [VP.LOADED]);
+        if (!ps.length) throw userErr('Nothing is loaded on this truck');
         const fresh = verify.refreshIfs(baseIfs || x.data.ifs, ns.plannedIfs());   // plan from NetSuite's current IFs, not the copy saved at start
         let plan;
         try {
@@ -573,12 +574,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             });
         } catch (e) { if (e.needsMgr) return waiting(d); throw e; }
         // Plan again from the claimed state: a scan or remove that landed just before the claim changes the pallets.
-        const again = departPlan(cl.Ld, inp, c, x0.data.ifs);
+        const release = pending => {                  // back to loading: nothing was written to NetSuite yet
+            assertClaim(x0.id, cl.claim, truckLabel(cl.Ld), 'depart');
+            data.updateLoad(data.getLoad(x0.id), { status: T.LOADING, data: { claim: '', workingAt: 0, phase: '', depart: null, plan: null, alloc: null, unplanned: null, bol: null, writes: null,
+                ifs: x0.data.ifs, pending: pending } });
+        };
+        let again;
+        try { again = departPlan(cl.Ld, inp, c, x0.data.ifs); } catch (e) { if (e.user) release(null); throw e; }
         if (again.palletKey !== d.palletKey) {
             if (again.plan.needsManager && !c.mgr) {
-                assertClaim(x0.id, cl.claim, truckLabel(cl.Ld), 'depart');
-                data.updateLoad(data.getLoad(x0.id), { status: T.LOADING, data: { claim: '', workingAt: 0, phase: '', depart: null, plan: null, alloc: null, unplanned: null, bol: null, writes: null,
-                    ifs: x0.data.ifs, pending: Object.assign({ by: c.actor, at: c.now.stamp }, inp) } });
+                release(Object.assign({ by: c.actor, at: c.now.stamp }, inp));
                 return { waiting: true, plan: pubPlan(again.plan), view: truckView(mustTruck(x0.id), c) };
             }
             assertClaim(x0.id, cl.claim, truckLabel(cl.Ld), 'depart');

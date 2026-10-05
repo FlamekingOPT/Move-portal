@@ -952,3 +952,29 @@ test('fix9: never-loaded flags live on the truck; unload view and dashboard read
     assert.equal(ctx.run('dashboard').exc.neverLoaded, 0);
     assert.deepEqual(ctx.run('unload_get', { truckId: t.id }, false).view.flagged, []);
 });
+
+test('fix10: an empty truck cannot depart', () => {
+    const ctx = setup();
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const a = { truckId: t.id, trailer: '537224', seal: 'E10' };
+    assert.throws(() => ctx.run('depart_preview', a, false), /Nothing is loaded on this truck/);
+    assert.throws(() => ctx.run('depart_confirm', a, false), /Nothing is loaded on this truck/);
+    assert.throws(() => ctx.run('depart_confirm', a, true), /Nothing is loaded on this truck/);
+    const d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.status, d.data.pending || null], ['loading', null]);
+});
+
+test('fix10: a truck emptied right after the claim goes back to loading', () => {
+    const ctx = setup();
+    const { t, ps } = truckWith(ctx, 1);
+    const realUpd = ctx.data.updateLoad;
+    let armed = true;
+    ctx.data.updateLoad = (L, patch) => {
+        realUpd(L, patch);
+        if (armed && patch.status === 'departing') { armed = false; ctx.data.updatePallet(ctx.data.getPallet(ps[0].id), { status: 'labeled', load: '' }); }
+    };
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'E11' }), /Nothing is loaded/);
+    ctx.data.updateLoad = realUpd;
+    const d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.status, d.data.claim, d.data.depart, d.data.pending], ['loading', '', null, null]);
+});
