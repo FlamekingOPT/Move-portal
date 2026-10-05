@@ -6,6 +6,8 @@ const data = require('./fake_data').makeFakeData(core);
 const tx = require('./fake_tx').makeFakeTx();
 const tpl = loadAmd('move_label_template.js');
 const ui = loadAmd('move_ui.js');
+const verify = loadAmd('move_verify.js');
+const ns = require('../local/snapshot_ns').makeSnapshotNs(verify, require('path').join(__dirname, 'fixtures', 'snapshot_sample.json'));
 data.db.items.push({ item: '11', sku: 'YSN201', desc: '20# LP Cylinder w/OPD', upc: '111' }, { item: '12', sku: 'YSN301', desc: '30# LP Cylinder', upc: '112' });
 data.db.stock['35'] = { '11': { onHand: 12000, avail: 11000 }, '12': { onHand: 6000, avail: 6000 } };
 data.db.configs.push({ item: '11', code: 'A', pcs: 120, isDefault: true, batch: 'B1' }, { item: '11', code: 'B', pcs: 60, isDefault: false, batch: 'B1' }, { item: '12', code: 'A', pcs: 60, isDefault: true, batch: 'B1' });
@@ -14,7 +16,7 @@ const sl = loadAmd('sl_move_portal.js', {
     'N/runtime': { getCurrentUser: () => ({ id: 5, name: 'Preview', roleId: mgr ? 'administrator' : 'x', role: mgr ? 3 : 9 }), getCurrentScript: () => ({ id: 's', deploymentId: 'd' }) },
     'N/log': { error: console.error, debug() {}, audit() {} }, 'N/render': {}, 'N/url': {},
     'N/format': { format: () => '10/14/2026 2:14:05 pm', Type: { DATETIMETZ: 1 }, Timezone: { AMERICA_LOS_ANGELES: 1 } },
-    './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': tpl, './move_ui': ui
+    './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': tpl, './move_ui': ui, './move_verify': verify, './move_ns': ns
 });
 http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');

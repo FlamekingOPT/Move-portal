@@ -7,8 +7,8 @@
  * Spec: docs/superpowers/specs/2026-09-27-move-portal-design.md
  */
 define(['N/runtime', 'N/log', 'N/render', 'N/url', 'N/format',
-        './move_core', './move_data', './move_tx', './move_label_template', './move_ui'],
-function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
+        './move_core', './move_data', './move_tx', './move_label_template', './move_ui', './move_verify', './move_ns'],
+function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns) {
     'use strict';
 
     const P = core.PALLET, L = core.LOAD;
@@ -72,7 +72,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
         const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
         data.updateLoad(Ld, { status: status, data: { workingAt: Date.now(), error: '', phase: phase, claim: claim } });
         const fresh = data.getLoad(Ld.id);
-        if (fresh.data.claim !== claim) throw userErr(Ld.number + ' is already being ' + (phase === 'ship' ? 'shipped' : 'received') + ' by someone else. Refresh in a minute.');
+        if (fresh.data.claim !== claim) throw userErr((Ld.number || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
         return { Ld: fresh, claim: claim };
     }
 
@@ -132,6 +132,92 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
     }
 
     // ── actions ──────────────────────────────────────────────────────────
+    // ── v3 trucks (spec 2026-10-01) ──────────────────────────────────────
+    const T = verify.TRUCK, VP = verify.VP;
+    function writeMode(c) { return verify.normMode(c.S.writeMode); }
+    function allTrucks() { return data.loadsByStatus(Object.values(T)).filter(x => x.data && x.data.v3); }
+    function mustTruck(id) { const x = data.getLoad(id); if (!x || !x.data || !x.data.v3) throw userErr('Truck not found'); return x; }
+    function truckLabel(x) {
+        const d = x.data || {};
+        return d.depart ? verify.memoFor(d.depart.truckNo, d.depart.day) : (d.ifs || []).map(f => f.ifNum).join(' + ');
+    }
+    function truckMap(list) { const o = {}; list.forEach(x => { o[x.id] = { status: x.status, label: truckLabel(x) }; }); return o; }
+    function skuNames(items) { const info = data.itemInfo(items.map(String)); const o = {}; items.forEach(k => { o[k] = info[k] ? info[k].sku : String(k); }); return o; }
+    function defPcs(c) { return core.defaultPcs(data.configsByItem(c.S.activeBatch)); }
+    function pubIf(f, dp) {
+        const pcs = f.lines.reduce((a, l) => a + l.qty, 0);
+        const est = f.lines.reduce((a, l) => a + (dp[l.item] ? Math.ceil(l.qty / dp[l.item]) : 0), 0);
+        return { ifId: f.ifId, ifNum: f.ifNum, status: f.status, toNum: f.toNum, trandate: f.trandate, lines: f.lines, pcs: pcs, estPallets: est };
+    }
+    function truckSummary(x) {
+        const ps = data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
+        return { id: x.id, label: truckLabel(x), status: x.status, pending: x.data.pending || null, depart: x.data.depart || null,
+            error: x.data.error || '', pallets: ps.length, received: ps.filter(p => p.status === VP.RECEIVED).length,
+            missing: ps.filter(p => p.status === VP.MISSING || (x.status === T.RECEIVED && p.status === VP.IN_TRANSIT)).length };
+    }
+    function truckView(x, c) {
+        const d = x.data || {}, dp = defPcs(c);
+        const ps = data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
+        const fill = verify.fillExpected(d.ifs || [], verify.sumLines(ps));
+        const lines = [];
+        (d.ifs || []).forEach(f => f.lines.forEach(l => lines.push({ ifNum: f.ifNum, item: l.item, sku: l.sku, expected: l.qty,
+            scanned: fill.alloc[f.ifId] ? fill.alloc[f.ifId][l.item] || 0 : 0, estPallets: dp[l.item] ? Math.ceil(l.qty / dp[l.item]) : null })));
+        const extraIds = Object.keys(fill.left).filter(k => fill.left[k] > 0), sk = skuNames(extraIds);
+        return { truck: Object.assign(truckSummary(x), { bol: d.bol || null }), lines: lines,
+            extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
+            pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
+            trailers: c.S.trailers || ['537224', '416460', '105488', '522051', '211659'], carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c) };
+    }
+    function pushStack(x, entry, key) {
+        const k = key || 'stack';
+        data.updateLoad(x, { data: { [k]: ((x.data && x.data[k]) || []).concat([entry]).slice(-60) } });
+    }
+    function scanCtx(x) {
+        return { truckId: x.id, trucks: truckMap(allTrucks()), ifs: x.data.ifs, toLines: ns.openToLines(),
+            loadedByItem: verify.sumLines(data.palletsByLoad(x.id, [VP.LOADED])) };
+    }
+    function mustOpenTruck(id) {
+        const x = mustTruck(id);
+        if (x.status !== T.LOADING || x.data.pending) throw userErr('Scanning is closed on this truck');
+        return x;
+    }
+    function pubPlan(p) {
+        const ids = {};
+        p.ops.forEach(o => { if (o.item) ids[o.item] = 1; if (o.lines) Object.keys(o.lines).forEach(k => { ids[k] = 1; }); });
+        const sk = skuNames(Object.keys(ids));
+        return { ops: p.ops.map(o => Object.assign({}, o, { sku: o.item ? sk[o.item] : '', skus: o.lines ? Object.keys(o.lines).map(k => sk[k] + ' ×' + o.lines[k]) : [] })),
+            unplanned: p.unplanned, needsManager: p.needsManager, bol: p.bol, corrections: p.corrections.length };
+    }
+    function departInput(a, x, c) {
+        const p = x.data.pending || {};
+        const pick = (k, d) => String(a[k] != null && a[k] !== '' ? a[k] : p[k] || d || '').trim();
+        const inp = { trailer: pick('trailer'), seal: pick('seal'), carrier: pick('carrier', c.S.defaultCarrier || 'Armstrong Group') };
+        if (!inp.trailer) throw userErr('Enter the trailer #');
+        if (!inp.seal) throw userErr('Enter the seal #');
+        if (verify.sealUsed(allTrucks(), inp.seal, x.id)) throw userErr('Seal ' + inp.seal + ' was already used on another truck');
+        return inp;
+    }
+    function departPlan(x, inp, c) {
+        const truckNo = verify.truckNoForDay(allTrucks(), c.now.dayIso, x.id);
+        try {
+            return { truckNo: truckNo, plan: verify.planDeparture({ ifs: x.data.ifs, pallets: data.palletsByLoad(x.id, [VP.LOADED]), toLines: ns.openToLines(),
+                stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } }) };
+        } catch (e) { throw userErr(e.message); }
+    }
+    function finishDepart(x, c) {
+        const writes = Object.assign({}, x.data.writes);
+        try {
+            verify.runOps(x.data.plan, writeMode(c), op => tx.apply(verify.resolveNew(op, writes)), writes,
+                (k, id) => { writes[k] = id; data.updateLoad(x, { data: { writes: writes } }); });
+        } catch (e) {
+            data.updateLoad(x, { data: { error: e.message || String(e), writes: writes } });
+            throw userErr('Departure saved but a NetSuite write failed: ' + (e.message || e) + '. A manager can press Retry.');
+        }
+        data.palletsByLoad(x.id, [VP.LOADED]).forEach(p => data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day }));
+        data.updateLoad(x, { status: T.DEPARTED, data: { error: '', writes: writes } });
+        return { departed: true, view: truckView(mustTruck(x.id), c) };
+    }
+
     const A = {};
     function act(name, managerOnly, fn) { A[name] = { m: managerOnly, fn: fn }; }
 
@@ -749,6 +835,107 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui) {
             target: c.S.target, days: days, loads: loads.map(l => pubLoad(l, lc[l.id])), exc: exc, bySku: bySku,
             noConfigSkus: sm.est.unknownItems.map(skuOf)
         };
+    });
+
+    act('truck_planned', false, (a, c) => {
+        const trucks = allTrucks(), taken = {}, dp = defPcs(c);
+        trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
+        return { planned: ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)),
+            open: trucks.filter(x => x.status === T.LOADING || x.status === T.DEPARTING).map(truckSummary), pulledAt: ns.pulledAt() };
+    });
+
+    act('truck_start', false, (a, c) => {
+        const ids = (a.ifIds || []).map(String);
+        if (!ids.length) throw userErr('Pick at least one IF');
+        const planned = ns.plannedIfs(), taken = {};
+        allTrucks().forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
+        const ifs = ids.map(id => {
+            const f = planned.find(y => y.ifId === id);
+            if (taken[id]) throw userErr((f ? f.ifNum : 'IF ' + id) + ' is already on a truck');
+            if (!f) throw userErr('IF ' + id + ' is not Picked/Packed any more. Refresh the list.');
+            return f;
+        });
+        const id = data.createLoad({ number: ifs.map(f => f.ifNum).join('+').slice(0, 290), status: T.LOADING,
+            data: { v3: true, ifs: ifs, startedBy: c.actor, startedAt: c.now.stamp, stack: [] } });
+        return { view: truckView(mustTruck(id), c) };
+    });
+
+    act('truck_get', false, (a, c) => ({ view: truckView(mustTruck(a.truckId), c) }));
+
+    act('truck_scan', false, (a, c) => {
+        const x = mustOpenTruck(a.truckId);
+        const s = core.parseScan(a.raw);
+        const p = s.palletId ? data.getPallet(s.palletId) : null;
+        const r = verify.classifyLoadScan(Object.assign({ pallet: p }, scanCtx(x)));
+        if (r.set) {
+            data.updatePallet(p, { status: r.set.status, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
+            pushStack(x, String(p.id));
+        }
+        data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: 'load', actor: c.actor, at: c.now.stamp } });
+        return Object.assign({}, r, { raw: s.raw, tone: verify.toneFor(r.result), pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: truckView(mustTruck(x.id), c) });
+    });
+
+    act('truck_move_here', false, (a, c) => {
+        const x = mustOpenTruck(a.truckId), p = mustPallet(a.palletId);
+        const from = p.loadId ? data.getLoad(p.loadId) : null;
+        if (p.status !== VP.LOADED || !from || from.status !== T.LOADING || from.data.pending) throw userErr('That pallet can no longer be moved');
+        const r = verify.fitOnTruck(p, scanCtx(x));
+        if (r.result === 'no_to') throw userErr('No open transfer order for ' + r.sku + ' on this truck. Set it aside and call the office.');
+        data.updatePallet(p, { load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
+        pushStack(x, String(p.id));
+        return { view: truckView(mustTruck(x.id), c) };
+    });
+
+    act('truck_remove', false, (a, c) => {
+        const x = mustOpenTruck(a.truckId), p = mustPallet(a.palletId);
+        if (p.status !== VP.LOADED || p.loadId !== x.id) throw userErr('That pallet is not on this truck');
+        data.updatePallet(p, { status: VP.LABELED, load: '' });
+        return { view: truckView(mustTruck(x.id), c) };
+    });
+
+    act('truck_undo', false, (a, c) => {
+        const x = mustOpenTruck(a.truckId), st = (x.data.stack || []).slice();
+        while (st.length) {
+            const p = data.getPallet(st.pop());
+            if (p && p.status === VP.LOADED && p.loadId === x.id) { data.updatePallet(p, { status: VP.LABELED, load: '' }); break; }
+        }
+        data.updateLoad(x, { data: { stack: st } });
+        return { view: truckView(mustTruck(x.id), c) };
+    });
+
+    act('depart_preview', false, (a, c) => {
+        const x = mustTruck(a.truckId), inp = departInput(a, x, c), d = departPlan(x, inp, c);
+        return { input: inp, truckNo: d.truckNo, plan: pubPlan(d.plan) };
+    });
+
+    act('depart_confirm', false, (a, c) => {
+        const x0 = mustTruck(a.truckId);
+        if (x0.status !== T.LOADING) throw userErr('This truck is already ' + x0.status);
+        const inp = departInput(a, x0, c), d = departPlan(x0, inp, c);
+        if (d.plan.needsManager && !c.mgr) {
+            data.updateLoad(x0, { data: { pending: Object.assign({ by: c.actor, at: c.now.stamp }, inp) } });
+            return { waiting: true, plan: pubPlan(d.plan), view: truckView(mustTruck(x0.id), c) };
+        }
+        const x = claimLoad(x0, T.DEPARTING, 'depart').Ld;
+        const gone = {};
+        d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
+        data.updateLoad(x, { data: { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
+            approvedBy: d.plan.needsManager ? c.actor : '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
+            bol: d.plan.bol, ifs: x.data.ifs.filter(f => !gone[f.ifId]), writes: {}, pending: null } });
+        return finishDepart(mustTruck(x.id), c);
+    });
+
+    act('depart_cancel', false, (a, c) => {
+        const x = mustTruck(a.truckId);
+        if (x.status !== T.LOADING) throw userErr('This truck already left');
+        data.updateLoad(x, { data: { pending: null } });
+        return { view: truckView(mustTruck(x.id), c) };
+    });
+
+    act('depart_retry', true, (a, c) => {
+        const x = mustTruck(a.truckId);
+        if (x.status !== T.DEPARTING || !x.data.depart) throw userErr('Nothing to retry on this truck');
+        return finishDepart(x, c);
     });
 
     // ── entry points ─────────────────────────────────────────────────────

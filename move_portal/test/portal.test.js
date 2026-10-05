@@ -4,6 +4,8 @@ const { loadAmd } = require('./amd');
 const core = loadAmd('move_core.js');
 const { makeFakeData } = require('./fake_data');
 const { makeFakeTx } = require('./fake_tx');
+const verify = loadAmd('move_verify.js');
+const { makeSnapshotNs } = require('../local/snapshot_ns');
 
 function setup() {
     const data = makeFakeData(core);
@@ -11,15 +13,18 @@ function setup() {
     data.db.items.push({ item: '11', sku: 'YSN201', desc: '20# cylinder', upc: '111' }, { item: '12', sku: 'YSN301', desc: '30# cylinder', upc: '112' });
     data.db.stock['35'] = { '11': { onHand: 1200, avail: 1000 }, '12': { onHand: 600, avail: 600 } };
     data.db.configs.push({ item: '11', code: 'A', pcs: 120, isDefault: true, batch: 'B1' }, { item: '12', code: 'A', pcs: 60, isDefault: true, batch: 'B1' });
+    const ns = makeSnapshotNs(verify, JSON.parse(JSON.stringify(require('./fixtures/snapshot_sample.json'))));
+    data.db.items.push({ item: '975', sku: 'YSN100', desc: '100# cylinder', upc: '0975' });
+    data.db.configs.push({ item: '975', code: 'A', pcs: 12, isDefault: true, batch: 'B1' });
     const sl = loadAmd('sl_move_portal.js', {
         'N/runtime': { getCurrentUser: () => ({ id: 5, name: 'Jack K', roleId: 'administrator', role: 3 }), getCurrentScript: () => ({ id: 's', deploymentId: 'd' }) },
         'N/log': { error() {}, debug() {}, audit() {} },
         'N/render': {}, 'N/url': {},
         'N/format': { format: () => '10/14/2026 2:14:05 pm', Type: { DATETIMETZ: 'dtz' }, Timezone: { AMERICA_LOS_ANGELES: 'la' } },
-        './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': {}, './move_ui': {}
+        './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': {}, './move_ui': {}, './move_verify': verify, './move_ns': ns
     });
     const run = (action, a, mgr = true) => sl._runAction(action, Object.assign({ actor: 'Miguel' }, a || {}), mgr);
-    return { data, tx, run };
+    return { data, tx, run, ns };
 }
 const LINE201 = { item: '11', sku: 'YSN201', cfg: 'A', pcs: 120 };
 function printLabels(ctx, n, job, lines) {
@@ -268,7 +273,7 @@ test('approve & ship refuses when another request claimed the load first', () =>
         }
         return result;
     };
-    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /already being shipped by someone else/);
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /already being/);
     assert.equal(txCount(ctx, 'TrnfrOrd'), 0);
     ctx.data.updateLoad = origUpdate;
     ctx.data.updateLoad(ctx.data.getLoad(L.id), { status: 'ready' });
@@ -289,7 +294,7 @@ test('a claim stolen right before the TO create is caught, not just at the initi
         }
         return r;
     };
-    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /already being shipped by someone else/);
+    assert.throws(() => ctx.run('load_approve', { loadId: L.id }), /already being/);
     assert.equal(txCount(ctx, 'TrnfrOrd'), 0);
     ctx.data.getLoad = origGetLoad;
 });
@@ -478,7 +483,7 @@ test('approve receipt refuses when another request claimed the load first', () =
         }
         return result;
     };
-    assert.throws(() => ctx.run('recv_approve', { loadId: L.id }), /already being received by someone else/);
+    assert.throws(() => ctx.run('recv_approve', { loadId: L.id }), /already being/);
     assert.equal(ctx.tx._t.calls.filter(x => x.type === 'ItemRcpt').length, 0);
     ctx.data.updateLoad = origUpdate;
     ctx.data.updateLoad(ctx.data.getLoad(L.id), { status: 'recv_ready' });
@@ -516,4 +521,94 @@ test('dashboard counts moved, remaining, days and exceptions', () => {
     assert.equal(r.bySku[0].sku, 'YSN301');
     assert.equal(r.loads.length, 1);
     assert.throws(() => ctx.run('dashboard', {}, false), /Managers only/);
+});
+
+// ── v3 trucks ──
+const L975 = { item: '975', sku: 'YSN100', cfg: 'A', pcs: 12 };
+function truckWith(ctx, n, ifId) {
+    const ps = printLabels(ctx, n, 'Jt' + n + Math.random().toString(36).slice(2, 6), [L975]);
+    const t = ctx.run('truck_start', { ifIds: [ifId || '9001'] }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    return { t, ps };
+}
+
+test('truck_planned lists A/B IFs not on a truck; truck_start takes one', () => {
+    const ctx = setup();
+    const r = ctx.run('truck_planned');
+    assert.deepEqual(r.planned.map(f => [f.ifNum, f.pcs, f.estPallets]), [['IF9001', 504, 42], ['IF9002', 504, 42]]);
+    const v1 = ctx.run('truck_start', { ifIds: ['9001'] }).view;
+    assert.deepEqual([v1.truck.status, v1.truck.label, v1.lines[0].expected, v1.lines[0].scanned], ['loading', 'IF9001', 504, 0]);
+    assert.deepEqual(ctx.run('truck_planned').planned.map(f => f.ifNum), ['IF9002']);
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9001'] }), /already on a truck/);
+    assert.throws(() => ctx.run('truck_start', { ifIds: ['9000'] }), /not Picked\/Packed/);
+});
+
+test('truck_scan: ok, dup, no_to blocked, undo and remove', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 2, 'Jscan', [L975]);
+    const bad = printLabels(ctx, 1, 'Jbad', [{ item: '12', sku: 'YSN301', cfg: 'A', pcs: 60 }]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code });
+    assert.deepEqual([r.result, r.tone, r.view.lines[0].scanned], ['ok', 'ok', 12]);
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code }).result, 'dup');
+    const b = ctx.run('truck_scan', { truckId: t.id, raw: bad[0].code });
+    assert.deepEqual([b.result, b.sku, b.tone], ['no_to', 'YSN301', 'bad']);
+    assert.equal(ctx.data.getPallet(bad[0].id).status, 'labeled');
+    ctx.run('truck_scan', { truckId: t.id, raw: ps[1].code });
+    assert.equal(ctx.run('truck_undo', { truckId: t.id }).view.lines[0].scanned, 12);
+    assert.equal(ctx.run('truck_remove', { truckId: t.id, palletId: ps[0].id }).view.lines[0].scanned, 0);
+    assert.equal(ctx.data.db.scans.length, 4);
+});
+
+test('truck_scan: pallet on another loading truck → other_truck → move here', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 1, 'Jmv', [L975]);
+    const a = ctx.run('truck_start', { ifIds: ['9001'] }).view.truck;
+    const b = ctx.run('truck_start', { ifIds: ['9002'] }).view.truck;
+    ctx.run('truck_scan', { truckId: a.id, raw: ps[0].code });
+    const r = ctx.run('truck_scan', { truckId: b.id, raw: ps[0].code });
+    assert.deepEqual([r.result, r.otherLabel], ['other_truck', 'IF9001']);
+    assert.equal(ctx.run('truck_move_here', { truckId: b.id, palletId: ps[0].id }).view.lines[0].scanned, 12);
+    assert.equal(ctx.data.getPallet(ps[0].id).loadId, b.id);
+});
+
+test('depart: exact match → floor departs, stamps planned only in off mode, pallets in transit, truck # 1', () => {
+    const ctx = setup();
+    const { t, ps } = truckWith(ctx, 42);
+    const pv = ctx.run('depart_preview', { truckId: t.id, trailer: '537224', seal: '5249330' }, false);
+    assert.deepEqual([pv.truckNo, pv.plan.needsManager, pv.plan.ops.length], [1, false, 1]);
+    const r = ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249330' }, false);
+    assert.equal(r.departed, true);
+    assert.deepEqual([r.view.truck.status, r.view.truck.label, r.view.truck.depart.carrier], ['departed', 'Truck 1 · 10/14', 'Armstrong Group']);
+    assert.equal(ctx.tx._t.ops.length, 0);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'in_transit');
+    const t2 = truckWith(ctx, 1, '9002').t;                                   // IF9001 is taken by the departed truck
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t2.id, trailer: '1', seal: '5249330' }), /already used/);
+});
+
+test('depart: short needs a manager; floor request waits; manager approval writes only if_qty in qty mode', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = truckWith(ctx, 40);
+    const w = ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249331' }, false);
+    assert.equal(w.waiting, true);
+    assert.equal(w.view.truck.pending.seal, '5249331');
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: 'PLT1' }), /Scanning is closed/);
+    const r = ctx.run('depart_confirm', { truckId: t.id }, true);
+    assert.equal(r.departed, true);
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.to]), [['if_qty', 480]]);
+    assert.deepEqual(ctx.data.getLoad(t.id).data.writes, { 'if_qty:9001:975': '9001' });
+    assert.equal(r.view.truck.bol.changed, true);
+});
+
+test('depart: a failed write leaves the truck departing with an error; a manager retry finishes without rewriting', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = truckWith(ctx, 42);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249332' }), /NetSuite write failed/);
+    assert.equal(ctx.data.getLoad(t.id).status, 'departing');
+    assert.throws(() => ctx.run('depart_retry', { truckId: t.id }, false), /Managers only/);
+    assert.equal(ctx.run('depart_retry', { truckId: t.id }).departed, true);
+    assert.deepEqual(ctx.tx._t.ops.map(o => o.op), ['if_stamp']);
 });
