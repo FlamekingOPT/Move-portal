@@ -1,16 +1,18 @@
 // move_portal/test/preview_server.js — local preview / local beta. NOT deployed to NetSuite.
-// node move_portal/test/preview_server.js [--snapshot file] [--store file]   → http://localhost:8765 (manager) and /?floor=1 (floor)
+// node move_portal/test/preview_server.js [--snapshot file] [--store file] [--port n]   → http://localhost:8765 (manager) and /?floor=1 (floor)
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { loadAmd } = require('./amd');
 const { makeLocalStore } = require('../local/local_store');
 const { makeSnapshotNs } = require('../local/snapshot_ns');
+const { labelsHtml } = require('../local/label_html');
 
 const arg = k => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : null; };
 const snapDir = path.join(__dirname, '..', 'snapshot');
 const newest = fs.existsSync(snapDir) ? fs.readdirSync(snapDir).filter(f => /^prod-.*\.json$/.test(f)).sort().pop() : null;
 const snapFile = arg('--snapshot') || (newest ? path.join(snapDir, newest) : path.join(__dirname, 'fixtures', 'snapshot_sample.json'));
+const PORT = Number(arg('--port')) || 8765;
 const storeFile = arg('--store') || path.join(__dirname, '..', 'local', 'store.json');
 
 const core = loadAmd('move_core.js');
@@ -58,7 +60,16 @@ http.createServer((req, res) => {
             roster: data.db.settings.roster || [], fromName: 'Riverside', toName: 'Tippecanoe', maxPrint: 250 }));
         return;
     }
-    if (action === 'pdf') { res.setHeader('Content-Type', 'text/plain'); res.end('PDF would render here (' + u.search + ')'); return; }
+    if (action === 'pdf') {
+        // local stand-in for the NetSuite BFO PDF: printable 4x6 HTML (selection mirrors sl_move_portal.js pdf())
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        const job = u.searchParams.get('job'), ids = u.searchParams.get('ids');
+        const ps = job ? data.palletsByJob(String(job)).filter(p => p.status !== verify.VP.VOID) : data.palletsByIds(String(ids || '').split(','));
+        if (!ps.length) { res.end('No labels to print'); return; }
+        res.end(labelsHtml(ps.map(p => ({ code: p.code, lines: p.lines, pieces: p.pieces, edited: p.edited, printedDay: p.printedDay, by: p.data.printedBy || '', summary: p.summary })),
+            { header: u.searchParams.get('header') === '1', fromName: 'Riverside', toName: 'Tippecanoe', core }));
+        return;
+    }
     let body = '';
     req.on('data', c => { body += c; });
     req.on('end', () => {
@@ -70,4 +81,4 @@ http.createServer((req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(out));
     });
-}).listen(8765, '0.0.0.0', () => console.log('Move Portal local beta on http://localhost:8765 (manager) · /?floor=1 (floor) · snapshot ' + path.basename(snapFile) + ' · store ' + storeFile));
+}).listen(PORT, '0.0.0.0', () => console.log('Move Portal local beta on http://localhost:' + PORT + ' (manager) · /?floor=1 (floor) · snapshot ' + path.basename(snapFile) + ' · store ' + storeFile));
