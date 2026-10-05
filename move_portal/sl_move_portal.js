@@ -16,7 +16,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     const PRINT_CHUNK_MAX = 80;
     const CFG_CHUNK_MAX = 100;
     const STALE_MS = 10 * 60 * 1000;
-    const STACK_MAX = 30;                // undo stacks live in the truck JSON: keep them small   // above the Suitelet time limit, so a Retry can't take over a still-running request
+    const STACK_MAX = 30;
+    const FLOOR_DEPLOY_ID = 'customdeploy_move_portal_floor';   // the no-login floor URL: never manager, whatever the role                // undo stacks live in the truck JSON: keep them small   // above the Suitelet time limit, so a Retry can't take over a still-running request
 
     // ── shared helpers ───────────────────────────────────────────────────
     function userErr(msg) { const e = new Error(msg); e.user = true; return e; }
@@ -27,6 +28,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (role === 'administrator' || Number(u.role) === 3 || MANAGER_ROLE_SCRIPT_IDS.indexOf(role) !== -1) return true;
         return data.employeeIsPortalManager(u.id);
     }
+
+    function onFloorDeploy() { const s = runtime.getCurrentScript(); return !!s && s.deploymentId === FLOOR_DEPLOY_ID; }
 
     function nowInfo() {
         const stamp = format.format({ value: new Date(), type: format.Type.DATETIMETZ, timezone: format.Timezone.AMERICA_LOS_ANGELES });
@@ -543,7 +546,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const gone = {};
         d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
         return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
-            approvedBy: d.plan.needsManager ? c.actor : '', requestedBy: (cur.data.pending || {}).by || '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
+            approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '', requestedBy: (cur.data.pending || {}).by || '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
             bol: d.plan.bol, ifs: d.ifs.filter(f => !gone[f.ifId]), writes: {}, pending: null };          // the fresh IFs the plan used
     }
     function savePending(id, inp, c) {
@@ -597,7 +600,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (!x.data.error && !stale(x)) throw userErr('This departure is still running. Wait a minute, then Retry.');
         const cl = claimLoad(x, T.DEPARTING, 'depart', cur => {
             if (cur.status !== T.DEPARTING || !cur.data.depart || (!cur.data.error && !stale(cur))) throw userErr('This departure is still running. Wait a minute, then Retry.');
-        });
+        }, { retriedBy: c.user, retriedAt: c.now.stamp });
         return finishDepart(cl.Ld, c, cl.claim);
     });
 
@@ -734,7 +737,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = cl.Ld, claim = cl.claim, label = truckLabel(x);
         const rp = receiptPlan(x), seq = (Number(x.data.recvSeq) || 0) + 1;
         const writes = Object.assign({}, x.data.writes);
-        data.updateLoad(data.getLoad(x.id), { data: { recvApprovedBy: c.actor, recvApprovedAt: c.now.stamp } });
+        data.updateLoad(data.getLoad(x.id), { data: { recvApprovedBy: c.user, recvApprovedByRoster: c.actor, recvApprovedAt: c.now.stamp } });
         let res;
         try {
             res = verify.runOps(rp.ops, writeMode(c), op => { assertClaim(x.id, claim, label, 'receive'); return tx.apply(verify.resolveNew(op, writes)); }, writes,
@@ -817,6 +820,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function runAction(action, a, mgr) {
         const def = A[action];
         if (!def) throw userErr('Unknown action: ' + action);
+        if (onFloorDeploy()) mgr = false;
         if (def.m && !mgr) throw userErr('Managers only');
         data.resetCache();
         const body = a || {};
@@ -834,7 +838,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         try {
             let a = {};
             try { a = JSON.parse(ctx.request.body || '{}') || {}; } catch (e) { a = {}; }
-            out = Object.assign({ ok: true }, runAction(q.action, a, isManager()));
+            out = Object.assign({ ok: true }, runAction(q.action, a, !onFloorDeploy() && isManager()));
         } catch (e) {
             if (!e.user) log.error({ title: 'move ' + q.action, details: (e && e.stack) || String(e) });
             out = { ok: false, error: e.user ? e.message : 'Error: ' + (e.message || e.name || String(e)) };
@@ -845,17 +849,17 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     function page(ctx) {
         const S = data.getSettings();
-        const script = runtime.getCurrentScript();
-        ctx.response.write(ui.buildPage({
-            url: url.resolveScript({ scriptId: script.id, deploymentId: script.deploymentId }),
-            mode: isManager() ? 'manager' : 'floor', me: runtime.getCurrentUser().name, roster: S.roster || [],
+        const script = runtime.getCurrentScript(), floor = onFloorDeploy();
+        ctx.response.write(ui.buildPage({   // floor: API calls go to the external no-login URL
+            url: url.resolveScript(Object.assign({ scriptId: script.id, deploymentId: script.deploymentId }, floor ? { returnExternalUrl: true } : {})),
+            mode: !floor && isManager() ? 'manager' : 'floor', me: runtime.getCurrentUser().name, roster: S.roster || [],
             fromName: S.fromName, toName: S.toName, maxPrint: Number(S.maxPrint) || 250
         }));
     }
 
     function pdf(ctx) {
         const q = ctx.request.parameters;
-        if (!isManager()) { ctx.response.write('Managers only'); return; }
+        if (onFloorDeploy() || !isManager()) { ctx.response.write('Managers only'); return; }
         const S = data.getSettings();
         const ps = q.job ? data.palletsByJob(String(q.job)).filter(p => p.status !== VP.VOID) : data.palletsByIds(String(q.ids || '').split(','));
         if (!ps.length) { ctx.response.write('No labels to print'); return; }

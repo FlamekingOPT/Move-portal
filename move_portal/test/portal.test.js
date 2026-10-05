@@ -7,7 +7,9 @@ const { makeFakeTx } = require('./fake_tx');
 const verify = loadAmd('move_verify.js');
 const { makeSnapshotNs } = require('../local/snapshot_ns');
 
-function setup() {
+function setup(opts) {
+    opts = opts || {};
+    const rt = { deploymentId: opts.deploymentId || 'd' };
     const data = makeFakeData(core);
     const tx = makeFakeTx();
     data.db.items.push({ item: '11', sku: 'YSN201', desc: '20# cylinder', upc: '111' }, { item: '12', sku: 'YSN301', desc: '30# cylinder', upc: '112' });
@@ -17,14 +19,14 @@ function setup() {
     data.db.items.push({ item: '975', sku: 'YSN100', desc: '100# cylinder', upc: '0975' });
     data.db.configs.push({ item: '975', code: 'A', pcs: 12, isDefault: true, batch: 'B1' });
     const sl = loadAmd('sl_move_portal.js', {
-        'N/runtime': { getCurrentUser: () => ({ id: 5, name: 'Jack K', roleId: 'administrator', role: 3 }), getCurrentScript: () => ({ id: 's', deploymentId: 'd' }) },
+        'N/runtime': { getCurrentUser: () => ({ id: 5, name: 'Jack K', roleId: 'administrator', role: 3 }), getCurrentScript: () => ({ id: 's', deploymentId: rt.deploymentId }) },
         'N/log': { error() {}, debug() {}, audit() {} },
-        'N/render': {}, 'N/url': {},
+        'N/render': {}, 'N/url': opts.url || {},
         'N/format': { format: () => '10/14/2026 2:14:05 pm', Type: { DATETIMETZ: 'dtz' }, Timezone: { AMERICA_LOS_ANGELES: 'la' } },
-        './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': {}, './move_ui': {}, './move_verify': verify, './move_ns': ns
+        './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': {}, './move_ui': opts.ui || {}, './move_verify': verify, './move_ns': ns
     });
     const run = (action, a, mgr = true) => sl._runAction(action, Object.assign({ actor: 'Miguel' }, a || {}), mgr);
-    return { data, tx, run, ns };
+    return { data, tx, run, ns, sl, rt };
 }
 const LINE201 = { item: '11', sku: 'YSN201', cfg: 'A', pcs: 120 };
 function printLabels(ctx, n, job, lines) {
@@ -318,7 +320,8 @@ test('manager approval can override the trailer; the requester is kept', () => {
     const { t } = truckWith(ctx, 40);
     ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: '5249345', actor: 'Floor Guy' }, false);
     const r = ctx.run('depart_confirm', { truckId: t.id, trailer: '416460', actor: 'Boss' }, true);
-    assert.deepEqual([r.view.truck.depart.trailer, r.view.truck.depart.requestedBy, r.view.truck.depart.approvedBy], ['416460', 'Floor Guy', 'Boss']);
+    assert.deepEqual([r.view.truck.depart.trailer, r.view.truck.depart.requestedBy, r.view.truck.depart.approvedBy, r.view.truck.depart.approvedByRoster],
+        ['416460', 'Floor Guy', { id: '5', name: 'Jack K' }, 'Boss']);          // the approver is the NetSuite user, not the roster name
 });
 
 test('depart_cancel reopens scanning; move_here is refused from a pending truck', () => {
@@ -891,4 +894,37 @@ test('fix5: two trucks want the last 48 pcs of TO room; the second gets no_to, b
     ctx.run('depart_confirm', { truckId: a.t.id, trailer: '537224', seal: 'R5' });   // off mode: the raise is not in NetSuite yet
     assert.equal(ctx.data.getLoad(a.t.id).status, 'departed');
     assert.equal(ctx.run('truck_scan', { truckId: b.t.id, raw: extra[0].code }).result, 'no_to');
+});
+
+test('fix6: on the floor deployment an administrator is a floor user', () => {
+    const FLOOR = 'customdeploy_move_portal_floor';
+    const ctx = setup({ deploymentId: FLOOR });
+    assert.throws(() => ctx.run('dashboard', {}, true), /Managers only/);
+    assert.throws(() => ctx.run('depart_retry', { truckId: '1' }, true), /Managers only/);
+    const out = {};
+    ctx.sl.onRequest({ request: { parameters: { action: 'approvals' }, body: '{}' }, response: { setHeader() {}, write: x => { out.body = x; } } });
+    assert.deepEqual(JSON.parse(out.body), { ok: false, error: 'Managers only' });
+    const seen = {};
+    const pg = setup({ deploymentId: FLOOR, ui: { buildPage: o => { seen.page = o; return 'html'; } }, url: { resolveScript: o => { seen.url = o; return 'https://ext/x'; } } });
+    pg.sl.onRequest({ request: { parameters: {} }, response: { write() {} } });
+    assert.deepEqual([seen.page.mode, seen.page.url, seen.url.returnExternalUrl, seen.url.deploymentId], ['floor', 'https://ext/x', true, FLOOR]);
+    const mg = setup({ ui: { buildPage: o => { seen.page = o; return 'html'; } }, url: { resolveScript: o => { seen.url = o; return '/int'; } } });
+    mg.sl.onRequest({ request: { parameters: {} }, response: { write() {} } });
+    assert.deepEqual([seen.page.mode, !!seen.url.returnExternalUrl], ['manager', false]);
+});
+
+test('fix7: approvers are the NetSuite user; the roster name is kept separately', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = truckWith(ctx, 40);
+    ctx.tx._t.failOn = 'if_stamp:9001';
+    assert.throws(() => ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'A7', actor: 'Boss' }), /NetSuite write failed/);
+    ctx.run('depart_retry', { truckId: t.id, actor: 'Boss' });
+    let d = ctx.data.getLoad(t.id).data;
+    assert.deepEqual([d.depart.approvedBy, d.depart.approvedByRoster, d.retriedBy], [{ id: '5', name: 'Jack K' }, 'Boss', { id: '5', name: 'Jack K' }]);
+    ctx.data.palletsByLoad(t.id, ['in_transit']).slice(0, 2).forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code, actor: 'Ana' }, false));
+    ctx.run('receipt_approve', { truckId: t.id, actor: 'Boss' });
+    d = ctx.data.getLoad(t.id).data;
+    assert.deepEqual([d.recvApprovedBy, d.recvApprovedByRoster], [{ id: '5', name: 'Jack K' }, 'Boss']);
+    assert.equal(ctx.data.palletsByLoad(t.id, ['received'])[0].data.receivedBy, 'Ana');   // floor actors stay roster names
 });
