@@ -148,6 +148,29 @@ define([], function () {
                 ifNums: kept.map(f => f.ifNum).concat(Object.keys(addOns).sort((x, y) => Number(x) - Number(y)).map(t => '(new from ' + addOns[t].toNum + ')')) } };
     }
 
+    // Re-read IFs at departure: plan from NetSuite's current lines; an IF no longer Picked/Packed drops out.
+    function ifPcs(f) { return (f.lines || []).reduce((a, l) => a + (Number(l.qty) || 0), 0); }
+    function linesKey(f) {
+        const m = {};
+        (f.lines || []).forEach(l => { const k = String(l.item); m[k] = (m[k] || 0) + (Number(l.qty) || 0); });
+        return JSON.stringify(Object.keys(m).sort().map(k => [k, m[k]]));
+    }
+    function refreshIfs(saved, fresh) {
+        const byId = {}, ifs = [], gone = [], changes = [];
+        (fresh || []).forEach(f => { byId[String(f.ifId)] = f; });
+        (saved || []).forEach(s => {
+            const id = String(s.ifId), f = byId[id];
+            if (!f) {
+                gone.push({ ifId: id, ifNum: s.ifNum });
+                changes.push({ ifId: id, ifNum: s.ifNum, was: s.lines, now: 'not Packed', wasPcs: ifPcs(s), nowPcs: null });
+                return;
+            }
+            if (linesKey(f) !== linesKey(s)) changes.push({ ifId: id, ifNum: f.ifNum, was: s.lines, now: f.lines, wasPcs: ifPcs(s), nowPcs: ifPcs(f) });
+            ifs.push(f);
+        });
+        return { ifs, gone, changes };
+    }
+
     // ── unload and receipts ──────────────────────────────────────────────
     function classifyUnloadScan(o) {
         const p = o.pallet;
@@ -328,6 +351,6 @@ define([], function () {
     }
 
     return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
-        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture,
+        _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, truckNoForDay, planDeparture, refreshIfs,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });

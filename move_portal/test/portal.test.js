@@ -847,3 +847,33 @@ test('fix3: the claim write carries depart, plan, alloc and writes', () => {
     assert.ok(seen.claim && seen.depart && seen.plan && seen.alloc && seen.writes);
     assert.equal(seen.depart.seal, 'C4');
 });
+
+test('fix4: departure re-reads the IFs; a changed qty or an IF no longer Packed needs a manager and is shown', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 41);
+    const orig = ctx.ns.plannedIfs;
+    ctx.ns.plannedIfs = () => orig().map(f => { if (f.ifId === '9001') f.lines[0].qty = 492; return f; });
+    const pv = ctx.run('depart_preview', { truckId: t.id, trailer: '537224', seal: 'I1' }, false);
+    assert.deepEqual(pv.plan.ifChanges.map(x => [x.ifNum, x.wasPcs, x.nowPcs]), [['IF9001', 504, 492]]);
+    assert.equal(pv.plan.needsManager, true);
+    assert.deepEqual(pv.plan.ops.map(o => o.op), ['if_stamp']);
+    assert.equal(ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'I1' }, false).waiting, true);
+    const ap = ctx.run('approvals').departures[0];
+    assert.equal(ap.plan.ifChanges[0].nowPcs, 492);
+    assert.equal(ctx.run('depart_confirm', { truckId: t.id }).departed, true);
+    assert.equal(ctx.data.getLoad(t.id).data.ifs[0].lines[0].qty, 492);
+});
+
+test('fix4: an IF the office shipped meanwhile drops out of the plan as unplanned', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Jif', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'] }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    const orig = ctx.ns.plannedIfs;
+    ctx.ns.plannedIfs = () => orig().filter(f => f.ifId !== '9001');
+    const pv = ctx.run('depart_preview', { truckId: t.id, trailer: '537224', seal: 'I2' });
+    assert.deepEqual(pv.plan.ifChanges.map(x => [x.ifNum, x.now]), [['IF9001', 'not Packed']]);
+    assert.deepEqual(pv.plan.unplanned.map(u => u.ifNum), ['IF9001']);
+    assert.equal(ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'I2' }).departed, true);
+    assert.deepEqual(ctx.data.getLoad(t.id).data.ifs.map(f => f.ifId), ['9002']);
+});

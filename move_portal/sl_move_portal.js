@@ -192,7 +192,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         p.ops.forEach(o => { if (o.item) ids[o.item] = 1; if (o.lines) Object.keys(o.lines).forEach(k => { ids[k] = 1; }); });
         const sk = skuNames(Object.keys(ids));
         return { ops: p.ops.map(o => Object.assign({}, o, { sku: o.item ? sk[o.item] : '', skus: o.lines ? Object.keys(o.lines).map(k => sk[k] + ' ×' + o.lines[k]) : [] })),
-            unplanned: p.unplanned, needsManager: p.needsManager, bol: p.bol, corrections: p.corrections.length };
+            unplanned: p.unplanned, needsManager: p.needsManager, bol: p.bol, corrections: p.corrections.length, ifChanges: p.ifChanges || [] };
     }
     function departInput(a, x, c) {
         const p = x.data.pending || {};
@@ -207,11 +207,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function departPlan(x, inp, c, baseIfs) {
         const truckNo = verify.truckNoForDay(allTrucks(), c.now.dayIso, x.id);
         const ps = data.palletsByLoad(x.id, [VP.LOADED]);
+        const fresh = verify.refreshIfs(baseIfs || x.data.ifs, ns.plannedIfs());   // plan from NetSuite's current IFs, not the copy saved at start
+        let plan;
         try {
-            return { truckNo: truckNo, palletKey: ps.map(p => p.id).sort((m, n) => m - n).join(','),
-                plan: verify.planDeparture({ ifs: baseIfs || x.data.ifs, pallets: ps, toLines: ns.openToLines(),
-                    stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } }) };
+            plan = verify.planDeparture({ ifs: fresh.ifs, pallets: ps, toLines: ns.openToLines(),
+                stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso } });
         } catch (e) { if (/^No open transfer order covers/.test(e.message || '')) throw userErr(e.message); throw e; }
+        plan.unplanned = fresh.gone.concat(plan.unplanned);
+        plan.ifChanges = fresh.changes;
+        if (fresh.changes.length) { plan.needsManager = true; plan.bol.changed = true; }
+        return { truckNo: truckNo, palletKey: ps.map(p => p.id).sort((m, n) => m - n).join(','), plan: plan, ifs: fresh.ifs };
     }
     function finishDepart(x, c, claim) {
         const writes = Object.assign({}, x.data.writes);
@@ -531,7 +536,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
         return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
             approvedBy: d.plan.needsManager ? c.actor : '', requestedBy: (cur.data.pending || {}).by || '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
-            bol: d.plan.bol, ifs: (cur.data.ifs || []).filter(f => !gone[f.ifId]), writes: {}, pending: null };
+            bol: d.plan.bol, ifs: d.ifs.filter(f => !gone[f.ifId]), writes: {}, pending: null };          // the fresh IFs the plan used
     }
     function savePending(id, inp, c) {
         const cur = mustTruck(id);

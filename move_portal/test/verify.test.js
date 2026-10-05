@@ -255,3 +255,13 @@ test('local snapshot_ns reads a file path', () => {
     assert.equal(ns.plannedIfs().length, 2);
     ns.resetCache();
 });
+
+test('refreshIfs: fresh lines win; a missing IF is gone; changes are listed', () => {
+    const saved = [{ ifId: '1', ifNum: 'IF1', lines: [{ item: '9', qty: 10 }] }, { ifId: '2', ifNum: 'IF2', lines: [{ item: '9', qty: 5 }] }, { ifId: '3', ifNum: 'IF3', lines: [{ item: '9', qty: 7 }] }];
+    const fresh = [{ ifId: '1', ifNum: 'IF1', lines: [{ item: '9', qty: 8 }] }, { ifId: '3', ifNum: 'IF3', lines: [{ item: '9', qty: 7 }] }, { ifId: '4', ifNum: 'IF4', lines: [] }];
+    const r = v.refreshIfs(saved, fresh);
+    assert.deepEqual(r.ifs.map(f => [f.ifId, f.lines[0].qty]), [['1', 8], ['3', 7]]);
+    assert.deepEqual(r.gone, [{ ifId: '2', ifNum: 'IF2' }]);
+    assert.deepEqual(r.changes.map(x => [x.ifNum, x.wasPcs, x.nowPcs, x.now === 'not Packed']), [['IF1', 10, 8, false], ['IF2', 5, null, true]]);
+    assert.deepEqual(v.refreshIfs(saved.slice(2), fresh).changes, []);
+});

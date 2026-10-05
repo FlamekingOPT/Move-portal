@@ -63,3 +63,7 @@ test('fix1: approvals retry card offers Depart without this edit', () => {
     assert.ok(src.indexOf("api('depart_skip_write'") !== -1);
     assert.ok(src.indexOf('Depart without this edit') !== -1);
 });
+
+test('fix4: the plan view shows IFs changed in NetSuite', () => {
+    assert.ok(ui._clientMain.toString().indexOf('changed in NetSuite: ') !== -1);
+});

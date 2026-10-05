@@ -470,7 +470,8 @@ h3{font-size:15px;margin:16px 0 8px}
         function planHtml(p) {
             const line = o => o.op === 'if_qty' ? (o.to < o.from ? '⬇ Lower ' : '⬆ Raise ') + esc(o.ifNum + ' ' + o.sku + ' ' + num(o.from) + ' → ' + num(o.to))
                 : o.op === 'if_create' ? '➕ Add-on IF from ' + esc(o.toNum + ': ' + o.skus.join(', ')) : '🔖 Stamp ' + esc(o.ifNum) + ' · Shipped';
-            return '<div class="card"><h4>Plan</h4>' + p.ops.map(o => '<div>' + line(o) + '</div>').join('') +
+            return '<div class="card"><h4>Plan</h4>' + (p.ifChanges || []).map(x => '<div style="color:var(--amber);font-weight:600">⚠ ' + esc(x.ifNum + ' changed in NetSuite: ' + num(x.wasPcs) + ' → ' +
+                    (x.now === 'not Packed' ? 'not Packed any more' : num(x.nowPcs))) + '</div>').join('') + p.ops.map(o => '<div>' + line(o) + '</div>').join('') +
                 p.unplanned.map(u => '<div>↩ ' + esc(u.ifNum) + ' has nothing scanned: back to planned</div>').join('') +
                 (p.bol.changed ? '<div><b>BOL REV 2</b> · BOL # ' + esc(p.bol.number) + ' · IFs ' + esc(p.bol.ifNums.join(', ')) + '</div>' : '') + '</div>';
         }
