@@ -2462,7 +2462,7 @@ This is a checklist run in the browser with Jack. There's no code in this task u
   - Load out lists today's real Picked/Packed IFs.
   - On the floor URL, manager actions return "Managers only".
   - Print one real label and scan it with a dock scanner.
-  - Save a ~10 KB truck record (a `custrecord_mvl_data` JSON of about 10,000 characters) and read it back on prod, both through `getLoad` (lookupFields) and through the truck lists (search columns). Confirm neither cuts it short; a cut-short list read throws "Truck <id> data is unreadable" instead of losing data.
+  - Save and re-read a ~10 KB truck via `getLoad` AND `loadsByStatus`. `getLoad` uses `record.load`; `loadsByStatus` uses search columns. Confirm neither cuts the JSON short; a cut-short read throws "Truck <id> data is unreadable" instead of losing data.
 - [ ] **Step 5: ⚠ `qty` write check on one real Packed IF (with Jack watching).**
   1. Start a truck on that IF and scan one pallet fewer than expected, so it's short.
   2. Approve the departure as manager with `writeMode='qty'`.

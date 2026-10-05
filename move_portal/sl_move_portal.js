@@ -15,9 +15,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     const MANAGER_ROLE_SCRIPT_IDS = ['customrole_warehouse_manager', 'customrole1009', 'customrole2522', 'customrole_warehouse_portal_manager'];
     const PRINT_CHUNK_MAX = 80;
     const CFG_CHUNK_MAX = 100;
-    const STALE_MS = 10 * 60 * 1000;
-    const STACK_MAX = 30;
-    const FLOOR_DEPLOY_ID = 'customdeploy_move_portal_floor';   // the no-login floor URL: never manager, whatever the role                // undo stacks live in the truck JSON: keep them small   // above the Suitelet time limit, so a Retry can't take over a still-running request
+    const STALE_MS = 10 * 60 * 1000;      // above the Suitelet time limit, so a Retry can't take over a still-running request
+    const STACK_MAX = 30;                 // undo stacks live in the truck JSON: keep them small
+    const FLOOR_DEPLOY_ID = 'customdeploy_move_portal_floor';     // available without login: pages there call its external URL
+    const MANAGER_DEPLOY_ID = 'customdeploy_move_portal';   // fail closed: any other deployment (e.g. the no-login floor URL) is floor
 
     // ── shared helpers ───────────────────────────────────────────────────
     function userErr(msg) { const e = new Error(msg); e.user = true; return e; }
@@ -29,7 +30,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return data.employeeIsPortalManager(u.id);
     }
 
-    function onFloorDeploy() { const s = runtime.getCurrentScript(); return !!s && s.deploymentId === FLOOR_DEPLOY_ID; }
+    // Manager only on the manager deployment, with a real logged-in user (an external request runs as id -4).
+    function managerDeploy() {
+        const s = runtime.getCurrentScript(), u = runtime.getCurrentUser();
+        return !!s && s.deploymentId === MANAGER_DEPLOY_ID && !!u && Number(u.id) > 0;
+    }
+    function onFloorDeploy() { return !managerDeploy(); }
 
     function nowInfo() {
         const stamp = format.format({ value: new Date(), type: format.Type.DATETIMETZ, timezone: format.Timezone.AMERICA_LOS_ANGELES });
@@ -249,7 +255,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             throw userErr('Departure saved but a NetSuite write failed: ' + (e.message || e) + '. A manager can press Retry.');
         }
         assertClaim(x.id, claim, truckLabel(x), 'depart');
-        data.palletsByLoad(x.id, [VP.LOADED]).forEach(p => data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day }));
+        // Only the pallets the plan was built from leave; one that slipped on after the plan stays at the dock.
+        const planned = x.data.departPallets == null ? null : String(x.data.departPallets).split(',').filter(Boolean);
+        data.palletsByLoad(x.id, [VP.LOADED]).forEach(p => {
+            if (!planned || planned.indexOf(String(p.id)) !== -1) data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day });
+            else data.updatePallet(p, { status: VP.LABELED, load: '', data: { flag: 'left_at_dock', leftAt: (c.now || {}).stamp || '', leftTruck: x.id } });
+        });
         data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { error: '', errorKey: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
         return { departed: true, view: truckView(mustTruck(x.id), c) };
     }
@@ -554,7 +565,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         d.plan.unplanned.forEach(u => { gone[u.ifId] = true; });
         return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
             approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '', requestedBy: (cur.data.pending || {}).by || '' }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
-            bol: d.plan.bol, ifs: d.ifs.filter(f => !gone[f.ifId]), writes: {}, pending: null };          // the fresh IFs the plan used
+            bol: d.plan.bol, ifs: d.ifs.filter(f => !gone[f.ifId]), departPallets: d.palletKey, writes: {}, pending: null };          // the fresh IFs the plan used
     }
     function savePending(id, inp, c) {
         const cur = mustTruck(id);
@@ -779,6 +790,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         });
         data.palletsByLoad(x.id, [VP.IN_TRANSIT]).filter(p => transit[String(p.id)]).forEach(p => data.updatePallet(p, { status: VP.MISSING }));
         const missing = cnt(data.palletStatusCounts([x.id]), x.id, VP.MISSING);
+        assertClaim(x.id, claim, label, 'receive');   // right before the final write: never overwrite another request's state
         const fin = data.getLoad(x.id);
         data.updateLoad(fin, { status: T.RECEIVED, data: { rplan: (fin.data.rplan || []).concat(rp.ops), prevStatus: '', received: rp.cumulative, recvSeq: seq, recvRequested: null,
             unposted: unposted, missing: missing, error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
@@ -869,9 +881,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     function page(ctx) {
         const S = data.getSettings();
-        const script = runtime.getCurrentScript(), floor = onFloorDeploy();
-        ctx.response.write(ui.buildPage({   // floor: API calls go to the external no-login URL
-            url: url.resolveScript(Object.assign({ scriptId: script.id, deploymentId: script.deploymentId }, floor ? { returnExternalUrl: true } : {})),
+        const script = runtime.getCurrentScript(), floor = onFloorDeploy(), external = script.deploymentId === FLOOR_DEPLOY_ID;
+        ctx.response.write(ui.buildPage({   // the no-login floor deployment: API calls go to its external URL
+            url: url.resolveScript(Object.assign({ scriptId: script.id, deploymentId: script.deploymentId }, external ? { returnExternalUrl: true } : {})),
             mode: !floor && isManager() ? 'manager' : 'floor', me: runtime.getCurrentUser().name, roster: S.roster || [],
             fromName: S.fromName, toName: S.toName, maxPrint: Number(S.maxPrint) || 250
         }));

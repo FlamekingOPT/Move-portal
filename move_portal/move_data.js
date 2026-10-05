@@ -248,15 +248,13 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
             columns: cols(LF).concat([search.createColumn({ name: 'internalid', sort: search.Sort.DESC })]) });
         return (limit ? s.run().getRange({ start: 0, end: limit }) : all(s)).map(rowToLoad);
     }
-    // lookupFields reads the whole field (search columns may be cut short on a long truck record).
+    // record.load (2 units) reads the whole Long Text field; search columns and lookupFields may cut it short.
     function getLoad(id) {
         if (!(Number(id) > 0)) return null;
-        let f;
-        try { f = search.lookupFields({ type: REC.LOAD, id: String(id), columns: Object.keys(LF).map(k => LF[k]) }); }
+        let r;
+        try { r = record.load({ type: REC.LOAD, id: String(id) }); }
         catch (e) { if ((e && e.name) === 'RCRD_DSNT_EXIST') return null; throw e; }
-        if (!f || !Object.keys(f).length) return null;
-        const val = v => (Array.isArray(v) ? (v[0] ? v[0].value : '') : v == null ? '' : v);
-        return toLoad(id, k => val(f[k]));
+        return toLoad(id, k => { const v = r.getValue({ fieldId: k }); return v == null ? '' : v; });
     }
     function getLoads(ids) { const u = uniq(ids); return u.length ? findLoads([['internalid', 'anyof', u]]) : []; }
     function loadsByStatus(statuses, limit) { return findLoads(anyText(LF.status, statuses), limit); }

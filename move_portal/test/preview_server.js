@@ -44,7 +44,7 @@ const nowStamp = () => {
 };
 const sl = loadAmd('sl_move_portal.js', {
     'N/runtime': { getCurrentUser: () => ({ id: 5, name: mgrNow ? 'Preview manager' : 'Preview floor', roleId: mgrNow ? 'administrator' : 'x', role: mgrNow ? 3 : 9 }),
-        getCurrentScript: () => ({ id: 's', deploymentId: 'd' }) },
+        getCurrentScript: () => ({ id: 's', deploymentId: mgrNow ? 'customdeploy_move_portal' : 'customdeploy_move_portal_floor' }) },
     'N/log': { error: console.error, debug() {}, audit() {} }, 'N/render': {}, 'N/url': {},
     'N/format': { format: nowStamp, Type: { DATETIMETZ: 1 }, Timezone: { AMERICA_LOS_ANGELES: 1 } },
     './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': tpl, './move_ui': ui, './move_verify': verify, './move_ns': ns

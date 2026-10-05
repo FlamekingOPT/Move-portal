@@ -9,7 +9,7 @@ const { makeSnapshotNs } = require('../local/snapshot_ns');
 
 function setup(opts) {
     opts = opts || {};
-    const rt = { deploymentId: opts.deploymentId || 'd' };
+    const rt = { deploymentId: opts.deploymentId || 'customdeploy_move_portal', userId: opts.userId != null ? opts.userId : 5 };
     const data = makeFakeData(core);
     const tx = makeFakeTx();
     data.db.items.push({ item: '11', sku: 'YSN201', desc: '20# cylinder', upc: '111' }, { item: '12', sku: 'YSN301', desc: '30# cylinder', upc: '112' });
@@ -19,7 +19,7 @@ function setup(opts) {
     data.db.items.push({ item: '975', sku: 'YSN100', desc: '100# cylinder', upc: '0975' });
     data.db.configs.push({ item: '975', code: 'A', pcs: 12, isDefault: true, batch: 'B1' });
     const sl = loadAmd('sl_move_portal.js', {
-        'N/runtime': { getCurrentUser: () => ({ id: 5, name: 'Jack K', roleId: 'administrator', role: 3 }), getCurrentScript: () => ({ id: 's', deploymentId: rt.deploymentId }) },
+        'N/runtime': { getCurrentUser: () => ({ id: rt.userId, name: 'Jack K', roleId: 'administrator', role: 3 }), getCurrentScript: () => ({ id: 's', deploymentId: rt.deploymentId }) },
         'N/log': { error() {}, debug() {}, audit() {} },
         'N/render': {}, 'N/url': opts.url || {},
         'N/format': { format: () => '10/14/2026 2:14:05 pm', Type: { DATETIMETZ: 'dtz' }, Timezone: { AMERICA_LOS_ANGELES: 'la' } },
@@ -998,4 +998,49 @@ test('fix11: a load scan that is not a labeled pallet reads no TO lines and no t
     assert.deepEqual([to.n, lists.n], [0, 0]);
     assert.equal(res(ps[2].code).result, 'ok');
     assert.ok(to.n === 1 && lists.n >= 1);
+});
+
+// ── re-review follow-ups ──
+test('gate: only the manager deployment with a real user can be manager', () => {
+    const odd = setup({ deploymentId: 'customdeploy_something_else' });
+    assert.throws(() => odd.run('dashboard', {}, true), /Managers only/);
+    const anon = setup({ userId: -4 });
+    assert.throws(() => anon.run('dashboard', {}, true), /Managers only/);
+    const out = {};
+    anon.sl.onRequest({ request: { parameters: { action: 'approvals' }, body: '{}' }, response: { setHeader() {}, write: x => { out.body = x; } } });
+    assert.equal(JSON.parse(out.body).error, 'Managers only');
+    const seen = {};
+    const pg = setup({ deploymentId: 'customdeploy_x', ui: { buildPage: o => { seen.page = o; return 'h'; } }, url: { resolveScript: o => { seen.url = o; return 'u'; } } });
+    pg.sl.onRequest({ request: { parameters: {} }, response: { write() {} } });
+    assert.equal(seen.page.mode, 'floor');
+    const w = {};
+    pg.sl.onRequest({ request: { parameters: { action: 'pdf', job: 'J1' } }, response: { write: x => { w.out = x; } } });
+    assert.equal(w.out, 'Managers only');
+    assert.ok(setup().run('dashboard', {}, true));
+});
+
+test('finishDepart moves only the planned pallets; a pallet that slipped on after the plan is left at the dock', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t, ps } = truckWith(ctx, 42);
+    const late = printLabels(ctx, 1, 'Jlate', [L975])[0];
+    ctx.tx._t.onApply = () => { ctx.tx._t.onApply = null; ctx.data.updatePallet(ctx.data.getPallet(late.id), { status: 'loaded', load: t.id }); };
+    assert.equal(ctx.run('depart_confirm', { truckId: t.id, trailer: '537224', seal: 'LD1' }).departed, true);
+    const lp = ctx.data.getPallet(late.id);
+    assert.deepEqual([lp.status, lp.loadId, lp.data.flag], ['labeled', '', 'left_at_dock']);
+    assert.equal(ctx.data.getPallet(ps[0].id).status, 'in_transit');
+    assert.equal(ctx.data.palletsByLoad(t.id, ['in_transit']).length, 42);
+});
+
+test('receipt_approve re-checks its claim right before the final write', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 2, 'RA1');
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false);
+    const real = ctx.data.palletStatusCounts;
+    ctx.data.palletStatusCounts = function () { ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'other' } }); return real.apply(this, arguments); };
+    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /already being processed/);
+    ctx.data.palletStatusCounts = real;
+    const d = ctx.data.getLoad(t.id);
+    assert.deepEqual([d.status, d.data.recvSeq, d.data.claim], ['approving', undefined, 'other']);
+    assert.throws(() => ctx.run('unload_scan', { truckId: t.id, raw: ps[1].code }, false), /not ready to unload/);   // receiveOn refuses while approving
 });
