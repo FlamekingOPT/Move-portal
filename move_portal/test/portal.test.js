@@ -167,27 +167,41 @@ function readyTruck(ctx, n, ifId) {
     return r;
 }
 
-test('dashboard counts moved, remaining, days, in-transit, never-loaded and trucks', () => {
+test('dashboard: trucks per day, waiting queues (non-zero only), one Active loads row per IF with stage and last step', () => {
     const ctx = setup();
-    ctx.data.db.stock['35']['975'] = { onHand: 1000, avail: 1000 };
-    const { t } = readyTruck(ctx, 42);
-    ship(ctx, { truckId: t.id, seal: '5249330' });
-    ctx.data.db.stock['35']['975'].onHand = 496;           // NetSuite drops on-hand when the IF ships
-    printLabels(ctx, 1, 'Jlater');
-    ctx.data.db.pallets[Object.keys(ctx.data.db.pallets).pop()].printedDay = '2026-10-01';   // stale label
-    const stray = printLabels(ctx, 1, 'Jstray', [L975]);
-    ctx.run('unload_scan', { truckId: t.id, raw: stray[0].code }, false);   // labeled, never loaded
+    const a = departed(ctx, 42, '5260020');                                           // Truck 1 today, departed
+    const b = readyTruck(ctx, 2, '9002');                                             // ready at the dock
+    ctx.run('ship_mark', { truckId: b.t.id, seal: '5260021' }, false);                // waiting for manager
+    strayOn(ctx, a.t);
     const r = ctx.run('dashboard');
-    assert.deepEqual([r.m.moved, r.m.remaining, r.m.total, r.m.movedToday], [42, 62, 104, 42]);
-    assert.deepEqual([r.inTransit, r.labeled, r.received], [42, 2, 0]);
-    assert.deepEqual(r.days[r.days.length - 1], { day: '2026-10-14', n: 42 });
+    assert.deepEqual(r.waiting.map(w => [w.queue, w.count]), [['ship', 1], ['flagged', 1], ['receipts', 1]]);
+    assert.equal(r.waiting[0].first.indexOf('Trailer'), 0);
+    assert.deepEqual([r.tiles.today, r.tiles.plan, r.tiles.total, r.tiles.received, r.tiles.inTransitTrucks, r.tiles.inTransitPallets], [1, 8, 1, 0, 1, 42]);
+    assert.deepEqual(r.days[r.days.length - 1], { day: '2026-10-14', n: 1 });
     assert.equal(r.days[0].day, '2026-10-01');
-    assert.deepEqual([r.exc.missing, r.exc.stale, r.exc.noConfig, r.exc.neverLoaded], [0, 1, 0, 1]);
-    assert.equal(r.bySku[0].sku, 'YSN100');
-    assert.equal(r.trucks.length, 1);
-    assert.equal(r.trucks[0].status, 'departed');
-    assert.equal(r.loads, undefined);
+    const rows = [r.rows[1], r.rows[0]];                                              // server order = STAGE_ORDER: Waiting for manager comes before In transit
+    assert.deepEqual(r.rows.map(x => [x.ifNum, x.stage]), [['IF9002', 'Waiting for manager'], ['IF9001', 'In transit']]);
+    assert.deepEqual([rows[0].truck, rows[0].seal, rows[0].pallets, rows[0].pcs, rows[0].flagged, rows[0].lastKind], ['Truck 1 · 10/14', '5260020', 42, 504, 1, 'confirmed']);
+    assert.deepEqual([rows[1].pallets, rows[1].pcs, rows[1].received, rows[1].lastKind, rows[1].lastBy], [2, 24, null, 'marked_shipped', 'Miguel']);
+    assert.deepEqual([r.exc.neverLoaded, r.exc.missing], [1, 0]);
+    assert.equal(r.m, undefined, 'pallet tracker maths gone');
+    ctx.data.db.settings.trucksPerDay = 6;
+    assert.equal(ctx.run('dashboard').tiles.plan, 6);
     assert.throws(() => ctx.run('dashboard', {}, false), /Managers only/);
+});
+
+test('dashboard: a received truck stays on Active loads for its receipt day, with stage Received', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 42, '5260022');
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('unload_done', { truckId: t.id }, false);
+    ctx.run('receipt_approve', { truckId: t.id });
+    let r = ctx.run('dashboard');
+    assert.deepEqual([r.rows.length, r.rows[0].stage, r.rows[0].received, r.tiles.received], [1, 'Received', 504, 1]);
+    const x = ctx.data.getLoad(t.id);
+    ctx.data.updateLoad(x, { data: { recvApprovedAt: '10/13/2026 4:00:00 pm' } });
+    r = ctx.run('dashboard');
+    assert.equal(r.rows.length, 0);
 });
 
 // ── v3 trucks ──
@@ -723,8 +737,13 @@ test('fix2: unload_list and approvals do not search pallets per truck for fully 
     assert.ok(byLoad.ids.every(id => id === open.t.id));
     assert.equal(grouped.n, 2);
     assert.equal(done.length, 5);
-    ['truck_planned', 'dashboard', 'report'].forEach(a => { const b = byLoad.n; ctx.run(a); assert.equal(byLoad.n, b, a + ' searched pallets per truck'); });
-    assert.equal(grouped.n, 5);
+    ['truck_planned', 'report'].forEach(a => { const b = byLoad.n; ctx.run(a); assert.equal(byLoad.n, b, a + ' searched pallets per truck'); });
+    const b0 = byLoad.n, g0 = grouped.n;
+    ctx.run('dashboard');                                      // reuses approvals (its one receipt card for the open truck), then one grouped read of its own
+    assert.ok(byLoad.n - b0 <= 1, 'dashboard searched pallets per truck: ' + byLoad.ids.join(','));
+    assert.ok(byLoad.ids.every(id => id === open.t.id));
+    assert.equal(grouped.n - g0, 2);
+    assert.equal(grouped.n, 6);
 });
 
 test('fix3: a truck scan re-checks the truck right before loading the pallet', () => {
