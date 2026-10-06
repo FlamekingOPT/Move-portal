@@ -1914,3 +1914,12 @@ test('ship_mark caps: seal 30 chars, carrier 60 chars (trimmed; over is refused 
     const v = ctx.run('ship_mark', { truckId: t.id, seal: ' ' + '9'.repeat(30) + ' ', carrier: ' ' + 'c'.repeat(60) + ' ' }, false).view;
     assert.deepEqual([v.truck.shipReq.seal, v.truck.shipReq.carrier], ['9'.repeat(30), 'c'.repeat(60)]);
 });
+
+test('default trailers: all 7 rotating trailers when the settings have none', () => {
+    const ctx = setup();
+    const all = ['537224', '416460', '105488', '522051', '211659', '543804', '487491'];
+    assert.deepEqual(ctx.run('truck_planned', {}, false).trailers, all);
+    const v = ctx.run('truck_start', { ifIds: ['9001'], trailer: '543804' }, false).view;
+    assert.deepEqual(v.trailers, all);
+    assert.deepEqual(ctx.run('truck_planned', {}, false).trailers, all.filter(t => t !== '543804'));
+});

@@ -131,6 +131,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // ── actions ──────────────────────────────────────────────────────────
     // ── v3 trucks (spec 2026-10-01) ──────────────────────────────────────
     const T = verify.TRUCK;
+    const DEFAULT_TRAILERS = ['537224', '416460', '105488', '522051', '211659', '543804', '487491'];   // the rotation when settings list none
     function writeMode(c) { return verify.normMode(c.S.writeMode); }
     function allTrucks() { return data.loadsByStatus(Object.values(T)).filter(x => x.data && x.data.v3); }
     function mustTruck(id) { const x = data.getLoad(id); if (!x || !x.data || !x.data.v3) throw userErr('Truck not found'); return x; }
@@ -183,7 +184,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
-            trailers: c.S.trailers || ['537224', '416460', '105488', '522051', '211659'], carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
+            trailers: c.S.trailers || DEFAULT_TRAILERS, carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
             trailer: d.trailer || '', otherItems: d.otherItems || [], shortNote: d.shortNote || null };
     }
     // Stages where pallets may go on or off.
@@ -602,7 +603,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
         return { planned: ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)),
             open: open.map(x => truckSummary(x, counts)), shippedToday: shipped.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt(),
-            trailers: (c.S.trailers || ['537224', '416460', '105488', '522051', '211659']).filter(t => !busy[normTrailer(t)]), carrier: c.S.defaultCarrier || 'Armstrong Group' };
+            trailers: (c.S.trailers || DEFAULT_TRAILERS).filter(t => !busy[normTrailer(t)]), carrier: c.S.defaultCarrier || 'Armstrong Group' };
     });
 
     // A trailer is on one truck at a time until it leaves.
