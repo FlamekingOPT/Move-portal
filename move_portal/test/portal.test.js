@@ -1835,3 +1835,23 @@ test('unload scan of a pallet on a ship_pending truck: locked, with its label an
     const r = ctx.run('unload_scan', { truckId: d.t.id, raw: a.ps[0].code }, false);
     assert.deepEqual([r.result, r.reason, r.otherLabel], ['locked', 'ship_pending', ctx.data.getLoad(a.t.id).data.trailer ? 'Trailer ' + ctx.data.getLoad(a.t.id).data.trailer : '']);
 });
+
+test('truck_planned: shippedToday lists today\'s departed trucks; trailers lists the free ones', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Jst', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: '537224' }, false).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    let r = ctx.run('truck_planned', {}, false);
+    assert.deepEqual(r.shippedToday, []);
+    assert.equal(r.trailers.indexOf('537224'), -1, 'a trailer on an open truck is not offered');
+    assert.equal(r.carrier, 'Armstrong Group');
+    ctx.run('ship_mark', { truckId: t.id, seal: '5250020' }, false);
+    ctx.run('ship_confirm', { truckId: t.id });
+    r = ctx.run('truck_planned', {}, false);
+    assert.deepEqual(r.shippedToday.map(x => [x.id, x.depart.seal, x.depart.trailer, x.pallets]), [[t.id, '5250020', '537224', 42]]);
+    assert.ok(!r.open.some(x => x.id === t.id), 'a departed truck is not open');
+    const d = ctx.data.getLoad(t.id);
+    ctx.data.updateLoad(d, { data: { depart: Object.assign({}, d.data.depart, { day: '2000-01-01' }) } });
+    assert.deepEqual(ctx.run('truck_planned', {}, false).shippedToday, []);
+});

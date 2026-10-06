@@ -70,7 +70,10 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}.kpi small{color:var(--muted);font-size:12px}.kpi b{display:block;font-size:26px;margin-top:2px}.kpi span{font-size:12px;color:var(--muted)}
 .kpi.good{border-color:#86efac;background:#f0fdf4}.kpi.bad{border-color:#fca5a5;background:#fef2f2}
-textarea.inp{font-family:monospace;font-size:13px}
+textarea.inp{font-family:monospace;font-size:13px}textarea.inp.note{font-family:inherit;font-size:16px}
+.modal{position:fixed;inset:0;z-index:30;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+.modal>div{background:#fff;border-radius:14px;padding:16px;width:100%;max-width:480px;max-height:90vh;overflow:auto}.modal h4{margin:0 0 8px;font-size:18px}
+.oform{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.oform .inp{flex:1 1 160px;min-width:0;margin:0}.oform .num{flex:0 0 76px}
 h3{font-size:15px;margin:16px 0 8px}
 @media (max-width:900px){.grid4{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr}}
 `;
@@ -140,7 +143,7 @@ h3{font-size:15px;margin:16px 0 8px}
 
         // ── shell ────────────────────────────────────────────────────────
         const TABS = {
-            out: [['req', 'Request label'], ['trucks', 'Load out'], ['void', 'Void']].concat(isMgr ? [['approve', 'Approvals'], ['queue', 'Print queue'],
+            out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']].concat(isMgr ? [['approve', 'Approvals'], ['queue', 'Print queue'],
                 ['plan', 'Print plan'], ['sku', 'Print a SKU'], ['configs', 'SKU configs'], ['reprint', 'Reprint'], ['report', 'Report'], ['dash', 'Dashboard']] : []),
             in: [['unload', 'Unload']].concat(isMgr ? [['approve', 'Approvals'], ['report', 'Report'], ['dash', 'Dashboard']] : [])
         };
@@ -180,6 +183,7 @@ h3{font-size:15px;margin:16px 0 8px}
         function refocusScan() {
             const i = $('scan') || $('rscan');
             const a = document.activeElement;
+            if ($('nmodal')) return;
             if (i && !(a && a.matches && a.matches('input,select,textarea'))) i.focus();
         }
         ACT.side = el => { S.side = el.dataset.v; put('mv_side', S.side); shell(); };
@@ -223,6 +227,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 }
                 if (r.ready.some(t => String(t.id) === String(S.truckId)) && $('tfoot') && S.tv && S.tv.truck.status === 'needs_fix') truckDetail();
                 else if (fresh.length && S.side === 'out' && S.tab === 'trucks' && !S.truckId) truckList();
+                else if (fresh.length && S.side === 'out' && S.tab === 'ship') shipList();
             } finally { S.rcBusy = false; }
         }
         function startRecheck() { if (!isMgr && !S.rc && !document.hidden) S.rc = setInterval(recheck, 30000); }
@@ -400,8 +405,7 @@ h3{font-size:15px;margin:16px 0 8px}
             loadMyReqs();
         };
 
-        // ── Outbound: void (floor) and reprint (manager) ─────────────────
-        SCREENS.void = () => palletTool(false);
+        // ── Outbound: reprint and void a label (manager) ────────────────
         SCREENS.reprint = () => palletTool(true);
         function palletTool(mgr) {
             main('<label class="f">Scan or type a label</label><input class="inp" id="ptcode" placeholder="PLT…" autocomplete="off"><div id="ptres"></div><div id="ptmsg"></div><div id="edbox"></div>');
@@ -461,26 +465,37 @@ h3{font-size:15px;margin:16px 0 8px}
 
         // ── Outbound: load out (v3) ──────────────────────────────────────
         SCREENS.trucks = () => (S.truckId ? truckDetail() : truckList());
+        function whoName(b) { return b && typeof b === 'object' ? b.name : b; }
         function ifRow(f, pick) {
             return '<label class="it"><div>' + (pick ? '<input type="checkbox" data-if="' + esc(f.ifId) + '"> ' : '') + '<b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) +
                 ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</div><div class="muted">' + (f.estPallets ? '≈ ' + f.estPallets + ' pallets' : '') + '</div></label>';
+        }
+        // Trailer #: the trailers no open truck has (r.trailers, from the settings), or "Other…" with a typed number.
+        function trailerHtml(list) {
+            return '<label class="f" for="t_trailer">Trailer #</label><select class="inp" id="t_trailer"><option value="">— pick the trailer —</option>' +
+                (list || []).map(t => '<option value="' + esc(t) + '">' + esc(t) + '</option>').join('') + '<option value="__other">Other…</option></select>' +
+                '<input class="inp" id="t_trailer2" maxlength="20" placeholder="Type the trailer #" autocomplete="off" style="display:none">';
         }
         async function truckList() {
             main('<div class="muted">Loading…</div>');
             const r = await api('truck_planned');
             if (!r.ok) { main(errBox(r.error)); return; }
             main((r.open.length ? '<h3>Trucks loading</h3>' + r.open.map(t => '<div class="card bl" data-act="opentruck" data-id="' + esc(t.id) + '"><h4>' + esc(t.label) + ' ' +
-                statusPill(t.status) + '</h4><div class="muted">' + t.pallets + ' pallets</div></div>').join('') : '') +
+                statusPill(t.status) + (t.sentBack && t.status === 'loading' ? ' <span class="pill p-amber">↩ Sent back</span>' : '') + '</h4><div class="muted">' + t.pallets + ' pallets</div></div>').join('') : '') +
                 '<h3>Planned trucks · Picked/Packed IFs</h3><div class="card plist">' + (r.planned.map(f => ifRow(f, true)).join('') || '<div class="muted">No planned IFs. The office creates them in NetSuite.</div>') + '</div>' +
-                '<div id="tmsg"></div><button class="btn pri" data-act="starttruck">Start truck with selected IFs</button>' +
+                trailerHtml(r.trailers) + '<div id="tmsg"></div><button class="btn pri" data-act="starttruck">Start truck with selected IFs</button>' +
                 (r.pulledAt ? '<div class="muted sm">Data from ' + esc(r.pulledAt) + '</div>' : ''));
+            const ts = $('t_trailer'), to = $('t_trailer2');
+            if (ts) ts.onchange = () => { to.style.display = ts.value === '__other' ? '' : 'none'; if (ts.value === '__other') to.focus(); };
         }
         ACT.starttruck = async el => {
             if (needWho()) return;
             const ids = Array.from(document.querySelectorAll('[data-if]:checked')).map(x => x.dataset.if);
+            const ts = $('t_trailer'), trailer = (ts.value === '__other' ? $('t_trailer2').value : ts.value).trim();
             if (!ids.length) { $('tmsg').innerHTML = errBox('Tick at least one IF'); return; }
+            if (!trailer) { $('tmsg').innerHTML = errBox('Pick or type the trailer #'); return; }
             busy(el, true);
-            const r = await api('truck_start', { ifIds: ids });
+            const r = await api('truck_start', { ifIds: ids, trailer: trailer });
             busy(el, false);
             if (!r.ok) { $('tmsg').innerHTML = errBox(r.error); return; }
             S.truckId = r.view.truck.id;
@@ -492,12 +507,13 @@ h3{font-size:15px;margin:16px 0 8px}
             if (S.side !== 'out' || S.tab !== 'trucks') { S.side = 'out'; put('mv_side', 'out'); S.tab = 'trucks'; shell(); } else truckDetail();
         };
         ACT.backtruck = () => { S.truckId = null; truckList(); };
+        ACT.goship = () => { S.truckId = null; S.tab = 'ship'; renderNav(); };
         async function truckDetail(pre) {
-            if (S.tmodeTruck !== S.truckId) { S.tmodeTruck = S.truckId; setMode('load'); }
+            if (S.tmodeTruck !== S.truckId) { S.tmodeTruck = S.truckId; S.otherOpen = false; setMode('load'); }
             const r = pre || await api('truck_get', { truckId: S.truckId });
             if (!r.ok) { main(errBox(r.error)); return; }
-            main('<button class="btn ghost sm" data-act="backtruck">← All trucks</button><div class="card bl"><h4 id="thead"></h4><div class="muted" id="tsub"></div></div>' +
-                '<div id="tscan"></div><div id="scanres"></div><div class="card" id="tlines"></div><div id="tfoot"></div><div class="card plist" id="plist"></div>');
+            main('<button class="btn ghost sm" data-act="backtruck">← All trucks</button><div class="card bl"><h4 id="thead"></h4><div class="muted" id="tsub"></div></div><div id="tsent"></div>' +
+                '<div id="tscan"></div><div id="scanres"></div><div class="card" id="tlines"></div><div id="tfoot"></div><div class="card plist" id="plist"></div><div class="card" id="tother"></div>');
             paintTruck(r.view, true);
         }
 
@@ -530,34 +546,42 @@ h3{font-size:15px;margin:16px 0 8px}
                 ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</span><button class="dbtn pri" ' + (mgr ? 'data-act="apaddif"' : 'data-act="taddif"') + ' data-id="' + esc(truckId) +
                 '" data-ifid="' + esc(f.ifId) + '" data-label="' + esc(f.ifNum) + '">Add to this truck</button></div>').join('') : '';
         }
-        // Mark shipped (rework Task 2): the trailer is the truck's; a manager confirms in Approvals. Task 4 moves this to the Shipments tab.
-        function departForm(v) {
-            return '<input class="inp" id="d_seal" placeholder="Seal #"><input class="inp" id="d_carrier" value="' + esc(v.carrier) + '"><div id="dmsg"></div>' +
-                '<button class="btn go" data-act="dmark">🚚 Mark shipped</button>';
-        }
-        // One card per stage: loading → Verify; needs_fix → the diffs; ready → the departure form.
+        function noteHtml(n) { return n && n.text ? '<div class="muted">📝 Short note: ' + esc(n.text) + (n.by ? ' · ' + esc(whoName(n.by)) : '') + '</div>' : ''; }
+        // One card per stage: loading → Verify; needs_fix → the diffs; ready → go to Shipments (the seal is entered there).
         function stageHtml(v) {
             const t = v.truck, st = t.status, vf = v.verify || {};
             const undo = '<button class="btn ghost sm" data-act="tundo">↶ Undo last scan</button>';
             const when = vf.at ? '<div class="muted">Checked ' + esc(vf.at) + (vf.by ? ' by ' + esc(typeof vf.by === 'object' ? vf.by.name : vf.by) : '') + '</div>' : '';
             const err = st !== 'departing' && t.error ? errBox(t.error) : '';
             if (st === 'loading') return err + '<button class="btn pri" data-act="tverify">✔ Verify load</button>' + undo;
-            if (st === 'needs_fix') return err + '<div class="card amberc"><h4>⚠ Needs IF fix</h4>' + when + diffList(vf.diffs) + sugHtml(v.suggestions, false, t.id) +
+            if (st === 'needs_fix') return err + '<div class="card amberc"><h4>⚠ Needs IF fix</h4>' + when + diffList(vf.diffs) + noteHtml(v.shortNote) + sugHtml(v.suggestions, false, t.id) +
                 '<div class="muted">Keep loading or take pallets off, or wait for the office to fix the IF in NetSuite. A manager can correct it in Approvals.</div>' +
                 '<div class="row2"><button class="dbtn pri" data-act="tverify">Verify again</button><button class="dbtn gh" data-act="backtruck">← Other trucks</button></div></div>' + undo;
-            if (st === 'ready') return err + '<div class="card greenc"><h4>✅ Ready to ship</h4>' + when + '<div class="muted">The load matches its IFs. Enter the seal #.</div>' +
-                departForm(v) + '</div>' + undo;
+            if (st === 'ready') return err + '<div class="card greenc"><h4>✅ Ready to ship</h4>' + when + '<div class="muted">The load matches its IFs. Enter the seal # on the Shipments tab.</div>' +
+                '<button class="btn go" data-act="goship">✅ Ready to ship: go to Shipments</button></div>' + undo;
             if (st === 'ship_pending') return flash('amber', '🚚 Marked shipped: waiting for a manager to confirm', esc('Seal ' + ((t.shipReq || {}).seal || '')));
             if (st === 'departing') return flash('amber', 'Departing… a NetSuite write is pending', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals');
             if (t.depart && t.status === 'departed') return err + flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal),
                 t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged');
             return err;
         }
+        // Other (non-inventory) items: typed lines, not on an IF; ✕ and + Add only while the truck is open.
+        function otherHtml(v, open) {
+            const list = v.otherItems || [];
+            return '<h4>Other items</h4>' + (list.map(o => '<div class="drow"><span>' + esc(o.desc) + ' × ' + num(o.qty) + '</span>' +
+                (open ? '<button class="dbtn gh" data-act="otherrm" data-id="' + esc(o.id) + '" aria-label="Remove">✕</button>' : '') + '</div>').join('') || '<div class="muted">None</div>') +
+                '<div id="omsg"></div>' + (!open ? '' : S.otherOpen ? '<div class="oform"><input class="inp" id="o_desc" maxlength="80" placeholder="Description, e.g. pallet jack" autocomplete="off">' +
+                    '<input class="num" id="o_qty" inputmode="numeric" value="1" aria-label="Count"><button class="dbtn pri" data-act="otheradd">Add</button><button class="dbtn gh" data-act="otherclose">Close</button></div>'
+                    : '<button class="btn ghost sm" data-act="otheropen">+ Add other item</button>');
+        }
         function paintTruck(v, first) {
             S.tv = v;
             const t = v.truck, open = ['loading', 'needs_fix', 'ready'].indexOf(t.status) !== -1;
             $('thead').innerHTML = esc(t.label) + ' ' + statusPill(t.status);
             $('tsub').textContent = t.depart ? [t.depart.carrier, 'Trailer ' + t.depart.trailer, 'Seal ' + t.depart.seal].join(' · ') : v.totals.pallets + ' pallets · ' + num(v.totals.pieces) + ' pcs';
+            const sb = t.sentBack;
+            $('tsent').innerHTML = sb && open ? '<div class="card amberc"><h4>↩ Sent back by ' + esc(whoName(sb.by)) + ': ' + esc(sb.note) + '</h4><div class="muted">' + esc(sb.at) +
+                ' · fix it, verify again, then mark it shipped again on the Shipments tab</div></div>' : '';
             if (first) {
                 $('tscan').innerHTML = open ? '<div id="tmodebox"></div>' + scanBox('scan') : '';
                 if (open) { wireScan('scan', doTruckScan, () => S.tmode); paintMode(); }
@@ -568,17 +592,62 @@ h3{font-size:15px;margin:16px 0 8px}
                 v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td><b>' + num(x.scanned) + '</b> extra</td></tr>').join('') + '</table>';
             $('plist').innerHTML = v.pallets.slice().reverse().map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
                 (open ? '<div class="ac"><button data-act="tremove" data-id="' + esc(p.id) + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
-            const keep = { d_seal: ($('d_seal') || {}).value, d_carrier: ($('d_carrier') || {}).value };
+            const keep = { d: ($('o_desc') || {}).value, q: ($('o_qty') || {}).value };
+            $('tother').innerHTML = otherHtml(v, open);
+            if ($('o_desc') && keep.d != null) { $('o_desc').value = keep.d; $('o_qty').value = keep.q; }
             $('tfoot').innerHTML = stageHtml(v);
-            if ($('d_seal') && keep.d_seal != null) { $('d_seal').value = keep.d_seal || ''; $('d_carrier').value = keep.d_carrier || ''; }
         }
-        ACT.tverify = async el => {
+        ACT.otheropen = () => { S.otherOpen = true; paintTruck(S.tv, false); const d = $('o_desc'); if (d) d.focus(); };
+        ACT.otherclose = () => { S.otherOpen = false; paintTruck(S.tv, false); };
+        ACT.otheradd = async el => {
+            if (needWho()) return;
+            const desc = $('o_desc').value.trim(), qty = Number($('o_qty').value);
+            if (!desc) { $('omsg').innerHTML = errBox('Type a description'); return; }
+            if (!(Number.isInteger(qty) && qty >= 1)) { $('omsg').innerHTML = errBox('The count must be a whole number, 1 or more'); return; }
+            busy(el, true);
+            const r = await api('truck_other_add', { truckId: S.truckId, desc: desc, qty: qty });
+            busy(el, false);
+            if (!$('tother')) return;
+            if (!r.ok) { tone('bad'); $('omsg').innerHTML = errBox(r.error); return; }
+            tone('ok');
+            $('o_desc').value = '';
+            $('o_qty').value = '1';
+            paintTruck(r.view, false);
+            if ($('o_desc')) $('o_desc').focus();
+        };
+        ACT.otherrm = async el => {
+            const r = await api('truck_other_remove', { truckId: S.truckId, id: el.dataset.id });
+            if (!$('tother')) return;
+            if (r.ok) paintTruck(r.view, false); else $('omsg').innerHTML = errBox(r.error);
+        };
+        // A floor Verify that finds a short asks why (R2); Save sends the note with the same Verify.
+        function noteModal(diffs) {
+            closeNote();
+            const m = document.createElement('div');
+            m.id = 'nmodal';
+            m.className = 'modal';
+            m.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="ntitle"><h4 id="ntitle">Why is it short?</h4>' + diffList(diffs) +
+                '<label class="f" for="n_text">Reason (required)</label><textarea class="inp note" id="n_text" rows="3" maxlength="300" placeholder="e.g. only 40 pallets on the shelf"></textarea>' +
+                '<div id="n_msg"></div><div class="row2"><button class="dbtn pri" data-act="notesave">Save</button><button class="dbtn gh" data-act="notecancel">Cancel</button></div></div>';
+            document.body.appendChild(m);
+            $('n_text').focus();
+        }
+        function closeNote() { const m = $('nmodal'); if (m) m.remove(); }
+        ACT.notecancel = () => { closeNote(); refocusScan(); };
+        ACT.notesave = async el => {
+            const text = $('n_text').value.trim();
+            if (!text) { $('n_msg').innerHTML = errBox('Type why it is short'); $('n_text').focus(); return; }
+            closeNote();
+            await ACT.tverify(el, text);
+        };
+        ACT.tverify = async (el, shortNote) => {
             if (needWho()) return;
             busy(el, true);
-            const r = await api('truck_verify', { truckId: S.truckId });
+            const r = await api('truck_verify', shortNote ? { truckId: S.truckId, shortNote: shortNote } : { truckId: S.truckId });
             busy(el, false);
             if (!$('scanres')) return;
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
+            if (r.needsNote) { tone('warn'); noteModal(r.diffs); return; }
             markSeen(r.view);
             tone(r.match ? 'ok' : 'warn');
             paintTruck(r.view, false);
@@ -598,44 +667,6 @@ h3{font-size:15px;margin:16px 0 8px}
             $('scanres').innerHTML = flash(r.match ? 'green' : 'amber', '➕ ' + esc(el.dataset.label) + ' added',
                 r.match ? 'The load matches its IFs: ready to ship' : 'Still needs an IF fix: see the card below');
         };
-        function departBody() { return { truckId: S.truckId, seal: $('d_seal').value, carrier: $('d_carrier').value }; }
-        // The departure re-check no longer matches. "IF changed" only when an IF is gone or its qty differs from what the screen showed;
-        // otherwise the load changed (a scan or take-off landed meanwhile).
-        function ifChanged(diffs, prev) {
-            const was = {};
-            ((prev && prev.lines) || []).forEach(l => { was[l.ifNum + '|' + String(l.item)] = Number(l.expected); });
-            return (diffs || []).some(d => d.kind === 'if_gone' || ((d.kind === 'if_short' || d.kind === 'if_over') && was[d.ifNum + '|' + String(d.item)] !== Number(d.ifQty)));
-        }
-        function needsFixAgain(r) {
-            const prev = S.tv;
-            tone('bad');
-            paintTruck(r.view, true);
-            $('scanres').innerHTML = flash('red', ifChanged(r.diffs, prev) ? '❌ IF changed in NetSuite: needs a fix again' : '❌ The load changed: verify again',
-                (r.diffs || []).map(d => esc(d.text)).join('<br>'));
-        }
-        // A refused departure: the truck may have changed on another device, so refetch and repaint (the form keeps what was typed
-        // while the truck is still Ready). The error goes in scanres, above the repainted stage card.
-        async function departRefused(r) {
-            tone('bad');
-            const g = await api('truck_get', { truckId: S.truckId });
-            if (!g.ok || !$('tfoot')) { if ($('dmsg')) $('dmsg').innerHTML = errBox(r.error); return; }
-            paintTruck(g.view, true);
-            $('scanres').innerHTML = errBox(r.error) +
-                (['loading', 'needs_fix'].indexOf(g.view.truck.status) !== -1 ?flash('amber', 'The truck changed on another device: verify again') : '');
-        }
-        ACT.dmark = async el => {
-            if (needWho()) return;
-            if (!confirm('Mark this truck shipped? A manager confirms it in Approvals.')) return;
-            busy(el, true);
-            const r = await api('ship_mark', departBody());
-            busy(el, false);
-            if (!$('tfoot')) return;
-            if (!r.ok) { await departRefused(r); return; }
-            markSeen(r.view);
-            if (r.needsFix) { needsFixAgain(r); return; }
-            tone('ok');
-            paintTruck(r.view, true);
-        };
         ACT.tundo = async () => { const r = await api('truck_undo', { truckId: S.truckId }); if (!$('scanres')) return; if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
         ACT.tremove = async el => { const r = await api('truck_remove', { truckId: S.truckId, palletId: el.dataset.id }); if (!$('scanres')) return; if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
         ACT.tmovehere = async el => { const r = await api('truck_move_here', { truckId: S.truckId, palletId: el.dataset.id }); if (!$('scanres')) return; $('scanres').innerHTML = r.ok ? flash('green', '✅ Moved here') : errBox(r.error); if (r.ok) paintTruck(r.view, false); };
@@ -650,7 +681,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'no_to': return flash('red', '❌ No open TO for ' + esc(r.sku), line, 'Set it aside and call the office.');
                 case 'dup': return flash('amber', '🟡 Already on this truck', line, 'No change.');
                 case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + esc(p.id) + '">Move here</button><button data-act="clearres">Leave it</button>');
-                case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + ', departing', line, 'Check with the supervisor.');
+                case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + (r.reason === 'ship_pending' ? ', marked shipped' : ', departing'), line, 'Check with the supervisor.');
                 case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
                 default: return flash('red', '❌ Unknown label', raw, 'Not a move label. Maybe a product barcode?');
@@ -667,6 +698,84 @@ h3{font-size:15px;margin:16px 0 8px}
             $('scanres').innerHTML = truckResultHtml(r);
             if (r.view) paintTruck(r.view, false);
         }
+
+        // ── Outbound: Shipments (the floor marks a Ready truck shipped; a manager confirms it) ──
+        SCREENS.ship = () => shipList();
+        // msg: shown on top. Typed seals/carriers survive a reload (a refused mark keeps what was typed).
+        async function shipList(msg) {
+            const keep = {};
+            document.querySelectorAll('[data-keep]').forEach(i => { keep[i.id] = i.value; });
+            if (!$('shipbox')) main('<div id="shipbox"><div class="muted">Loading…</div></div>');
+            const r = await api('truck_planned');
+            if (S.tab !== 'ship' || !$('shipbox')) return;
+            if (!r.ok) { $('shipbox').innerHTML = (msg || '') + errBox(r.error); return; }
+            const ready = r.open.filter(t => t.status === 'ready'), wait = r.open.filter(t => t.status === 'ship_pending' || t.status === 'departing');
+            const gets = await Promise.all(ready.map(t => api('truck_get', { truckId: t.id })));
+            if (S.tab !== 'ship' || !$('shipbox')) return;
+            S.shipViews = {};
+            gets.forEach(g => { if (g.ok) S.shipViews[String(g.view.truck.id)] = g.view; });
+            const carrier = r.carrier || 'Armstrong Group';
+            $('shipbox').innerHTML = (msg || '') + '<h3>Ready to ship</h3>' + (ready.map(t => shipCard(t, S.shipViews[String(t.id)], carrier)).join('') ||
+                    '<div class="muted">No truck is ready. Verify a load on Load out first.</div>') +
+                '<h3>Waiting for manager</h3>' + (wait.map(t => {
+                    const q = t.shipReq || {};
+                    return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' + esc(['Seal ' + (q.seal || ''), q.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) +
+                        '</div><div class="muted">Marked shipped by ' + esc(whoName(q.by) || '?') + ' · ' + esc(q.at || '') + '</div></div>';
+                }).join('') || '<div class="muted">None</div>') +
+                '<h3>Shipped today</h3>' + ((r.shippedToday || []).map(t => {
+                    const d = t.depart || {};
+                    return '<div class="card"><h4>🚚 ' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' +
+                        esc(['Seal ' + d.seal, 'Trailer ' + d.trailer, d.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) + '</div></div>';
+                }).join('') || '<div class="muted">None yet today</div>');
+            Object.keys(keep).forEach(id => { const i = $(id); if (i && keep[id] != null) i.value = keep[id]; });
+        }
+        function shipCard(t, v, carrier) {
+            const id = esc(t.id);
+            if (!v) return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4>' + errBox('Could not read this truck. Open Shipments again.') + '</div>';
+            const ifs = v.lines.map(l => l.ifNum).filter((n, i, a) => a.indexOf(n) === i);
+            const oth = (v.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
+            return '<div class="card greenc"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4>' +
+                '<div class="muted">' + esc('Trailer ' + (v.trailer || '')) + ' · IFs ' + esc(ifs.join(', ')) + '</div>' +
+                '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
+                '<label class="f" for="s_seal_' + id + '">Seal #</label><input class="inp" id="s_seal_' + id + '" data-keep="1" placeholder="Seal (tag) #" autocomplete="off">' +
+                '<label class="f" for="s_car_' + id + '">Carrier</label><input class="inp" id="s_car_' + id + '" data-keep="1" value="' + esc(v.carrier || carrier) + '">' +
+                '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">🚚 Mark shipped</button></div>';
+        }
+        // The re-check at Mark shipped no longer matches. "IF changed" only when an IF is gone or its qty differs from what the screen showed;
+        // otherwise the load changed (a scan or take-off landed meanwhile).
+        function ifChanged(diffs, prev) {
+            const was = {};
+            ((prev && prev.lines) || []).forEach(l => { was[l.ifNum + '|' + String(l.item)] = Number(l.expected); });
+            return (diffs || []).some(d => d.kind === 'if_gone' || ((d.kind === 'if_short' || d.kind === 'if_over') && was[d.ifNum + '|' + String(d.item)] !== Number(d.ifQty)));
+        }
+        function needsFixAgain(r, id) {
+            tone('bad');
+            shipList(flash('red', ifChanged(r.diffs, S.shipViews[String(id)]) ? '❌ IF changed in NetSuite: needs a fix again' : '❌ The load changed: verify again',
+                esc(r.view ? r.view.truck.label : ''), (r.diffs || []).map(d => esc(d.text)).join('<br>'), '<button data-act="opentruck" data-id="' + esc(id) + '">Open truck</button>'));
+        }
+        // A refused mark: the truck may have changed on another device; reload Shipments with the error on top.
+        async function departRefused(r, id) {
+            tone('bad');
+            const g = await api('truck_get', { truckId: id });
+            const moved = g.ok && ['loading', 'needs_fix'].indexOf(g.view.truck.status) !== -1;
+            shipList(errBox(r.error) + (moved ? flash('amber', 'The truck changed on another device: verify again') : ''));
+        }
+        ACT.dmark = async el => {
+            const id = el.dataset.id, seal = $('s_seal_' + id), car = $('s_car_' + id), sv = seal ? seal.value.trim() : '';
+            if (needWho() || !seal) return;
+            if (!sv) { tone('bad'); $('s_msg_' + id).innerHTML = errBox('Enter the seal #'); seal.focus(); return; }
+            if (!confirm('Mark this truck shipped? A manager confirms it in Approvals.')) return;
+            busy(el, true);
+            const r = await api('ship_mark', { truckId: id, seal: sv, carrier: car.value });
+            busy(el, false);
+            if (S.tab !== 'ship' || !$('shipbox')) return;
+            if (!r.ok) { await departRefused(r, id); return; }
+            markSeen(r.view);
+            if (r.needsFix) { needsFixAgain(r, id); return; }
+            tone('ok');
+            seal.removeAttribute('data-keep');
+            shipList(flash('green', '🚚 ' + esc(r.view.truck.label) + ' marked shipped', esc('Seal ' + sv), 'A manager confirms it in Approvals.'));
+        };
 
         // ── Outbound: manager print queue / plan / print a SKU ────────────
         SCREENS.queue = () => {
@@ -839,7 +948,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = await api('unload_get', { truckId: S.unloadId });
             if (!r.ok) { main(errBox(r.error)); return; }
             main('<button class="btn ghost sm" data-act="backunload">← All trucks</button><div class="card bt"><h4 id="uhead"></h4><div class="muted" id="usub"></div></div>' +
-                scanBox('rscan') + '<div id="scanres"></div><div class="card" id="uifs"></div><div class="card plist" id="uexp"></div><div id="ufoot"></div>');
+                scanBox('rscan') + '<div id="scanres"></div><div class="card" id="uifs"></div><div class="card plist" id="uexp"></div><div class="card" id="uoth" style="display:none"></div><div id="ufoot"></div>');
             wireScan('rscan', doUnloadScan);
             paintUnload(r.view);
         }
@@ -851,6 +960,10 @@ h3{font-size:15px;margin:16px 0 8px}
                 '</td><td><b>' + num(f.received) + '</b> / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
                 (v.flagged.length ? flash('amber', '🟠 ' + v.flagged.length + ' never-loaded pallet(s) flagged', esc(v.flagged.map(p => p.code).join(', ')), 'The office will sort these out.') : '');
             $('uexp').innerHTML = '<h4>Still expected</h4>' + (v.expected.map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div></div>').join('') || '<div class="muted">All in ✅</div>');
+            const oth = v.otherItems || [], ob = $('uoth');
+            ob.style.display = oth.length ? '' : 'none';
+            ob.innerHTML = '<h4>Other items · ' + oth.filter(o => o.in).length + ' of ' + oth.length + ' in</h4>' + oth.map(o => '<div class="drow"><span>' + esc(o.desc) + ' × ' + num(o.qty) + '</span>' +
+                '<button class="dbtn ' + (o.in ? 'go' : 'gh') + '" data-act="utick" data-id="' + esc(o.id) + '" data-on="' + (o.in ? '0' : '1') + '">' + (o.in ? '☑ In' : '☐ Tick') + '</button></div>').join('');
             $('ufoot').innerHTML = (t.error ? errBox(t.error) : '') + '<button class="btn ghost sm" data-act="uundo">↶ Undo last scan</button>' + (S.lastIn ? '<button class="btn ghost sm" data-act="udamaged" data-id="' + esc(S.lastIn) + '">Mark last pallet damaged</button>' : '') +
                 '<button class="btn go" data-act="udone">Unloading done: send to manager</button>';
         }
@@ -881,6 +994,13 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         ACT.uother = async el => { const r = await api('unload_other', { palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('green', '✅ Received on its own truck') : errBox(r.error); };
         ACT.udamaged = async el => { const r = await api('unload_damaged', { palletId: el.dataset.id }); $('scanres').innerHTML = r.ok ? flash('amber', 'Marked damaged') : errBox(r.error); };
+        ACT.utick = async el => {
+            if (needWho()) return;
+            busy(el, true);
+            const r = await api('unload_other_tick', { truckId: S.unloadId, id: el.dataset.id, on: el.dataset.on === '1' });
+            if (!$('scanres')) return;
+            if (r.ok) paintUnload(r.view); else { busy(el, false); $('scanres').innerHTML = errBox(r.error); }
+        };
         ACT.uundo = async () => { const r = await api('unload_undo', { truckId: S.unloadId }); if (r.ok) { S.lastIn = null; paintUnload(r.view); } else $('scanres').innerHTML = errBox(r.error); };
         ACT.udone = async () => { const r = await api('unload_done', { truckId: S.unloadId }); $('scanres').innerHTML = r.ok ? flash('green', 'Sent to the manager for receipt approval') : errBox(r.error); };
 

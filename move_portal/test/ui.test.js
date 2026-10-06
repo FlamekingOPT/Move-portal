@@ -22,7 +22,7 @@ test('client code never contains a closing script tag', () => {
 test('v3 screens exist and old ones are gone', () => {
     const src = ui._clientMain.toString();
     ['SCREENS.trucks', "api('truck_scan'", "api('ship_mark'", "api('truck_planned'"].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
-    ['SCREENS.ship', 'SCREENS.load ', "api('scan_load'"].forEach(s => assert.equal(src.indexOf(s), -1, 'still has ' + s));
+    ['SCREENS.load ', "api('scan_load'"].forEach(s => assert.equal(src.indexOf(s), -1, 'still has ' + s));
 });
 
 test('v3 inbound/approval/report screens exist', () => {
@@ -83,7 +83,7 @@ test('verify-load UI: verify, take-off, stages, recheck alert, manager correct',
     ["api('truck_verify'", "api('trucks_recheck'", "api('truck_add_if'", "api('truck_drop_if'", "api('truck_correct'", 'Needs IF fix', 'Ready to ship',
         'Take off', 'back to Riverside', 'now matches its IF', 'mv_alerted', 'document.hidden']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
-    ["api('depart_cancel'", "api('depart_skip_write'", 'Waiting for manager'].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
+    ["api('depart_cancel'", "api('depart_skip_write'"].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
 });
 
 test('verify-load UI: take-off mode, stage buttons, scan modes', () => {
@@ -125,7 +125,7 @@ test('polish: no self-alert after Verify; banner pads main so it cannot cover co
     ["view.truck.id + '|' + view.verify.at", 'markSeen(r.view)', 'paddingBottom'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     ['ACT.tverify =', 'ACT.taddif =', 'ACT.dmark ='].forEach(n => {
         const i = src.indexOf(n);
-        assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('markSeen(r.view)') !== -1, 'no markSeen in ' + n);
+        assert.ok(i !== -1 && src.slice(i, i + 1000).indexOf('markSeen(r.view)') !== -1, 'no markSeen in ' + n);
     });
 });
 
@@ -136,13 +136,27 @@ test('final fixes: manager add-any-IF picker on the needs-fix card; ids escaped;
     assert.ok(src.indexOf("typeof vf.by === 'object'") !== -1, 'verify by object shown by name');
 });
 
-test('a refused mark shipped refetches the truck and repaints, error above the stage', () => {
+test('a refused mark shipped reloads Shipments, error on top', () => {
     const src = ui._clientMain.toString();
     assert.ok(src.indexOf('The truck changed on another device: verify again') !== -1);
-    ['ACT.dmark ='].forEach(n => {
-        const i = src.indexOf(n);
-        assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('departRefused(r)') !== -1, 'no departRefused in ' + n);
-    });
-    const i = src.indexOf('async function departRefused');
-    assert.ok(i !== -1 && /api\('truck_get'[\s\S]*paintTruck\(g\.view, true\)/.test(src.slice(i, i + 800)));
+    const i = src.indexOf('ACT.dmark =');
+    assert.ok(i !== -1 && src.slice(i, i + 900).indexOf('departRefused(r') !== -1, 'no departRefused in dmark');
+    const j = src.indexOf('async function departRefused');
+    assert.ok(j !== -1 && /shipList\(/.test(src.slice(j, j + 600)));
+});
+
+test('floor rework: Load out default, no Void, Shipments, trailer, short note, other items', () => {
+    const src = ui._clientMain.toString();
+    ["['ship', 'Shipments']", "api('ship_mark'", "api('truck_other_add'", "api('unload_other_tick'", 'Why is it short?', 'shortNote', 'Trailer #', 'go to Shipments', 'Sent back by']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    ["['void', 'Void']", "api('depart_preview'", "api('depart_confirm'"].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
+});
+
+test('floor rework: tab order, shipped today, other-item remove, ship-pending unload lock', () => {
+    const src = ui._clientMain.toString();
+    ["out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']]", 'SCREENS.ship', 'r.shippedToday', 'Waiting for manager', 'Shipped today',
+        "api('truck_other_remove'", 'Armstrong Group', 'waiting for a manager to confirm shipping', 'r.trailers']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    assert.equal(src.indexOf('SCREENS.void'), -1, 'Void screen still there');
+    assert.equal(src.indexOf('departForm('), -1, 'departure form still on the truck screen');
 });

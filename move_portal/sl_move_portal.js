@@ -594,9 +594,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_planned', false, (a, c) => {
         const trucks = allTrucks(), taken = {}, dp = defPcs(c);
         trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
-        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING), counts = data.palletStatusCounts(open.map(x => x.id));
+        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING);
+        // Shipped today (Shipments tab): trucks that left with today's departure day.
+        const shipped = trucks.filter(x => x.status !== T.DEPARTING && x.data.depart && x.data.depart.day === c.now.dayIso);
+        const counts = data.palletStatusCounts(open.concat(shipped).map(x => x.id));
+        const busy = {};
+        trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
         return { planned: ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)),
-            open: open.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt() };
+            open: open.map(x => truckSummary(x, counts)), shippedToday: shipped.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt(),
+            trailers: (c.S.trailers || ['537224', '416460', '105488', '522051', '211659']).filter(t => !busy[normTrailer(t)]), carrier: c.S.defaultCarrier || 'Armstrong Group' };
     });
 
     // A trailer is on one truck at a time until it leaves.
