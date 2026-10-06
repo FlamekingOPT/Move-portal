@@ -1101,11 +1101,13 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="muted">' + esc(wmText(wmode)) + ' · <a href="#" class="linkbtn" data-act="apverify" data-id="' + id + '" data-label="' + lab + '">Re-check</a></div></div>';
         }
         // One quiet card per waiting truck: its IFs (Drop on a gone/empty one), + Add an IF (secondary), Open truck.
-        function truckCard(n, free) {
+        // hasFix: a Correct-the-IF card exists for this truck (its button frees a stalled claim); else a truck-level button does.
+        function truckCard(n, free, wmode, hasFix) {
             const t = n.truck, id = esc(t.id), lab = esc(t.label), open = !!(S.addOpen || {})[String(t.id)];
             return '<div class="card quiet"><h4>' + lab + ' ' + statusPill(t.status) + '</h4><div class="muted">' + num(t.pallets) + ' pallets loaded' +
                 (n.verifiedAt ? ' · Checked by ' + esc(n.verifiedBy || '?') + ' at ' + esc(n.verifiedAt) : '') + '</div>' +
-                (n.stuck ? '<div class="muted warn">⚠ A correction stalled. Press Correct the IF again to free it.</div>' : '') +
+                (n.stuck ? '<div class="muted warn">⚠ A correction stalled. ' + (hasFix ? 'Press Correct the IF again to free it.' : 'Free it here, then re-check.') + '</div>' : '') +
+                (n.stuck && !hasFix ? '<button class="btn-correct" data-act="apcorrect" data-id="' + id + '" data-label="' + lab + '" data-wm="' + esc(wmode) + '" data-drops="' + (n.ifs || []).filter(f => f.gone || f.empty).length + '">Free the stuck correction</button>' : '') +
                 (n.correctError ? errBox('Correction refused: ' + n.correctError + ' — fix it in NetSuite') : '') +
                 (n.otherDiffs || []).map(tx => '<div class="muted warn">⚠ ' + esc(tx) + '</div>').join('') +
                 '<div class="diffs">' + (n.ifs || []).map(f => '<div class="drow"><span><b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) + ' · ' + esc((f.lines || []).map(l => l.sku + ' ' + num(l.qty)).join(', ')) +
@@ -1138,7 +1140,7 @@ h3{font-size:15px;margin:16px 0 8px}
             setLate((r.shipPending || []).filter(x => x.ageMin != null && x.ageMin >= LATE_MIN).length);
             const ship = (r.shipPending || []).length ? '<h3>Ship confirmations</h3>' + r.shipPending.map(shipConfirmCard).join('') : '';
             const fix = (r.fixes || []).length ? '<h3>Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
-            const trk = (r.trucks || []).length ? '<h3>Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs)).join('') : '';
+            const trk = (r.trucks || []).length ? '<h3>Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))).join('') : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
                 (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');

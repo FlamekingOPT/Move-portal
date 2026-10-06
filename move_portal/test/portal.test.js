@@ -1939,3 +1939,17 @@ test('default trailers: all 7 rotating trailers when the settings have none', ()
     assert.deepEqual(v.trailers, all);
     assert.deepEqual(ctx.run('truck_planned', {}, false).trailers, all.filter(t => t !== '543804'));
 });
+
+test('a stalled correction on a truck with no Correct card: truck_correct with no keys frees the claim (and drops the empty IF)', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Jstk', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'], trailer: tr() }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    ctx.run('truck_verify', { truckId: t.id }, false);                              // needs_fix: only if_empty (no Correct card)
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'c1', phase: 'correct', workingAt: Date.now() - 11 * 60000 } });
+    const a = ctx.run('approvals');
+    assert.deepEqual([a.fixes.length, a.trucks[0].stuck], [0, true]);
+    const r = ctx.run('truck_correct', { truckId: t.id });
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.data.claim, r.verify.match, x.status, x.data.ifs.map(f => f.ifId)], ['', true, 'ready', ['9001']]);
+});

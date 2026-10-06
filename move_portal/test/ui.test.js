@@ -195,3 +195,11 @@ test('final fixes: manager Open truck shows the error in its modal when truck_ge
     const i = src.indexOf('ACT.opentruck ='), j = src.indexOf('const v = r.view', i);
     assert.ok(i !== -1 && j !== -1 && src.slice(i, j).indexOf('errBox(r.error)') !== -1, 'Open truck error not shown');
 });
+
+test('final fixes: a stalled correction on a truck with no fix card gets a truck-level free button', () => {
+    const src = ui._clientMain.toString();
+    ['Free the stuck correction', 'n.stuck && !hasFix', 'truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    const i = src.indexOf('Free the stuck correction'), b = src.lastIndexOf('<button', i);
+    assert.ok(/class="btn-correct" data-act="apcorrect"/.test(src.slice(b, i)) && src.slice(b, i).indexOf('data-key') === -1, 'free button: btn-correct apcorrect with no key');
+});
