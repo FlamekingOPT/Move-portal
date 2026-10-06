@@ -160,11 +160,12 @@ DB Task 5: complete (commits bd0e68f..ca2d468, review clean). Tests 273.
 Minor (DB5): late-ship badge not primed until Approvals opens (Task 6: Dashboard calls setLate from waiting.late); error receipt card (!perIf) still ungated; flagRow nested div padding; S.scrollTo not cleared on approvals error; same pallet shows on both cards (by spec).
 DB Task 6: complete (commits ca2d468..20aa1c3, review clean after 1 fix wave). Tests 275.
 Minor (DB6): Sort select blank after clicking Fulfillment/TO/Truck/Pallets headers (keys not in SORTS); newest-sort || chain stops at an unparseable lastAt; tests string-level only.
-DB Task 7: complete (commits 20aa1c3..this commit). Local beta stand-in: snapshot_ns.applyOp applies if_qty / if_create (returns the new id) / if_stamp; fake_tx hook may return an id. Tests 276. Browser smoke done by the controller.
+DB Task 7: complete (commits 20aa1c3..0338641). Local beta stand-in: snapshot_ns.applyOp applies if_qty / if_create (returns the new id) / if_stamp; fake_tx hook may return an id. Tests 276. Browser smoke done by the controller.
 ON-MODE GATE / Stage 2:
 (a) setIfItemQty on a Shipped (C) IF must be verified in prod before `qty` (spec 2.6).
 (b) Pending add-on IFs are matched by TO + exact lines + not on a truck (searching all statuses, preferring shipped) until move_ns exposes memos, then match by the createToken shown in the pending text; an office-planned IF with identical lines can be taken over by mistake until then.
 (c) pallet_accept claims the truck with phase `accept` while the floor may still scan; both sides re-read before writing; no lost update seen in tests; keep an eye on it in the beta.
 (d) The dashboard runs approvalsView incl. settlePending, so it is not a pure read.
 (e) Task 15 lazy-read list: pendingReservations adds an ns.ifInfo read per reservedToLines call when pendings exist; the dashboard's grouped shipped-pallet read grows with history.
+Final review: fix wave 27404ae (settle claim, withdraw pending accept, locked-truck guard, block-in-claim, flagged pallet refused at Riverside, docs). Stage 2 / ON-MODE GATE: half-done accept recovery (write truck before pallet or reconcile), pendingReservations read cost (one palletsByIds per request), stale flagged ids on old trucks, pending pallet UI text on the floor list, two-IF split tests.
 ```
