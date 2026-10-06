@@ -26,12 +26,22 @@ define(['N/query', './move_data', './move_verify'], function (query, data, verif
         return out;
     }
 
+    // An account without the seal/trailer body fields (the sandbox) still gets receipts, with those two columns null.
+    const CUSTOM_RCPT_COLS = 'r.custbody_rsm_container_no AS trailer, r.custbody7 AS seal';
+    function receiptsWithIds(sql, ids) {
+        try { return withIds(sql, ids); }
+        catch (e) {
+            if (!/custbody/i.test(e && e.message || String(e)) || sql.indexOf(CUSTOM_RCPT_COLS) === -1) throw e;
+            return withIds(sql.replace(CUSTOM_RCPT_COLS, 'NULL AS trailer, NULL AS seal'), ids);
+        }
+    }
+
     function pull() {
         const S = data.getSettings();
         const q = verify.SQL(S.locFrom, S.locTo);
         const toLines = rows(q.toLines), ifLines = rows(q.ifLines);
         const links = withIds(q.links, distinct(ifLines, 'ifid'));
-        const receipts = withIds(q.receipts, distinct(links, 'rcptid'));
+        const receipts = receiptsWithIds(q.receipts, distinct(links, 'rcptid'));
         const onHand = rows(q.onHand);
         const items = withIds(q.items, distinct(toLines.concat(onHand), 'item'));
         return { pulledAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC', locFrom: String(S.locFrom), locTo: String(S.locTo),

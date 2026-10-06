@@ -70,3 +70,19 @@ test('move_ns uses the settings locations and chunks long id lists', () => {
     assert.ok(q.ran.some(s => /transferlocation = 42/.test(s)), 'queries use the settings locTo');
     assert.equal(q.ran.filter(s => /previoustransactionlink/.test(s)).length, 0, 'no links query when there are no IFs');
 });
+
+test('move_ns: an account without the seal/trailer body fields still reads receipts (columns null)', () => {
+    const q = fakeQuery(sample), real = q.runSuiteQL;
+    q.runSuiteQL = (o) => {
+        if (/'ItemRcpt'/.test(o.query) && /custbody7/.test(o.query)) throw new Error("Search error occurred: Field 'custbody7' for record 'transaction' was not found. Reason: REMOVED - Field is removed");
+        const r = real(o);
+        if (/'ItemRcpt'/.test(o.query)) { const rows = r.asMappedResults().map(x => Object.assign({}, x, { trailer: null, seal: null })); return { asMappedResults: () => rows }; }
+        return r;
+    };
+    const data = { getSettings: () => ({ locFrom: '35', locTo: '46' }) };
+    const ns = loadAmd('move_ns.js', { 'N/query': q, './move_data': data, './move_verify': verify });
+    const byIf = ns.receiptsByIf();
+    assert.ok(Object.keys(byIf).length > 0, 'receipts still read');
+    assert.equal(Object.values(byIf)[0][0].seal, '');
+    assert.ok(q.ran.some(s => /NULL AS trailer, NULL AS seal/.test(s)), 'fallback SQL ran');
+});
