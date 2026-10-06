@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Move Portal · manager rework mockup (2026-10-06)</title>
+<style>
+  :root{--navy:#1a3557;--ink:#111827;--mute:#6b7280;--line:#e5e7eb;--soft:#f8fafc;--bg:#f3f4f6;
+    --blue-bg:#E6F1FB;--blue:#0C447C;--teal-bg:#E1F5EE;--teal:#0F6E56;--amb-bg:#FAEEDA;--amb:#633806;
+    --vio-bg:#ece9f7;--vio:#3C3489;--ok:#059669;--warn:#b45309;--bad:#c2410c;--red-bg:#fef2f2;--grn-bg:#dcfce7}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);margin:0;color:var(--ink);font-size:14px}
+  .hdr{background:var(--navy);color:#fff;padding:12px 16px;display:flex;gap:10px;align-items:center;justify-content:space-between}
+  .hdr h1{font-size:17px;margin:0}.hdr .sub{font-size:12px;opacity:.8}
+  .nav{background:#fff;border-bottom:1px solid var(--line);display:flex}
+  .nav div{flex:1;text-align:center;padding:11px 6px;font-weight:700;color:var(--mute);border-bottom:3px solid transparent;font-size:13px}
+  .nav div.on{color:var(--navy);border-color:#2563eb}
+  .wrap{max-width:1000px;margin:0 auto;padding:14px 16px 40px}
+  .mock{background:#fff7ed;border:1px dashed #f59e0b;color:#7c2d12;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+  .screen{margin-bottom:48px}
+  .screen-title{font-size:13px;font-weight:800;color:#7c2d12;background:#ffedd5;display:inline-block;padding:4px 10px;border-radius:6px;margin:0 0 10px}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px}
+  .tile{background:#fff;border-radius:9px;padding:9px 12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .tile .l{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+  .tile .v{font-size:22px;font-weight:800;color:var(--navy)}
+  .tile .m{font-size:11px;color:var(--mute)}
+  .card{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden}
+  .card.amb{border:1px solid #EF9F27}.card.grn{border:1px solid #86efac}
+  .card-h{padding:11px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .so{font-weight:800;font-size:15px;color:var(--navy)}
+  .meta{font-size:12px;color:var(--mute)}
+  .card-b{border-top:1px solid var(--line);padding:12px 14px}
+  .pill{font-size:11px;font-weight:700;border-radius:99px;padding:2px 9px;background:#eef2f7;color:#334155;white-space:nowrap}
+  .pill.blue{background:var(--blue-bg);color:var(--blue)}.pill.teal{background:var(--teal-bg);color:var(--teal)}
+  .pill.amb{background:var(--amb-bg);color:var(--amb)}.pill.vio{background:var(--vio-bg);color:var(--vio)}
+  .pill.red{background:var(--red-bg);color:var(--bad)}.pill.grn{background:var(--grn-bg);color:#166534}
+  .grow{flex:1}
+  .sect{font-size:12px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;margin:16px 0 8px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:var(--soft);padding:7px 10px;text-align:left;font-weight:700;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line)}
+  td{padding:8px 10px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  tr.stage td{background:#f8fafc;font-weight:800;color:var(--navy);font-size:12px;text-transform:uppercase;letter-spacing:.4px;padding:6px 10px}
+  tr.link td:first-child{color:#2563eb;font-weight:700}
+  .btn{border:1px solid transparent;cursor:pointer;font:inherit;font-size:12px;font-weight:700;border-radius:6px;padding:7px 12px}
+  .btn.navy{background:var(--navy);color:#fff}.btn.ok{background:var(--ok);color:#fff}
+  .btn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+  .btn.warn{background:var(--amb-bg);color:var(--amb);border-color:#EF9F27}
+  .btn.big{width:100%;padding:12px;font-size:15px}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .row{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid #f3f4f6;flex-wrap:wrap}
+  .row:last-child{border-bottom:0}
+  .note{font-size:12px;color:var(--mute)}
+  .res{font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px}
+  .res.ok{background:var(--grn-bg);color:#166534}.res.amb{background:var(--amb-bg);color:var(--amb)}.res.bad{background:var(--red-bg);color:var(--bad)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:700px){.two{grid-template-columns:1fr}}
+  h3{font-size:14px;margin:14px 0 8px;color:var(--navy)}
+  .lblsec{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:10px;padding:10px 14px;display:flex;align-items:center;gap:10px}
+  .lblsec b{color:var(--navy)}
+  .lblsec .ord{background:var(--navy);color:#fff;border-radius:99px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}
+  .was{font-size:11px;color:var(--mute);text-decoration:line-through}
+  .tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 14px;border-top:1px solid var(--line);background:var(--soft)}
+  .tools input,.tools select{padding:7px 9px;border:1px solid #d1d5db;border-radius:6px;font:inherit;font-size:13px}
+  .tools input{flex:1;min-width:180px}
+  th.sort{cursor:pointer;color:var(--navy)}th.sort::after{content:" ↓";color:#2563eb}th.sortable::after{content:" ↕";opacity:.4}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>Move Portal</h1><span class="sub">Manager · manager</span></div>
+
+<div class="wrap">
+<div class="mock">Mockup for the 2026-10-06 manager changes. Static: four screens stacked. Data is from today's beta (Trailer 487491 = Jack's truck). Nothing here is wired.</div>
+
+<!-- ============ SCREEN 1: DASHBOARD ============ -->
+<div class="screen">
+<p class="screen-title">1 · Dashboard — first tab, default landing</p>
+<div class="nav"><div class="on">Dashboard</div><div>Approvals</div><div>Labels</div><div>Report</div></div>
+<div style="height:12px"></div>
+
+<div class="card amb">
+  <div class="card-h"><span class="so">Waiting for approval</span><span class="pill amb">5</span><span class="grow"></span><span class="meta">only queues with something in them · tap a row → Approvals</span></div>
+  <div class="card-b" style="padding-top:6px">
+    <table>
+      <tr class="link"><td>Ship confirmations</td><td class="meta">Trailer 416460 · marked shipped 42 min ago</td><td class="n"><span class="pill amb">1 · over 30 min</span></td></tr>
+      <tr class="link"><td>Correct the IF</td><td class="meta">IF72290 YSN401 short 72 (2 pallets)</td><td class="n"><span class="pill">1</span></td></tr>
+      <tr class="link"><td>Trucks waiting for an IF fix</td><td class="meta">Trailer 105488</td><td class="n"><span class="pill">1</span></td></tr>
+      <tr class="link"><td>Flagged pallets</td><td class="meta">PLT131 on Truck 1 · 10/06 · never loaded</td><td class="n"><span class="pill amb">1</span></td></tr>
+      <tr class="link"><td>Receipts</td><td class="meta">Truck 1 · 10/06 · 29 of 29 in, 1 flagged</td><td class="n"><span class="pill">1</span></td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="tiles">
+  <div class="tile"><div class="l">Trucks shipped today</div><div class="v">2</div><div class="m">manager-confirmed · plan 8/day</div></div>
+  <div class="tile"><div class="l">Trucks per day · 7-day avg</div><div class="v">1.2</div><div class="m">move days Mon–Sat · all-time 1.2</div></div>
+  <div class="tile"><div class="l">Trucks shipped · total</div><div class="v">3</div><div class="m">since 10-01 · 1 received</div></div>
+  <div class="tile"><div class="l">In transit</div><div class="v">1 truck</div><div class="m">24 pallets · 0 missing</div></div>
+  <div class="tile"><div class="l">Finish date</div><div class="v" style="font-size:14px;color:var(--mute)">see Move Tracker</div><div class="m">truckloads to move live there</div></div>
+</div>
+
+<div class="card">
+  <div class="card-h"><span class="so">Active loads</span><span class="pill">5 trucks</span><span class="grow"></span><span class="meta">one row per IF, like the Move Tracker · not yet received · tap a row to open</span></div>
+  <div class="tools"><input type="search" placeholder="Search IF, TO, trailer, seal, Truck # or SKU…"><select><option>All statuses</option><option>Loading</option><option>Needs IF fix</option><option>Ready to ship</option><option>Waiting for manager</option><option>In transit</option><option>Unloading</option><option>Receipt pending</option></select><select><option>Sort: furthest along</option><option>Sort: newest step</option><option>Sort: oldest step (stuck first)</option><option>Sort: IF</option><option>Sort: trailer</option></select><span class="meta">5 of 5</span></div>
+  <div class="card-b" style="padding:0;overflow:auto">
+    <table>
+      <tr><th class="sortable">Fulfillment</th><th class="sortable">TO</th><th class="sortable">Truck</th><th>SKUs on truck</th><th class="n sortable">Pallets · pcs</th><th class="n">Received</th><th class="sort">Status</th><th class="sortable">Last step</th></tr>
+      <tr><td><b>IF72289</b></td><td>TO11715</td><td>Truck 1 · 10/06 · Trailer 211659 · seal 5250104</td><td>YSN401 <span class="meta">×1,044</span></td><td class="n">29 · 1,044</td><td class="n">1,044 <span style="color:var(--warn)">+1 flagged</span></td><td><span class="pill vio">Receipt pending</span></td><td class="meta">Miguel unloaded · 11:31</td></tr>
+      <tr><td><b>IF72220</b></td><td>TO11716</td><td>Truck 1 · 10/06 · Trailer 416460 · seal 5250103</td><td>YSN335-ALM <span class="meta">×1,080</span></td><td class="n">3 · 1,080</td><td class="n">—</td><td><span class="pill amb">Waiting for manager</span></td><td class="meta" style="color:var(--bad)">Miguel marked shipped · 42 m ago</td></tr>
+      <tr><td><b>IF72287</b></td><td>TO11715</td><td>Trailer 487491</td><td>YSN401 <span class="meta">×1,044</span></td><td class="n">29 · 1,044</td><td class="n">—</td><td><span class="pill grn">Ready to ship</span></td><td class="meta">Manager corrected IF · 8 m ago</td></tr>
+      <tr><td><b>IF72290</b></td><td>TO11715</td><td>Trailer 105488</td><td>YSN401 <span class="meta">×1,152</span></td><td class="n">30 · 1,080</td><td class="n">—</td><td><span class="pill amb">⚠ Needs IF fix</span></td><td class="meta">Miguel verified · 25 m ago</td></tr>
+      <tr><td><b>IF72288</b></td><td>TO11715</td><td>Trailer 537224</td><td>YSN401 <span class="meta">×1,152</span></td><td class="n">0 · 0</td><td class="n">—</td><td><span class="pill blue">Loading</span></td><td class="meta">Miguel started · 1 h 10 m ago</td></tr>
+    </table>
+  </div>
+  <div class="card-b meta" style="padding:8px 14px">Default sort is furthest along first (Receipt pending → Waiting for manager → Ready → Needs IF fix → Loading → In transit → Unloading); click a column header or use the Sort menu to change it. Search matches IF, TO, trailer, seal, Truck # and SKU; the status filter narrows to one stage. A truck with two IFs shows one row per IF sharing the Truck cell. Received trucks drop off at end of day; the Report tab keeps the full history.</div>
+</div>
+
+<div class="two">
+  <div class="card"><div class="card-h"><span class="so">Trucks shipped per day</span></div><div class="card-b meta">bar per move day · trucks confirmed shipped that day · plan line at 8 (chart as today, counting trucks not pallets)</div></div>
+  <div class="card"><div class="card-h"><span class="so">Exceptions</span></div><div class="card-b" style="padding-top:4px">
+    <table>
+      <tr><td>Missing pallets (in transit)</td><td class="n">0</td></tr>
+      <tr><td>Flagged, waiting on manager <span class="was">Never loaded</span></td><td class="n">1</td></tr>
+      <tr><td>Damaged</td><td class="n">0</td></tr>
+      <tr><td>Edited at dock</td><td class="n">0</td></tr>
+      <tr><td>Labeled, never loaded (stale)</td><td class="n">0</td></tr>
+      <tr><td>SKUs with stock but no config</td><td class="n">0</td></tr>
+    </table></div></div>
+</div>
+<div class="meta">Removed: "Recent trucks" (Active loads replaces it), the pallet tiles (total · remaining · needed per day · projected finish), and "Remaining by SKU". The Move Tracker owns truckloads-to-move and the finish date.</div>
+</div>
+
+<!-- ============ SCREEN 2: APPROVALS ============ -->
+<div class="screen">
+<p class="screen-title">2 · Approvals — flagged pallets: decide as soon as they appear, or later on the receipt card</p>
+<div class="nav"><div>Dashboard</div><div class="on">Approvals</div><div>Labels</div><div>Report</div></div>
+<div style="height:12px"></div>
+<div class="meta" style="margin-bottom:8px">Ship confirmations · Correct the IF · Trucks (as today, not shown) …</div>
+
+<h3>Flagged pallets</h3>
+<div class="card amb">
+  <div class="card-h"><span class="so">🟠 1 pallet scanned at Tippecanoe that was never loaded</span><span class="grow"></span><span class="meta">decide now, or later on the receipt card</span></div>
+  <div class="card-b" style="padding-top:4px">
+    <div class="row"><div><b>PLT131</b> · YSN401 · custom · 36 pcs <span class="pill vio">Truck 1 · 10/06 · Trailer 211659</span><div class="note">scanned by Miguel · 11:24 am · truck still unloading</div></div><span class="grow"></span><button class="btn ok">Accept onto this truck</button><button class="btn ghost">Reject</button></div>
+    <div class="note" style="margin-top:6px">Same Accept / Reject as on the receipt card, same rules. Once decided it leaves this card; the receipt card then shows the outcome.</div>
+  </div>
+</div>
+
+<h3>Receipts</h3>
+<div class="card">
+  <div class="card-h"><span class="so">📥 Truck 1 · 10/06 · receipt</span><span class="pill vio">Trailer 211659 · seal 5250104</span><span class="grow"></span><span class="meta">unloaded by Miguel · 11:31 am</span></div>
+  <div class="card-b" style="padding-top:6px">
+    <table>
+      <tr><th>IF</th><th>SKU</th><th class="n">Received / shipped</th></tr>
+      <tr><td>IF72289</td><td>YSN401</td><td class="n">1,044 / 1,044</td></tr>
+    </table>
+    <div class="sect">Other items · 1 of 1 in</div>
+    <div class="row"><span>Office chairs × 4</span><span class="pill grn">☑ In</span></div>
+
+    <div class="sect">Flagged pallets · 1 to decide <span class="meta" style="text-transform:none;font-weight:400">(undecided ones repeat here)</span></div>
+    <div class="row">
+      <div><b>PLT131</b> · YSN401 · 36 pcs<div class="note">never loaded on any truck · scanned by Miguel 11:24 am</div></div>
+      <span class="grow"></span>
+      <button class="btn ok">Accept onto this truck</button>
+      <button class="btn ghost">Reject</button>
+    </div>
+    <div class="note" style="margin:6px 0 0">Accept adds the pallet's pieces to this truck's IF for that SKU (same write as Correct the IF). If no IF on this truck carries the SKU, it needs an open TO and the office creates the IF (qty mode) or the portal does (on mode).</div>
+
+    <div class="sect">What each outcome looks like (examples)</div>
+    <div class="row"><b>PLT131</b> · YSN401 · 36 <span class="grow"></span><span class="res ok">✅ Accepted · IF72289 1,044 → 1,080</span></div>
+    <div class="row"><b>PLT137</b> · YSN301 · 72 <span class="grow"></span><span class="res amb">⏳ Accepted · office creates IF for 72 on TO11710 · receipt waits</span></div>
+    <div class="row"><b>PLT138</b> · YSN201 · 48 <span class="grow"></span><span class="res bad">⛔ Can't accept · no open TO covers YSN201 · Reject or office adds a TO line</span></div>
+    <div class="row"><b>PLT104</b> · YSN401 · 36 <span class="grow"></span><span class="res">↩ Rejected · "belongs to Trailer 537224, set aside" · back to labeled</span></div>
+
+    <div class="acts" style="margin-top:14px">
+      <button class="btn ok big" disabled>Approve receipt — decide 1 flagged pallet first</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============ SCREEN 3: REPORT ============ -->
+<div class="screen">
+<p class="screen-title">3 · Report — day table + NetSuite checks as today, then full truck history</p>
+<div class="nav"><div>Dashboard</div><div>Approvals</div><div>Labels</div><div class="on">Report</div></div>
+<div style="height:12px"></div>
+<div class="meta" style="margin-bottom:8px">Write mode <b>qty</b> · NetSuite data from 2026-10-05 · (day table and ⏳ checks unchanged, not shown)</div>
+<h3>Truck history</h3>
+<div class="card"><div class="card-b" style="padding:0">
+<table>
+  <tr><th>Day</th><th>Truck</th><th>Trailer · seal</th><th>IFs</th><th class="n">Pallets · pcs</th><th>Status</th><th>Started</th><th>Shipped</th><th>Confirmed</th><th>Received</th><th>Corrections</th></tr>
+  <tr><td>10/06</td><td>—</td><td>537224</td><td>IF72288</td><td class="n">0 · 0</td><td><span class="pill blue">Loading</span></td><td class="meta">Miguel 11:05</td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>10/06</td><td>—</td><td>487491</td><td>IF72287</td><td class="n">29 · 1,044</td><td><span class="pill grn">Ready</span></td><td class="meta">Miguel 10:48</td><td></td><td></td><td></td><td class="meta">⬇ IF72287 1,152→1,044 · Manager</td></tr>
+  <tr><td>10/06</td><td>Truck 1</td><td>211659 · 5250104</td><td>IF72289</td><td class="n">29 · 1,044</td><td><span class="pill vio">Receipt pending</span></td><td class="meta">Miguel 09:50</td><td class="meta">Miguel 10:40</td><td class="meta">Manager 10:44</td><td class="meta">Miguel 11:31</td><td class="meta">+ PLT131 accepted</td></tr>
+  <tr><td>10/06</td><td>Truck 1</td><td>416460 · 5250103</td><td>IF72220</td><td class="n">3 · 1,080</td><td><span class="pill teal">Received</span></td><td class="meta">Miguel 10:11</td><td class="meta">Miguel 10:18</td><td class="meta">Manager 10:19</td><td class="meta">Miguel 10:21</td><td></td></tr>
+  <tr><td>10/05</td><td>Truck 1</td><td>537224 · 5250101</td><td>IF72287</td><td class="n">24 · 1,152</td><td><span class="pill">Dropped</span></td><td class="meta">Miguel 17:32</td><td class="meta">Miguel 17:33</td><td class="meta">Manager 17:33</td><td></td><td class="meta">store reset 10/06</td></tr>
+</table>
+</div></div>
+</div>
+
+<!-- ============ SCREEN 4: LABELS ============ -->
+<div class="screen">
+<p class="screen-title">4 · Labels — Print a SKU moves to the top</p>
+<div class="nav"><div>Dashboard</div><div>Approvals</div><div class="on">Labels</div><div>Report</div></div>
+<div style="height:12px"></div>
+<div class="lblsec"><span class="ord">1</span><b>Print a SKU</b><span class="meta">SKU · pallet config / pcs · how many · Print labels</span><span class="grow"></span><span class="was">was 2nd</span></div>
+<div class="lblsec"><span class="ord">2</span><b>Label requests</b><span class="meta">radio queue · Print / Cancel · Add a request</span><span class="grow"></span><span class="was">was 1st</span></div>
+<div class="lblsec"><span class="ord">3</span><b>Print plan</b><span class="meta">today's need by SKU · Print all</span></div>
+<div class="lblsec"><span class="ord">4</span><b>Reprint</b><span class="meta">scan or type a label · reprint / edit / void</span></div>
+<div class="lblsec"><span class="ord">5</span><b>SKU configs</b><span class="meta">CSV import · list</span></div>
+</div>
+
+</div>
+</body>
+</html>
