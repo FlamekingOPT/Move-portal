@@ -170,7 +170,7 @@ test('manager rework: 4 tabs, no toggle, merged Labels, approvals hierarchy', ()
 
 test('manager rework: default Approvals, late badge, otherDiffs, Drop calls drop_if, CSS hierarchy, note modal kept on error', () => {
     const src = ui._clientMain.toString();
-    ["mgr: 'approve'", 'LATE_MIN = 30', "waiting ' + x.ageMin + ' min", 'S.lateShips', 'n.otherDiffs', "api('truck_drop_if'", 'class="btn-correct" data-act="apcorrect"',
+    ["mgr: 'dash'", 'LATE_MIN = 30', "waiting ' + x.ageMin + ' min", 'S.lateShips', 'n.otherDiffs', "api('truck_drop_if'", 'class="btn-correct" data-act="apcorrect"',
         'class="dbtn btn-addif" data-act="apaddopen"', 'labelQueue(', 'labelSku(', 'labelPlan(', 'labelReprint(', 'labelConfigs(', "S.poll = setInterval(loadQueue, 15000)",
         "String(r.view.truck.id) !== String(S.truckId)"].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     ['SCREENS.queue', 'SCREENS.plan', 'SCREENS.sku', 'SCREENS.configs', 'SCREENS.reprint'].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
@@ -202,4 +202,23 @@ test('final fixes: a stalled correction on a truck with no fix card gets a truck
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     const i = src.indexOf('Free the stuck correction'), b = src.lastIndexOf('<button', i);
     assert.ok(/class="btn-correct" data-act="apcorrect"/.test(src.slice(b, i)) && src.slice(b, i).indexOf('data-key') === -1, 'free button: btn-correct apcorrect with no key');
+});
+
+test('2026-10-06 pm: Dashboard first and default; Labels start with Print a SKU', () => {
+    const src = ui._clientMain.toString();
+    assert.ok(src.indexOf("mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]") !== -1, 'tab order');
+    assert.ok(src.indexOf("mgr: 'dash'") !== -1, 'default tab');
+    assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
+});
+
+test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject; Approve waits; anchors for the dashboard links', () => {
+    const src = ui._clientMain.toString();
+    ['Flagged pallets', 'data-act="apaccept"', 'data-act="apreject"', "api('pallet_accept'", "api('pallet_reject'", 'Accept onto this truck', 'x.blockReason', 'x.canApprove', 'r.flagged', 'x.pending', 'x.decided',
+        'id="ap_ship"', 'id="ap_fix"', 'id="ap_trucks"', 'id="ap_flag"', 'id="ap_retry"', 'id="ap_rec"', 'ACT.goapprove =', 'decide now, or later on the receipt card', 'waiting for the manager', 'v.decided']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    assert.equal(src.indexOf('The office will sort these out.'), -1);
+    ['apaccept', 'apreject'].forEach(n => {
+        const i = src.indexOf('ACT.' + n + ' =');
+        assert.ok(i !== -1 && src.slice(i, i + 600).indexOf(n === 'apaccept' ? 'confirm(' : 'prompt(') !== -1, 'no dialog in ' + n);
+    });
 });

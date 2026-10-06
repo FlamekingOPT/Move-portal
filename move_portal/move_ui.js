@@ -42,7 +42,7 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 [data-act="opentruck"],[data-act="openunload"]{cursor:pointer}
 .muted{color:var(--muted);font-size:13px}.warn{color:var(--red)!important}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle}
-.p-blue{background:var(--blue-soft);color:var(--blue)}.p-green{background:var(--green-soft);color:var(--green)}.p-amber{background:var(--amber-soft);color:var(--amber)}.p-red{background:var(--red-soft);color:var(--red)}.p-gray{background:#f1f5f9;color:#475569}
+.p-blue{background:var(--blue-soft);color:var(--blue)}.p-green{background:var(--green-soft);color:var(--green)}.p-amber{background:var(--amber-soft);color:var(--amber)}.p-red{background:var(--red-soft);color:var(--red)}.p-gray{background:#f1f5f9;color:#475569}.pill.p-violet{background:#ede9fe;color:#5b21b6}
 .scanbox{display:flex;gap:8px;align-items:center;background:#fff;border:2px dashed #94a3b8;border-radius:12px;padding:10px 12px;margin:10px 0}
 .scanbox span{font-size:22px}.scanbox input{border:0;flex:1;font-size:18px;outline:none;min-width:0}.scanbox button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px}
 .scanbox.takeoff{border:3px solid var(--amber);background:var(--amber-soft)}
@@ -86,7 +86,7 @@ h3{font-size:15px;margin:16px 0 8px}
         'use strict';
         const isMgr = B.mode === 'manager';
         const S = { side: get('mv_side') === 'in' ? 'in' : 'out', tab: null, who: get('mv_who') || '', poll: null,
-            ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
+            ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [], scrollTo: '' };
         if (isMgr) { S.who = B.me; S.side = 'mgr'; }   // the manager page is a NetSuite login: that user is the actor, no "I am" pick and no side toggle
 
         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -146,13 +146,13 @@ h3{font-size:15px;margin:16px 0 8px}
         }
 
         // ── shell ────────────────────────────────────────────────────────
-        // Floor: Outbound / Inbound. Manager (spec 2026-10-06 §4): one tab bar, default Approvals.
+        // Floor: Outbound / Inbound. Manager (spec 2026-10-06 §4): one tab bar, default Dashboard.
         const TABS = {
             out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']],
             in: [['unload', 'Unload']],
-            mgr: [['labels', 'Labels'], ['approve', 'Approvals'], ['dash', 'Dashboard'], ['report', 'Report']]
+            mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]
         };
-        const DEF_TAB = { out: 'trucks', in: 'unload', mgr: 'approve' };
+        const DEF_TAB = { out: 'trucks', in: 'unload', mgr: 'dash' };
 
         function shell() {
             const whoCtl = isMgr ? ''
@@ -828,7 +828,7 @@ h3{font-size:15px;margin:16px 0 8px}
         // ── Manager: Labels (requests · print a SKU · print plan · reprint · SKU configs) ──
         SCREENS.labels = () => {
             const sec = (id, title) => '<div class="card lsec"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>';
-            main(sec('lb_queue', 'Label requests') + sec('lb_sku', 'Print a SKU') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
+            main(sec('lb_sku', 'Print a SKU') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
             labelQueue($('lb_queue'));
             labelSku($('lb_sku'));
             labelPlan($('lb_plan'));
@@ -1024,7 +1024,8 @@ h3{font-size:15px;margin:16px 0 8px}
             $('usub').textContent = (t.depart ? 'Seal ' + t.depart.seal + ' · Trailer ' + t.depart.trailer + ' · ' : '') + v.counts.in + ' of ' + v.counts.of + ' pallets in';
             $('uifs').innerHTML = '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' + v.perIf.map(f => '<tr class="' + (f.short ? '' : 'okrow') + '"><td>' + esc(f.ifNum) +
                 '</td><td><b>' + num(f.received) + '</b> / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
-                (v.flagged.length ? flash('amber', '🟠 ' + v.flagged.length + ' never-loaded pallet(s) flagged', esc(v.flagged.map(p => p.code).join(', ')), 'The office will sort these out.') : '');
+                (v.flagged.length ? flash('amber', '🟠 ' + v.flagged.length + ' never-loaded pallet(s) · waiting for the manager', esc(v.flagged.map(p => p.code).join(', ')), 'A manager accepts or rejects them in Approvals.') : '') +
+                ((v.decided || []).length ? '<div class="diffs">' + v.decided.map(d => '<div>' + esc(d.text) + ' · ' + esc(d.by) + '</div>').join('') + '</div>' : '');
             $('uexp').innerHTML = '<h4>Still expected</h4>' + (v.expected.map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div></div>').join('') || '<div class="muted">All in ✅</div>');
             const oth = v.otherItems || [], ob = $('uoth');
             ob.style.display = oth.length ? '' : 'none';
@@ -1041,7 +1042,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'dup': return flash('amber', '🟡 Already scanned in', line, 'No change.');
                 case 'dup_other': return flash('amber', '🟡 Already received on ' + esc(r.otherLabel), line, '');
                 case 'other_truck': return flash('amber', '🟡 Belongs to ' + esc(r.otherLabel), line, '', '<button data-act="uother" data-id="' + esc(p.id) + '">Receive it there</button><button data-act="clearres">Set aside</button>');
-                case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the office. Set it aside.');
+                case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the manager. Set it aside.');
                 case 'locked': return r.reason === 'ship_pending' ? flash('red', '❌ ' + esc(r.otherLabel) + ' is waiting for a manager to confirm shipping', line, 'Ask a manager to confirm it in Approvals, then scan again.')
                     : flash('red', '❌ Its truck is still departing', line, 'Wait a minute and scan again.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Set aside and call the supervisor.');
@@ -1087,6 +1088,17 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="muted">Marked shipped by ' + esc(x.markedBy || '?') + ' at ' + esc(x.markedAt) + (x.ageMin != null ? ' · ' + x.ageMin + ' min ago' : '') + '</div>' +
                 '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Confirm shipped</button>' +
                 '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button></div></div>';
+        }
+        // One row per undecided never-loaded pallet (spec 2026-10-06 pm §2): Accept onto the truck it was scanned on, or Reject with a note.
+        function flagRow(f) {
+            return '<div class="drow"><span><b>' + esc(f.code) + '</b> · ' + esc(f.sku) + ' · ' + num(f.pcs) + ' pcs <span class="pill p-violet">' + esc(f.truckLabel) + '</span>' +
+                '<div class="muted">never loaded on any truck · scanned by ' + esc(f.by || '?') + (f.at ? ' · ' + esc(f.at) : '') + (f.truckStatus === 'receiving' || f.truckStatus === 'departed' ? ' · truck still unloading' : '') + '</div></span>' +
+                '<span class="row2" style="margin:0"><button class="dbtn go" data-act="apaccept" data-id="' + esc(f.truckId) + '" data-pid="' + esc(f.palletId) + '" data-label="' + esc(f.code) + '" data-truck="' + esc(f.truckLabel) + '">Accept onto this truck</button>' +
+                '<button class="dbtn gh" data-act="apreject" data-id="' + esc(f.truckId) + '" data-pid="' + esc(f.palletId) + '" data-label="' + esc(f.code) + '">Reject</button></span></div>';
+        }
+        function flaggedCard(list) {
+            return '<div class="card amberc"><h4>🟠 ' + list.length + ' pallet' + (list.length === 1 ? '' : 's') + ' scanned at ' + esc(B.toName) + ' that ' + (list.length === 1 ? 'was' : 'were') + ' never loaded</h4>' +
+                '<div class="muted">decide now, or later on the receipt card</div><div class="diffs">' + list.map(flagRow).join('') + '</div></div>';
         }
         // One standalone card per IF diff: the instruction in large type and one big Correct the IF button.
         function fixCard(f, wmode) {
@@ -1138,9 +1150,10 @@ h3{font-size:15px;margin:16px 0 8px}
         function paintApprove(msg) {
             const r = S.appr;
             setLate((r.shipPending || []).filter(x => x.ageMin != null && x.ageMin >= LATE_MIN).length);
-            const ship = (r.shipPending || []).length ? '<h3>Ship confirmations</h3>' + r.shipPending.map(shipConfirmCard).join('') : '';
-            const fix = (r.fixes || []).length ? '<h3>Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
-            const trk = (r.trucks || []).length ? '<h3>Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))).join('') : '';
+            const ship = (r.shipPending || []).length ? '<h3 id="ap_ship">Ship confirmations</h3>' + r.shipPending.map(shipConfirmCard).join('') : '';
+            const fix = (r.fixes || []).length ? '<h3 id="ap_fix">Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
+            const trk = (r.trucks || []).length ? '<h3 id="ap_trucks">Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))).join('') : '';
+            const flg = (r.flagged || []).length ? '<h3 id="ap_flag">Flagged pallets</h3>' + flaggedCard(r.flagged) : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
                 (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');
@@ -1153,9 +1166,16 @@ h3{font-size:15px;margin:16px 0 8px}
                     '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' +
                     x.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
                     (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
-                    '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
+                    ((x.flagged || []).length || (x.pending || []).length || (x.decided || []).length
+                        ? '<div class="muted" style="margin-top:8px"><b>Flagged pallets' + ((x.flagged || []).length ? ' · ' + x.flagged.length + ' to decide' : '') + '</b></div>' +
+                          '<div class="diffs">' + (x.flagged || []).map(flagRow).join('') + (x.pending || []).map(p => '<div><b>' + esc(p.code) + '</b> · ' + esc(p.text) + '</div>').join('') +
+                          (x.decided || []).map(d => '<div class="muted">' + esc(d.text) + ' · ' + esc(d.by) + '</div>').join('') + '</div>' : '') +
+                    (x.canApprove === false
+                        ? '<button class="btn go" disabled>Approve receipt — ' + esc((x.blockReason || '').toLowerCase()) + '</button>'
+                        : '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button>') + '</div>';
             }).join('');
-            main((msg || '') + (ship + fix + trk + (ret ? '<h3>Stalled departures</h3>' + ret : '') + (rec ? '<h3>Receipts</h3>' + rec : '') || '<div class="muted">Nothing waiting for approval</div>'));
+            main((msg || '') + (ship + fix + trk + flg + (ret ? '<h3 id="ap_retry">Stalled departures</h3>' + ret : '') + (rec ? '<h3 id="ap_rec">Receipts</h3>' + rec : '') || '<div class="muted">Nothing waiting for approval</div>'));
+            if (S.scrollTo) { const a = $(S.scrollTo); S.scrollTo = ''; if (a) a.scrollIntoView({ block: 'start' }); }
         }
         ACT.apaddopen = el => { S.addOpen = S.addOpen || {}; S.addOpen[el.dataset.id] = !S.addOpen[el.dataset.id]; if (S.appr) paintApprove(''); };
         ACT.apconfirm = async el => {
@@ -1265,6 +1285,29 @@ h3{font-size:15px;margin:16px 0 8px}
             tone(r.ok ? 'ok' : 'bad');
             const w = r.ok ? (r.written || []) : [], m = r.ok ? (r.missing || []) : [];
             SCREENS.approve(r.ok ? flash('green', '✅ Receipt approved', w.length ? w.length + ' written to NetSuite' : 'Plan saved (no NetSuite write in this mode)', m.length ? m.length + ' pallets stay in transit' : '') : errBox(r.error));
+        };
+
+        ACT.apaccept = async el => {
+            if (!confirm('Accept ' + (el.dataset.label || 'this pallet') + ' onto ' + (el.dataset.truck || 'this truck') + '? Its IF is raised (or an add-on IF is planned) as the write mode allows, and it joins the receipt.')) return;
+            busy(el, true);
+            const r = await api('pallet_accept', { truckId: el.dataset.id, palletId: el.dataset.pid });
+            tone(r.ok && r.outcome !== 'refused' ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? flash(r.outcome === 'accepted' ? 'green' : r.outcome === 'pending' ? 'amber' : 'red', esc(r.text)) : errBox(r.error));
+        };
+        ACT.apreject = async el => {
+            const note = prompt('Reject ' + (el.dataset.label || 'this pallet') + '. Note for the floor (required):');
+            if (note == null) return;
+            if (!note.trim()) { tone('bad'); SCREENS.approve(errBox('Enter a note: why is this pallet rejected?')); return; }
+            busy(el, true);
+            const r = await api('pallet_reject', { truckId: el.dataset.id, palletId: el.dataset.pid, note: note.trim() });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? flash('amber', esc(r.text)) : errBox(r.error));
+        };
+        // From the Dashboard's Waiting card: open Approvals scrolled to that section.
+        ACT.goapprove = el => {
+            S.tab = 'approve';
+            S.scrollTo = el.dataset.v || '';
+            renderNav();
         };
 
         // ── Manager: shadow report (v3) ──────────────────────────────────
