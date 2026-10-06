@@ -1855,3 +1855,15 @@ test('truck_planned: shippedToday lists today\'s departed trucks; trailers lists
     ctx.data.updateLoad(d, { data: { depart: Object.assign({}, d.data.depart, { day: '2000-01-01' }) } });
     assert.deepEqual(ctx.run('truck_planned', {}, false).shippedToday, []);
 });
+
+test('approvals: a needs_fix truck with no correctable diff still says why (otherDiffs)', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Jod', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001', '9002'], trailer: tr() }).view.truck;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }));
+    const v = ctx.run('truck_verify', { truckId: t.id }, false);
+    const a = ctx.run('approvals');
+    assert.deepEqual([a.fixes.length, a.trucks.length], [0, 1]);
+    assert.deepEqual(a.trucks[0].otherDiffs, v.diffs.map(d => d.text));
+    assert.ok(a.trucks[0].otherDiffs[0].length > 0);
+});

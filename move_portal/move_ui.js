@@ -71,6 +71,10 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
 .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}.kpi small{color:var(--muted);font-size:12px}.kpi b{display:block;font-size:26px;margin-top:2px}.kpi span{font-size:12px;color:var(--muted)}
 .kpi.good{border-color:#86efac;background:#f0fdf4}.kpi.bad{border-color:#fca5a5;background:#fef2f2}
 textarea.inp{font-family:monospace;font-size:13px}textarea.inp.note{font-family:inherit;font-size:16px}
+.btn-correct{display:block;width:100%;border:0;border-radius:12px;padding:18px;margin:12px 0 8px;font-size:19px;font-weight:800;background:var(--blue);color:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(37,99,235,.35)}
+.btn-correct:disabled{opacity:.45}.dbtn.btn-addif{background:#fff;border:1px solid var(--blue);color:var(--blue);font-weight:600;font-size:13px;padding:8px 12px}
+.fixc{border:2px solid var(--amber)}.fixtxt{font-size:18px;font-weight:700;margin:6px 0;overflow-wrap:anywhere}.card.quiet{background:#f8fafc}.card.quiet h4{color:#475569}
+.linkbtn{color:var(--blue);text-decoration:underline;cursor:pointer}.lsec>h3{margin-top:0}.modal .tbl{margin:8px 0}
 .modal{position:fixed;inset:0;z-index:30;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
 .modal>div{background:#fff;border-radius:14px;padding:16px;width:100%;max-width:480px;max-height:90vh;overflow:auto}.modal h4{margin:0 0 8px;font-size:18px}
 .oform{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.oform .inp{flex:1 1 160px;min-width:0;margin:0}.oform .num{flex:0 0 76px}
@@ -83,7 +87,7 @@ h3{font-size:15px;margin:16px 0 8px}
         const isMgr = B.mode === 'manager';
         const S = { side: get('mv_side') === 'in' ? 'in' : 'out', tab: null, who: get('mv_who') || '', poll: null,
             ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
-        if (isMgr) S.who = B.me;   // the manager page is a NetSuite login: that user is the actor, no "I am" pick
+        if (isMgr) { S.who = B.me; S.side = 'mgr'; }   // the manager page is a NetSuite login: that user is the actor, no "I am" pick and no side toggle
 
         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function put(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
@@ -142,11 +146,13 @@ h3{font-size:15px;margin:16px 0 8px}
         }
 
         // ── shell ────────────────────────────────────────────────────────
+        // Floor: Outbound / Inbound. Manager (spec 2026-10-06 §4): one tab bar, default Approvals.
         const TABS = {
-            out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']].concat(isMgr ? [['approve', 'Approvals'], ['queue', 'Print queue'],
-                ['plan', 'Print plan'], ['sku', 'Print a SKU'], ['configs', 'SKU configs'], ['reprint', 'Reprint'], ['report', 'Report'], ['dash', 'Dashboard']] : []),
-            in: [['unload', 'Unload']].concat(isMgr ? [['approve', 'Approvals'], ['report', 'Report'], ['dash', 'Dashboard']] : [])
+            out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']],
+            in: [['unload', 'Unload']],
+            mgr: [['labels', 'Labels'], ['approve', 'Approvals'], ['dash', 'Dashboard'], ['report', 'Report']]
         };
+        const DEF_TAB = { out: 'trucks', in: 'unload', mgr: 'approve' };
 
         function shell() {
             const whoCtl = isMgr ? ''
@@ -154,9 +160,9 @@ h3{font-size:15px;margin:16px 0 8px}
                     ? '<select id="who"><option value="">— pick —</option>' + B.roster.map(n => '<option' + (n === S.who ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
                     : '<input id="who" value="' + esc(S.who) + '" placeholder="your name">';
             document.body.innerHTML = '<div class="top"><div class="ttl"><b>Move Portal</b><span>' + esc(B.me) + (isMgr ? ' · manager' : '') + '</span></div>' +
-                (isMgr ? '' : '<div class="who">I am ' + whoCtl + '</div>') +
+                (isMgr ? '</div>' : '<div class="who">I am ' + whoCtl + '</div>' +
                 '<div class="toggle"><button data-act="side" data-v="out" class="' + (S.side === 'out' ? 'on out' : '') + '">📤 Outbound · ' + esc(B.fromName) + '</button>' +
-                '<button data-act="side" data-v="in" class="' + (S.side === 'in' ? 'on in' : '') + '">📥 Inbound · ' + esc(B.toName) + '</button></div></div>' +
+                '<button data-act="side" data-v="in" class="' + (S.side === 'in' ? 'on in' : '') + '">📥 Inbound · ' + esc(B.toName) + '</button></div></div>') +
                 '<div class="subnav" id="subnav"></div><main id="main"></main>';
             const w = $('who');
             if (w) w.onchange = w.oninput = () => { S.who = w.value.trim(); put('mv_who', S.who); };
@@ -164,10 +170,16 @@ h3{font-size:15px;margin:16px 0 8px}
             renderNav();
         }
 
+        function paintNav() {
+            const nav = $('subnav');
+            if (nav) nav.innerHTML = TABS[S.side].map(t => '<div data-act="tab" data-v="' + t[0] + '" class="' + (t[0] === S.tab ? 'on' : '') + '">' + esc(t[1]) +
+                (t[0] === 'approve' && S.lateShips ? ' <span class="pill p-amber" title="Ship confirmations waiting 30+ min">' + S.lateShips + '</span>' : '') + '</div>').join('');
+        }
         function renderNav() {
             const tabs = TABS[S.side];
-            if (!tabs.some(t => t[0] === S.tab)) S.tab = tabs[0][0];
-            $('subnav').innerHTML = tabs.map(t => '<div data-act="tab" data-v="' + t[0] + '" class="' + (t[0] === S.tab ? 'on' : '') + '">' + esc(t[1]) + '</div>').join('');
+            if (!tabs.some(t => t[0] === S.tab)) S.tab = DEF_TAB[S.side];
+            paintNav();
+            closeNote();
             clearInterval(S.poll);
             S.poll = null;
             SCREENS[S.tab]();
@@ -266,18 +278,26 @@ h3{font-size:15px;margin:16px 0 8px}
         }
 
         // ── shared line editor (request, print a SKU, relabel) ───────────
+        // Several editors can share a page (manager Labels): each lives in a box with data-edname; a handler
+        // first selects the editor its element is in (edOf), which sets S.ed / S.edRender to that instance.
         function newLine() { return { item: '', sku: '', desc: '', onHand: null, cfgs: [], cfg: '', pcs: '' }; }
         function newEd() { return { lines: [newLine()], count: 1, note: '' }; }
+        S.eds = {};
+        function edOf(el) {
+            const b = el && el.closest ? el.closest('[data-edname]') : null, I = b && S.eds[b.dataset.edname];
+            if (I) { S.cur = I; S.ed = I.ed; S.edRender = I.render; }
+            return I;
+        }
+        function resetEd() { const I = S.cur; I.ed = newEd(); S.ed = I.ed; I.render(); }
         function editedNote(l) {
             const c = l.cfgs.find(x => x.code === l.cfg);
             return c && Number(l.pcs) !== c.pcs ? '<div class="muted warn">⚠ Differs from Config ' + esc(c.code) + ' (' + c.pcs + '). The label will show EDITED.</div>' : '';
         }
-        function edHtml(o) {
-            const ed = S.ed;
+        function edHtml(o, ed) {
             return ed.lines.map((l, i) => '<div class="card">' +
                 '<label class="f">SKU' + (ed.lines.length > 1 ? ' ' + (i + 1) : '') + ' (type or scan the product barcode)</label>' +
                 '<input class="inp" data-sku="' + i + '" value="' + esc(l.sku) + '" placeholder="e.g. YSN201" autocomplete="off">' +
-                '<div id="skures' + i + '"></div>' +
+                '<div data-skures="' + i + '"></div>' +
                 (l.item ? '<div class="muted">' + esc(l.desc) + (l.onHand != null ? ' · ' + num(l.onHand) + ' on hand at ' + esc(B.fromName) : '') + '</div>' +
                     '<label class="f">Pallet config</label><div class="chips">' +
                     l.cfgs.map(c => '<div class="chip' + (l.cfg === c.code ? ' on' : '') + '" data-act="cfg" data-i="' + i + '" data-v="' + esc(c.code) + '">Config ' + esc(c.code) +
@@ -289,53 +309,63 @@ h3{font-size:15px;margin:16px 0 8px}
                 (ed.lines.length > 1 ? '<button class="btn ghost sm" data-act="rmline" data-i="' + i + '">Remove this SKU</button>' : '') + '</div>').join('') +
                 '<button class="btn ghost sm" data-act="addline">+ Mixed pallet (add another SKU)</button>' +
                 (o.count ? '<label class="f">How many labels</label><div class="stepper"><button data-act="cnt" data-v="-1">−</button>' +
-                    '<input class="inp" id="edcount" inputmode="numeric" value="' + esc(ed.count) + '"><button data-act="cnt" data-v="1">+</button></div>' : '') +
-                (o.note ? '<label class="f">Note for the runner (optional)</label><input class="inp" id="ednote" value="' + esc(ed.note) + '" placeholder="e.g. aisle 12, top rack">' : '');
+                    '<input class="inp" data-edcount="1" inputmode="numeric" value="' + esc(ed.count) + '"><button data-act="cnt" data-v="1">+</button></div>' : '') +
+                (o.note ? '<label class="f">Note for the runner (optional)</label><input class="inp" data-ednote="1" value="' + esc(ed.note) + '" placeholder="e.g. aisle 12, top rack">' : '');
         }
-        function mountEd(o, extraHtml) {
-            S.edRender = () => {
-                $('edbox').innerHTML = edHtml(o) + (extraHtml || '');
-                document.querySelectorAll('[data-sku]').forEach(inp => {
+        // Mounts the editor S.ed into box (name = its key); extraHtml goes inside the box (its buttons find this editor).
+        function mountEd(o, extraHtml, name, box) {
+            name = name || 'main';
+            box = box || $('edbox');
+            box.dataset.edname = name;
+            const I = { ed: S.ed, box: box, items: [] };
+            I.render = () => {
+                const ed = I.ed;
+                box.innerHTML = edHtml(o, ed) + (extraHtml || '');
+                box.querySelectorAll('[data-sku]').forEach(inp => {
                     let t;
-                    inp.oninput = () => { clearTimeout(t); t = setTimeout(() => skuSearch(+inp.dataset.sku, inp.value, false), 300); };
-                    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); skuSearch(+inp.dataset.sku, inp.value, true); } };
+                    inp.oninput = () => { clearTimeout(t); t = setTimeout(() => skuSearch(I, +inp.dataset.sku, inp.value, false), 300); };
+                    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); skuSearch(I, +inp.dataset.sku, inp.value, true); } };
                 });
-                document.querySelectorAll('[data-pcs]').forEach(inp => {
-                    inp.oninput = () => { S.ed.lines[+inp.dataset.pcs].pcs = inp.value; };
-                    inp.onchange = () => S.edRender();
+                box.querySelectorAll('[data-pcs]').forEach(inp => {
+                    inp.oninput = () => { ed.lines[+inp.dataset.pcs].pcs = inp.value; };
+                    inp.onchange = () => I.render();
                 });
-                const c = $('edcount'); if (c) c.oninput = () => { S.ed.count = c.value; };
-                const n = $('ednote'); if (n) n.oninput = () => { S.ed.note = n.value; };
+                const c = box.querySelector('[data-edcount]'); if (c) c.oninput = () => { ed.count = c.value; };
+                const n = box.querySelector('[data-ednote]'); if (n) n.oninput = () => { ed.note = n.value; };
             };
-            S.edRender();
+            S.eds[name] = I;
+            S.cur = I;
+            S.edRender = I.render;
+            I.render();
+            return I;
         }
-        async function skuSearch(i, q, exact) {
+        async function skuSearch(I, i, q, exact) {
             q = String(q || '').trim();
-            const box = $('skures' + i);
+            const box = I.box.querySelector('[data-skures="' + i + '"]');
             if (!box) return;
             if (!q) { box.innerHTML = ''; return; }
             const r = await api('item_lookup', { q: q });
             if (!r.ok) { box.innerHTML = errBox(r.error); return; }
             const hit = r.items.find(x => x.sku.toUpperCase() === q.toUpperCase() || x.upc === q);
-            if (exact && (hit || r.items.length === 1)) return pickItem(i, hit || r.items[0]);
-            S.items = r.items;
+            if (exact && (hit || r.items.length === 1)) return pickItem(I, i, hit || r.items[0]);
+            I.items = r.items;
             box.innerHTML = r.items.length ? '<div class="results">' + r.items.map((x, k) => '<div data-act="pick" data-i="' + i + '" data-k="' + k + '"><b>' + esc(x.sku) +
                 '</b> <span class="muted">' + esc(x.desc) + '</span></div>').join('') + '</div>' : '<div class="muted">No match</div>';
         }
-        function pickItem(i, x) {
-            const l = S.ed.lines[i];
+        function pickItem(I, i, x) {
+            const l = I.ed.lines[i];
             Object.assign(l, { item: x.item, sku: x.sku, desc: x.desc, onHand: x.onHand, cfgs: x.cfgs || [] });
             const d = l.cfgs.find(c => c.isDefault) || l.cfgs[0];
             l.cfg = d ? d.code : '';
             l.pcs = d ? d.pcs : '';
-            S.edRender();
+            I.render();
         }
-        ACT.pick = el => pickItem(+el.dataset.i, S.items[+el.dataset.k]);
-        ACT.cfg = el => { const l = S.ed.lines[+el.dataset.i]; l.cfg = el.dataset.v; const c = l.cfgs.find(x => x.code === l.cfg); if (c) l.pcs = c.pcs; S.edRender(); };
-        ACT.pcs = el => { const l = S.ed.lines[+el.dataset.i]; l.pcs = Math.max(1, (Number(l.pcs) || 0) + Number(el.dataset.v)); S.edRender(); };
-        ACT.cnt = el => { S.ed.count = Math.max(1, (Number(S.ed.count) || 0) + Number(el.dataset.v)); S.edRender(); };
-        ACT.addline = () => { if (S.ed.lines.length >= 5) return alert('A mixed pallet can have at most 5 SKUs'); S.ed.lines.push(newLine()); S.edRender(); };
-        ACT.rmline = el => { S.ed.lines.splice(+el.dataset.i, 1); S.edRender(); };
+        ACT.pick = el => { const I = edOf(el); if (I) pickItem(I, +el.dataset.i, I.items[+el.dataset.k]); };
+        ACT.cfg = el => { if (!edOf(el)) return; const l = S.ed.lines[+el.dataset.i]; l.cfg = el.dataset.v; const c = l.cfgs.find(x => x.code === l.cfg); if (c) l.pcs = c.pcs; S.edRender(); };
+        ACT.pcs = el => { if (!edOf(el)) return; const l = S.ed.lines[+el.dataset.i]; l.pcs = Math.max(1, (Number(l.pcs) || 0) + Number(el.dataset.v)); S.edRender(); };
+        ACT.cnt = el => { if (!edOf(el)) return; S.ed.count = Math.max(1, (Number(S.ed.count) || 0) + Number(el.dataset.v)); S.edRender(); };
+        ACT.addline = el => { if (!edOf(el)) return; if (S.ed.lines.length >= 5) return alert('A mixed pallet can have at most 5 SKUs'); S.ed.lines.push(newLine()); S.edRender(); };
+        ACT.rmline = el => { if (!edOf(el)) return; S.ed.lines.splice(+el.dataset.i, 1); S.edRender(); };
         function edPayload() { return S.ed.lines.map(l => ({ item: l.item, sku: l.sku, cfg: l.cfg, pcs: Number(l.pcs) })); }
         function edInvalid() {
             for (const l of S.ed.lines) {
@@ -369,12 +399,13 @@ h3{font-size:15px;margin:16px 0 8px}
             return true;
         }
 
-        // ── Outbound: request label ──────────────────────────────────────
+        // ── Outbound: request label (floor) ──────────────────────────────
+        function useEd(name) { const I = S.eds[name]; S.cur = I; S.ed = I.ed; S.edRender = I.render; return I; }
         SCREENS.req = () => {
             S.ed = newEd();
             main('<div id="edbox"></div><div id="edmsg"></div><button class="btn pri" data-act="reqsend">Send to office printer</button>' +
                 '<label class="f">My recent requests</label><div id="myreqs"><div class="muted">Loading…</div></div>');
-            mountEd({ count: true, note: true });
+            mountEd({ count: true, note: true }, '', 'req', $('edbox'));
             loadMyReqs();
         };
         function reqCard(q, acts) {
@@ -392,44 +423,45 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         ACT.reqsend = async el => {
             if (needWho()) return;
+            useEd('req');
             const bad = edInvalid();
             if (bad) { $('edmsg').innerHTML = errBox(bad); return; }
             busy(el, true);
             const r = await api('req_create', { lines: edPayload(), count: Number(S.ed.count) || 1, note: S.ed.note, via: 'phone' });
             busy(el, false);
+            if (!$('edmsg')) return;
             if (!r.ok) { $('edmsg').innerHTML = errBox(r.error); return; }
             tone('ok');
             $('edmsg').innerHTML = flash('green', '✅ Sent to the office');
-            S.ed = newEd();
-            S.edRender();
+            useEd('req');
+            resetEd();
             loadMyReqs();
         };
 
-        // ── Outbound: reprint and void a label (manager) ────────────────
-        SCREENS.reprint = () => palletTool(true);
-        function palletTool(mgr) {
-            main('<label class="f">Scan or type a label</label><input class="inp" id="ptcode" placeholder="PLT…" autocomplete="off"><div id="ptres"></div><div id="ptmsg"></div><div id="edbox"></div>');
+        // ── Manager Labels: reprint and void a label ─────────────────────
+        function labelReprint(box) {
+            box.innerHTML = '<label class="f">Scan or type a label</label><input class="inp" id="ptcode" placeholder="PLT…" autocomplete="off"><div id="ptres"></div><div id="ptmsg"></div><div id="pt_edbox"></div>';
             const i = $('ptcode');
-            i.focus();
             i.onkeydown = async e => {
                 if (e.key === 'Tab') { e.preventDefault(); i.value += '\t'; return; }
                 if (e.key !== 'Enter') return;
                 e.preventDefault();
                 const r = await api('pallet_get', { code: i.value });
+                if (!$('ptres')) return;
                 i.select();
                 $('ptmsg').innerHTML = '';
-                $('edbox').innerHTML = '';
+                $('pt_edbox').innerHTML = '';
                 if (!r.ok) { $('ptres').innerHTML = errBox(r.error); return; }
                 S.pt = r.pallet;
-                renderPt(mgr);
+                renderPt();
             };
         }
-        function renderPt(mgr) {
+        function renderPt() {
             const p = S.pt, canVoid = p.status === 'labeled';
             $('ptres').innerHTML = '<div class="card"><h4>' + esc(p.code) + ' · ' + esc(p.summary) + ' <span class="pill p-gray">' + esc(p.status) + '</span></h4>' +
                 '<div class="muted">' + (p.loadNumber ? 'Load ' + esc(p.loadNumber) + ' · ' : '') + 'printed ' + esc(p.printedAt) + (p.edited ? ' · EDITED' : '') + '</div>' +
-                (mgr ? '<div class="row2"><button class="dbtn pri" data-act="ptreprint">Reprint (same code)</button>' +
-                    '<button class="dbtn gh" data-act="ptrelabel"' + (canVoid ? '' : ' disabled') + '>Edit + reprint</button></div>' : '') +
+                '<div class="row2"><button class="dbtn pri" data-act="ptreprint">Reprint (same code)</button>' +
+                '<button class="dbtn gh" data-act="ptrelabel"' + (canVoid ? '' : ' disabled') + '>Edit + reprint</button></div>' +
                 (canVoid ? '<label class="f">Void reason</label><select class="inp" id="ptreason"><option>Broken up for stock</option><option>Sent to customer</option>' +
                     '<option>Damaged</option><option>Other</option></select><button class="btn ghost sm warn" data-act="ptvoid">Void this label</button>'
                     : '<div class="muted">Only labels not yet on a load can be voided' + (p.status === 'loaded' ? ' (remove it from its load first)' : '') + '.</div>') + '</div>';
@@ -437,29 +469,32 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.ptvoid = async () => {
             if (!confirm('Void ' + S.pt.code + '?')) return;
             const r = await api('pallet_void', { palletId: S.pt.id, reason: $('ptreason').value });
+            if (!$('ptmsg')) return;
             $('ptmsg').innerHTML = r.ok ? flash('green', '✅ ' + esc(S.pt.code) + ' voided') : errBox(r.error);
             if (r.ok) tone('ok');
         };
         ACT.ptreprint = async () => {
             const w = window.open('about:blank');
             const r = await api('pallet_reprint', { palletId: S.pt.id });
-            if (!r.ok) { if (w) w.close(); $('ptmsg').innerHTML = errBox(r.error); return; }
+            if (!r.ok) { if (w) w.close(); if ($('ptmsg')) $('ptmsg').innerHTML = errBox(r.error); return; }
             if (w) w.location = pdfUrl('ids=' + S.pt.id);
         };
         ACT.ptrelabel = () => {
             S.ed = { lines: S.pt.edLines.map(l => Object.assign({}, l)), count: 1, note: '' };
-            mountEd({}, '<button class="btn pri" data-act="ptrelabelgo">Print new label (voids ' + esc(S.pt.code) + ')</button>');
+            mountEd({}, '<button class="btn pri" data-act="ptrelabelgo">Print new label (voids ' + esc(S.pt.code) + ')</button>', 'pt', $('pt_edbox'));
         };
         ACT.ptrelabelgo = async el => {
+            useEd('pt');
             const bad = edInvalid();
             if (bad) { $('ptmsg').innerHTML = errBox(bad); return; }
             const w = window.open('about:blank');
             busy(el, true);
             const r = await api('pallet_relabel', { palletId: S.pt.id, lines: edPayload() });
             busy(el, false);
-            if (!r.ok) { if (w) w.close(); $('ptmsg').innerHTML = errBox(r.error); return; }
+            if (!r.ok) { if (w) w.close(); if ($('ptmsg')) $('ptmsg').innerHTML = errBox(r.error); return; }
             if (w) w.location = pdfUrl('job=' + encodeURIComponent(r.job));
-            $('edbox').innerHTML = '';
+            if (!$('ptmsg')) return;
+            $('pt_edbox').innerHTML = '';
             $('ptmsg').innerHTML = flash('green', '✅ New label ' + esc(r.code) + ' printing; ' + esc(S.pt.code) + ' voided');
         };
 
@@ -501,11 +536,11 @@ h3{font-size:15px;margin:16px 0 8px}
             S.truckId = r.view.truck.id;
             truckDetail(r);
         };
-        ACT.opentruck = el => {
+        function floorOpenTruck(el) {
             dropBanner(el.dataset.id);
             S.truckId = el.dataset.id;
             if (S.side !== 'out' || S.tab !== 'trucks') { S.side = 'out'; put('mv_side', 'out'); S.tab = 'trucks'; shell(); } else truckDetail();
-        };
+        }
         ACT.backtruck = () => { S.truckId = null; truckList(); };
         ACT.goship = () => { S.truckId = null; S.tab = 'ship'; renderNav(); };
         async function truckDetail(pre) {
@@ -543,7 +578,7 @@ h3{font-size:15px;margin:16px 0 8px}
         // Picked/Packed IFs no truck has, on this truck's TOs. Never attached without an explicit Add.
         function sugHtml(list, mgr, truckId) {
             return list && list.length ? '<label class="f">Packed IFs no truck has yet</label>' + list.map(f => '<div class="drow"><span><b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) +
-                ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</span><button class="dbtn pri" ' + (mgr ? 'data-act="apaddif"' : 'data-act="taddif"') + ' data-id="' + esc(truckId) +
+                ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</span><button class="dbtn ' + (mgr ? 'btn-addif" data-act="apaddif"' : 'pri" data-act="taddif"') + ' data-id="' + esc(truckId) +
                 '" data-ifid="' + esc(f.ifId) + '" data-label="' + esc(f.ifNum) + '">Add to this truck</button></div>').join('') : '';
         }
         function noteHtml(n) { return n && n.text ? '<div class="muted">📝 Short note: ' + esc(n.text) + (n.by ? ' · ' + esc(whoName(n.by)) : '') + '</div>' : ''; }
@@ -607,7 +642,7 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, true);
             const r = await api('truck_other_add', { truckId: S.truckId, desc: desc, qty: qty });
             busy(el, false);
-            if (!$('tother')) return;
+            if (!$('tother') || (r.ok && String(r.view.truck.id) !== String(S.truckId))) return;     // another truck is open now
             if (!r.ok) { tone('bad'); $('omsg').innerHTML = errBox(r.error); return; }
             tone('ok');
             $('o_desc').value = '';
@@ -616,8 +651,9 @@ h3{font-size:15px;margin:16px 0 8px}
             if ($('o_desc')) $('o_desc').focus();
         };
         ACT.otherrm = async el => {
+            if (needWho()) return;
             const r = await api('truck_other_remove', { truckId: S.truckId, id: el.dataset.id });
-            if (!$('tother')) return;
+            if (!$('tother') || (r.ok && String(r.view.truck.id) !== String(S.truckId))) return;
             if (r.ok) paintTruck(r.view, false); else $('omsg').innerHTML = errBox(r.error);
         };
         // A floor Verify that finds a short asks why (R2); Save sends the note with the same Verify.
@@ -637,8 +673,7 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.notesave = async el => {
             const text = $('n_text').value.trim();
             if (!text) { $('n_msg').innerHTML = errBox('Type why it is short'); $('n_text').focus(); return; }
-            closeNote();
-            await ACT.tverify(el, text);
+            await ACT.tverify(el, text);          // the modal closes only when the verify goes through; on an error it keeps the text
         };
         ACT.tverify = async (el, shortNote) => {
             if (needWho()) return;
@@ -646,8 +681,10 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = await api('truck_verify', shortNote ? { truckId: S.truckId, shortNote: shortNote } : { truckId: S.truckId });
             busy(el, false);
             if (!$('scanres')) return;
+            if (!r.ok && $('nmodal') && shortNote) { tone('bad'); $('n_msg').innerHTML = errBox(r.error); return; }
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
-            if (r.needsNote) { tone('warn'); noteModal(r.diffs); return; }
+            if (r.needsNote) { tone('warn'); if (!(shortNote && $('nmodal'))) noteModal(r.diffs); return; }
+            closeNote();
             markSeen(r.view);
             tone(r.match ? 'ok' : 'warn');
             paintTruck(r.view, false);
@@ -777,32 +814,45 @@ h3{font-size:15px;margin:16px 0 8px}
             shipList(flash('green', '🚚 ' + esc(r.view.truck.label) + ' marked shipped', esc('Seal ' + sv), 'A manager confirms it in Approvals.'));
         };
 
-        // ── Outbound: manager print queue / plan / print a SKU ────────────
-        SCREENS.queue = () => {
+        // ── Manager: Labels (requests · print a SKU · print plan · reprint · SKU configs) ──
+        SCREENS.labels = () => {
+            const sec = (id, title) => '<div class="card lsec"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>';
+            main(sec('lb_queue', 'Label requests') + sec('lb_sku', 'Print a SKU') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
+            labelQueue($('lb_queue'));
+            labelSku($('lb_sku'));
+            labelPlan($('lb_plan'));
+            labelReprint($('lb_reprint'));
+            labelConfigs($('lb_configs'));
+        };
+        // The queue refreshes every 15 s while Labels is open (renderNav clears S.poll on a tab change).
+        function labelQueue(box) {
             S.ed = newEd();
-            main('<div class="card"><h4>Add a request (radio)</h4><input class="inp" id="radiowho" placeholder="Who called it in"><div id="edbox"></div><div id="edmsg"></div>' +
-                '<button class="btn pri sm" data-act="radiosend">Add to queue</button></div><h3>Queued</h3><div id="qlist"><div class="muted">Loading…</div></div><div id="qmsg"></div>');
-            mountEd({ count: true, note: true });
+            box.innerHTML = '<div id="qlist"><div class="muted">Loading…</div></div><div id="qmsg"></div>' +
+                '<div class="card"><h4>Add a request (radio)</h4><input class="inp" id="radiowho" placeholder="Who called it in"><div id="q_edbox"></div><div id="qedmsg"></div>' +
+                '<button class="btn pri sm" data-act="radiosend">Add to queue</button></div>';
+            mountEd({ count: true, note: true }, '', 'queue', $('q_edbox'));
             loadQueue();
             S.poll = setInterval(loadQueue, 15000);
-        };
+        }
         async function loadQueue() {
             const r = await api('req_list', { status: 'queued' });
             const box = $('qlist');
             if (box) box.innerHTML = !r.ok ? errBox(r.error) : (r.reqs.map(q => reqCard(q, true)).join('') || '<div class="muted">The queue is empty</div>');
         }
         ACT.radiosend = async el => {
+            useEd('queue');
             const who = $('radiowho').value.trim();
-            if (!who) { $('edmsg').innerHTML = errBox('Enter who called it in'); return; }
+            if (!who) { $('qedmsg').innerHTML = errBox('Enter who called it in'); return; }
             const bad = edInvalid();
-            if (bad) { $('edmsg').innerHTML = errBox(bad); return; }
+            if (bad) { $('qedmsg').innerHTML = errBox(bad); return; }
             busy(el, true);
             const r = await api('req_create', { lines: edPayload(), count: Number(S.ed.count) || 1, note: S.ed.note, via: 'radio', requester: who });
             busy(el, false);
-            if (!r.ok) { $('edmsg').innerHTML = errBox(r.error); return; }
-            S.ed = newEd();
-            S.edRender();
-            $('edmsg').innerHTML = '';
+            if (!$('qedmsg')) return;
+            if (!r.ok) { $('qedmsg').innerHTML = errBox(r.error); return; }
+            useEd('queue');
+            resetEd();
+            $('qedmsg').innerHTML = '';
             $('radiowho').value = '';
             loadQueue();
         };
@@ -810,31 +860,31 @@ h3{font-size:15px;margin:16px 0 8px}
             const w = window.open('about:blank');
             busy(el, true);
             const r = await api('req_print', { reqId: el.dataset.id });
-            if (!r.ok) { if (w) w.close(); busy(el, false); $('qmsg').innerHTML = errBox(r.error); return; }
+            if (!r.ok) { if (w) w.close(); busy(el, false); if ($('qmsg')) $('qmsg').innerHTML = errBox(r.error); return; }
             if (w) w.location = pdfUrl('job=' + encodeURIComponent(r.job));
             loadQueue();
         };
         ACT.reqcancel = async el => {
             if (!confirm('Cancel this request?')) return;
             const r = await api('req_cancel', { reqId: el.dataset.id });
-            if (!r.ok) $('qmsg').innerHTML = errBox(r.error);
+            if (!r.ok && $('qmsg')) $('qmsg').innerHTML = errBox(r.error);
             loadQueue();
         };
 
-        SCREENS.plan = async () => {
-            main('<div class="muted">Loading plan…</div>');
+        async function labelPlan(box) {
+            box.innerHTML = '<div class="muted">Loading plan…</div>';
             const r = await api('plan');
-            if (!r.ok) { main(errBox(r.error)); return; }
+            if (!r.ok) { box.innerHTML = errBox(r.error); return; }
             S.plan = r;
-            main('<div class="card"><h4>Print plan · ' + esc(r.dayLabel) + ' <span class="muted">needed ' + (r.neededPerDay == null ? '—' : r.neededPerDay) + ' pallets/day · ' +
-                r.labeledPallets + ' already labeled</span></h4><div class="muted">Suggested counts split today\'s need across SKUs by pallets left. Change any count.</div></div>' +
-                '<div id="planmsg"></div><table class="tbl"><tr><th>SKU</th><th>Config</th><th>Pallets left</th><th>Labeled</th><th>Print</th><th></th></tr>' +
+            box.innerHTML = '<div class="muted"><b>' + esc(r.dayLabel) + '</b> · needed ' + (r.neededPerDay == null ? '—' : r.neededPerDay) + ' pallets/day · ' +
+                r.labeledPallets + ' already labeled. Suggested counts split today\'s need across SKUs by pallets left. Change any count.</div>' +
+                '<div id="planmsg"></div><div style="overflow-x:auto"><table class="tbl"><tr><th>SKU</th><th>Config</th><th>Pallets left</th><th>Labeled</th><th>Print</th><th></th></tr>' +
                 r.rows.map((x, k) => '<tr><td><b>' + esc(x.sku) + '</b><div class="muted">' + esc(x.desc) + '</div></td><td>' + esc(x.cfg) + ' · ' + x.pcs + '</td><td>' + x.palletsLeft +
                     '</td><td>' + x.labeled + '</td><td><input class="num" data-plan="' + k + '" inputmode="numeric" value="' + x.suggest + '"></td><td><button class="dbtn pri" data-act="planrow" data-k="' + k +
-                    '">Print</button></td></tr>').join('') + '</table><button class="btn go" data-act="planall">Print all</button>' +
+                    '">Print</button></td></tr>').join('') + '</table></div><button class="btn go" data-act="planall">Print all</button>' +
                 (r.noConfig.length ? '<div class="card warnc"><h4>' + r.noConfig.length + ' SKUs with stock but no config</h4><div class="muted">' + r.noConfig.map(x => esc(x.sku)).join(', ') +
-                    '</div></div>' : ''));
-        };
+                    '</div></div>' : '');
+        }
         function planCount(k) { const i = document.querySelector('[data-plan="' + k + '"]'); return Math.max(0, Math.floor(Number(i && i.value) || 0)); }
         function planLines(x) { return [{ item: x.item, sku: x.sku, cfg: x.cfg, pcs: x.pcs }]; }
         ACT.planrow = async el => {
@@ -853,26 +903,27 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, false);
         };
 
-        SCREENS.sku = () => {
+        function labelSku(box) {
             S.ed = newEd();
-            main('<div id="edbox"></div><div id="edmsg"></div><button class="btn pri" data-act="skuprint">Print labels</button>');
-            mountEd({ count: true });
-        };
+            box.innerHTML = '<div id="sku_edbox"></div><div id="skumsg"></div><button class="btn pri" data-act="skuprint">Print labels</button>';
+            mountEd({ count: true }, '', 'sku', $('sku_edbox'));
+        }
         ACT.skuprint = async el => {
+            useEd('sku');
             const bad = edInvalid();
-            if (bad) { $('edmsg').innerHTML = errBox(bad); return; }
+            if (bad) { $('skumsg').innerHTML = errBox(bad); return; }
             const n = Math.floor(Number(S.ed.count) || 0);
             if (n < 1) return;
             busy(el, true);
-            await printMany([{ lines: edPayload(), n: n }], 'office', $('edmsg'));
+            await printMany([{ lines: edPayload(), n: n }], 'office', $('skumsg'));
             busy(el, false);
         };
 
-        // ── Outbound: manager SKU configs ────────────────────────────────
-        SCREENS.configs = async () => {
-            main('<div class="card"><h4>Import configs from the sheet (CSV)</h4><div class="muted">Columns: SKU, Config, Pcs per pallet, Default (Y/N). The import replaces all configs.</div>' +
+        // SKU configs: import (CSV) and the current list.
+        async function labelConfigs(box) {
+            box.innerHTML = '<div class="card"><h4>Import configs from the sheet (CSV)</h4><div class="muted">Columns: SKU, Config, Pcs per pallet, Default (Y/N). The import replaces all configs.</div>' +
                 '<input type="file" id="cfgfile" accept=".csv,text/csv"><textarea id="cfgcsv" class="inp" rows="5" placeholder="…or paste CSV here"></textarea>' +
-                '<button class="dbtn pri" data-act="cfgpreview">Preview import</button><div id="cfgmsg"></div></div><div id="cfglist"><div class="muted">Loading…</div></div>');
+                '<button class="dbtn pri" data-act="cfgpreview">Preview import</button><div id="cfgmsg"></div></div><div id="cfglist"><div class="muted">Loading…</div></div>';
             $('cfgfile').onchange = e => {
                 const f = e.target.files[0];
                 if (!f) return;
@@ -881,14 +932,15 @@ h3{font-size:15px;margin:16px 0 8px}
                 rd.readAsText(f);
             };
             const r = await api('cfg_list');
+            if (!$('cfglist')) return;
             if (!r.ok) { $('cfglist').innerHTML = errBox(r.error); return; }
             S.cfgRows = r.rows;
-            $('cfglist').innerHTML = '<div class="card"><h4>' + r.rows.length + ' SKUs with configs <button class="dbtn gh" data-act="cfgdownload">Download CSV</button></h4>' +
+            $('cfglist').innerHTML = '<h4>' + r.rows.length + ' SKUs with configs <button class="dbtn gh" data-act="cfgdownload">Download CSV</button></h4>' +
                 (r.noConfig.length ? '<div class="muted warn">' + r.noConfig.length + ' SKUs have ' + esc(B.fromName) + ' stock but no config: ' + r.noConfig.map(x => esc(x.sku)).join(', ') + '</div>' : '') +
-                '<table class="tbl"><tr><th>SKU</th><th>Configs</th><th>' + esc(B.fromName) + ' on hand</th><th>Est. pallets</th></tr>' +
+                '<div style="overflow-x:auto"><table class="tbl"><tr><th>SKU</th><th>Configs</th><th>' + esc(B.fromName) + ' on hand</th><th>Est. pallets</th></tr>' +
                 r.rows.map(x => '<tr><td><b>' + esc(x.sku) + '</b><div class="muted">' + esc(x.desc) + '</div></td><td>' + x.cfgs.map(c => esc(c.code) + ' · ' + c.pcs + (c.isDefault ? ' ✓' : '')).join('<br>') +
                     '</td><td>' + num(x.onHand) + '</td><td>' + (x.estPallets || '—') + '</td></tr>').join('') + '</table></div>';
-        };
+        }
         ACT.cfgdownload = () => {
             const q = v => (/[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v));
             const lines = ['SKU,Config,Pcs per pallet,Default'];
@@ -902,6 +954,7 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, true);
             const r = await api('cfg_preview', { csv: $('cfgcsv').value });
             busy(el, false);
+            if (!$('cfgmsg')) return;
             if (!r.ok) { $('cfgmsg').innerHTML = errBox(r.error); return; }
             S.cfgImport = r;
             $('cfgmsg').innerHTML = '<div class="card"><h4>' + r.configs.length + ' configs for ' + r.skuCount + ' SKUs</h4>' +
@@ -914,7 +967,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!confirm('Replace all pallet configs?')) return;
             busy(el, true);
             const all = S.cfgImport.configs, batch = 'B' + Date.now();
-            const fail = msg => { busy(el, false); $('cfgmsg').innerHTML = errBox(msg); };
+            const fail = msg => { busy(el, false); if ($('cfgmsg')) $('cfgmsg').innerHTML = errBox(msg); };
             for (let i = 0; i < all.length; i += 100) {
                 let r;
                 for (let t = 0; t < 3; t++) { r = await api('cfg_commit_chunk', { batch: batch, configs: all.slice(i, i + 100), upTo: Math.min(all.length, i + 100) }); if (r.ok) break; }
@@ -928,8 +981,10 @@ h3{font-size:15px;margin:16px 0 8px}
                 if (!r.ok) return fail(r.error + ' (new configs are active; old rows can be cleaned up later)');
                 rem = r.remaining;
             }
-            await SCREENS.configs();
-            $('cfgmsg').innerHTML = flash('green', '✅ Imported ' + all.length + ' configs');
+            const box = $('lb_configs');
+            if (!box) return;
+            await labelConfigs(box);
+            if ($('cfgmsg')) $('cfgmsg').innerHTML = flash('green', '✅ Imported ' + all.length + ' configs');
         };
 
         // ── Inbound: unload (v3) ─────────────────────────────────────────
@@ -1004,55 +1059,75 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.uundo = async () => { const r = await api('unload_undo', { truckId: S.unloadId }); if (r.ok) { S.lastIn = null; paintUnload(r.view); } else $('scanres').innerHTML = errBox(r.error); };
         ACT.udone = async () => { const r = await api('unload_done', { truckId: S.unloadId }); $('scanres').innerHTML = r.ok ? flash('green', 'Sent to the manager for receipt approval') : errBox(r.error); };
 
-        // ── Manager: approvals (v3) ──────────────────────────────────────
+        // ── Manager: approvals (spec 2026-10-06 §4) ──────────────────────
+        // Order: Ship confirmations · Correct the IF (one card per IF diff) · Trucks (quiet, one per needs_fix truck) · Retry/Release · Receipts.
         function corrLine(o) {
             return o.op === 'if_qty' ? (o.to < o.from ? '⬇ Lower ' : '⬆ Raise ') + esc((o.ifNum || '') + ' ' + num(o.from) + ' → ' + num(o.to))
                 : o.op === 'if_create' ? '➕ Add-on IF from ' + esc(o.toNum || 'TO ' + o.toId) : o.op === 'drop_if' ? '✕ Take ' + esc(o.ifNum) + ' off the truck' : esc(o.op);
         }
-        // One card per needs_fix truck: diffs (Drop for a gone/empty IF, Correct for a qty or add-on fix), suggestions, Correct all, Re-check.
-        function fixCard(n, free) {
-            const t = n.truck, id = esc(t.id), lab = esc(t.label), wm = esc(n.writeMode), diffs = n.diffs || [], live = {};
-            diffs.forEach(d => { live[d.key] = 1; });
-            const can = d => d.kind === 'if_short' || d.kind === 'if_over' || (d.kind === 'no_if' && d.toId);
-            const drops = diffs.filter(d => d.kind === 'if_gone' || d.kind === 'if_empty').length;
-            const rows = diffs.map(d => '<div class="drow"><span>' + esc(d.text) + '</span>' +
-                (d.kind === 'if_empty' || d.kind === 'if_gone' ? '<button class="dbtn gh" data-act="apdrop" data-id="' + id + '" data-ifid="' + esc(d.ifId) + '" data-label="' + esc(d.ifNum) + '">Drop</button>'
-                    : can(d) ? '<button class="dbtn gh" data-act="apcorrect" data-id="' + id + '" data-key="' + esc(d.key) + '" data-label="' + lab + '" data-wm="' + wm + '">Correct</button>' : '') + '</div>').join('');
-            const corr = (n.corrections || []).filter(k => live[k.key]).map(k => '<div class="muted">📝 ' + corrLine(k.op || {}) + ' · ' + esc(k.by && typeof k.by === 'object' ? k.by.name : k.by) + ' · ' + esc(k.at) + '</div>').join('');
-            return '<div class="card amberc"><h4>⚠ ' + lab + ' · Needs IF fix</h4><div class="muted">' + num(t.pallets) + ' pallets loaded' +
-                (n.verifiedAt ? ' · checked ' + esc(n.verifiedAt) + (n.verifiedBy ? ' by ' + esc(n.verifiedBy) : '') : '') + '</div>' +
+        const LATE_MIN = 30;
+        function shipConfirmCard(x) {
+            const t = x.truck, id = esc(t.id), lab = esc(t.label), late = x.ageMin != null && x.ageMin >= LATE_MIN;
+            const oth = (x.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
+            return '<div class="card ' + (late ? 'amberc' : 'bl') + '"><h4>🚚 ' + lab + ' · marked shipped' + (late ? ' <span class="pill p-amber">waiting ' + x.ageMin + ' min</span>' : '') + '</h4>' +
+                '<div class="muted">' + esc(['Trailer ' + x.trailer, 'Seal ' + x.seal, x.carrier].filter(Boolean).join(' · ')) + '</div>' +
+                '<div class="diffs">' + (x.ifs || []).map(f => '<div><b>' + esc(f.ifNum) + '</b> · ' + esc((f.lines || []).map(l => l.sku + ' × ' + num(l.qty)).join(', ')) + '</div>').join('') + '</div>' +
+                '<div class="muted">' + num(x.pallets) + ' pallets · ' + num(x.pcs) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
+                '<div class="muted">Marked shipped by ' + esc(x.markedBy || '?') + ' at ' + esc(x.markedAt) + (x.ageMin != null ? ' · ' + x.ageMin + ' min ago' : '') + '</div>' +
+                '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Confirm shipped</button>' +
+                '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button></div></div>';
+        }
+        // One standalone card per IF diff: the instruction in large type and one big Correct the IF button.
+        function fixCard(f, wmode) {
+            const id = esc(f.truckId), lab = esc(f.truckLabel), wm = esc(wmode);
+            const head = (f.ifNum ? f.ifNum : 'New IF from ' + (f.toNum || 'an office TO')) + (f.sku ? ' · ' + f.sku : '');
+            const can = f.kind !== 'no_if' || f.toId;
+            const corr = (f.corrections || []).map(k => '<div class="muted">📝 ' + corrLine(k.op || {}) + ' · ' + esc(whoName(k.by)) + ' · ' + esc(k.at) + '</div>').join('');
+            return '<div class="card fixc"><div class="muted"><b>' + esc(head) + '</b> · ' + lab + '</div><div class="fixtxt">' + esc(f.text) + '</div>' + noteHtml(f.shortNote) + corr +
+                (f.correctError ? errBox('Correction refused: ' + f.correctError + ' — fix it in NetSuite') : '') +
+                (can ? '<button class="btn-correct" data-act="apcorrect" data-id="' + id + '" data-key="' + esc(f.key) + '" data-label="' + lab + '" data-wm="' + wm + '">Correct the IF</button>'
+                    : '<div class="muted warn">No open TO covers this SKU: the office creates one in NetSuite.</div>') +
+                '<div class="muted">' + esc(wmText(wmode)) + ' · <a href="#" class="linkbtn" data-act="apverify" data-id="' + id + '" data-label="' + lab + '">Re-check</a></div></div>';
+        }
+        // One quiet card per waiting truck: its IFs (Drop on a gone/empty one), + Add an IF (secondary), Open truck.
+        function truckCard(n, free) {
+            const t = n.truck, id = esc(t.id), lab = esc(t.label), open = !!(S.addOpen || {})[String(t.id)];
+            return '<div class="card quiet"><h4>' + lab + ' ' + statusPill(t.status) + '</h4><div class="muted">' + num(t.pallets) + ' pallets loaded' +
+                (n.verifiedAt ? ' · Checked by ' + esc(n.verifiedBy || '?') + ' at ' + esc(n.verifiedAt) : '') + '</div>' +
                 (n.stuck ? '<div class="muted warn">⚠ A correction stalled. Press Correct the IF again to free it.</div>' : '') +
                 (n.correctError ? errBox('Correction refused: ' + n.correctError + ' — fix it in NetSuite') : '') +
-                '<div class="diffs">' + rows + '</div>' + corr +
+                (n.otherDiffs || []).map(tx => '<div class="muted warn">⚠ ' + esc(tx) + '</div>').join('') +
+                '<div class="diffs">' + (n.ifs || []).map(f => '<div class="drow"><span><b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) + ' · ' + esc((f.lines || []).map(l => l.sku + ' ' + num(l.qty)).join(', ')) +
+                    (f.gone ? ' <span class="pill p-red">not Picked/Packed</span>' : f.empty ? ' <span class="pill p-amber">nothing loaded</span>' : '') + '</span>' +
+                    (f.gone || f.empty ? '<button class="dbtn gh" data-act="apdrop" data-id="' + id + '" data-ifid="' + esc(f.ifId) + '" data-label="' + esc(f.ifNum) + '">Drop</button>' : '') + '</div>').join('') + '</div>' +
                 (n.orphans || []).map(o => '<div class="muted warn">⚠ Add-on ' + esc(o.text) + '</div>').join('') +
-                sugHtml(n.suggestions, true, t.id) + anyIfHtml(free, t.id) +
-                '<div class="muted">Correct the IF: ' + esc(wmText(n.writeMode)) + '</div>' +
-                '<div class="row2">' + (diffs.some(can) || drops ? '<button class="dbtn pri" data-act="apcorrect" data-id="' + id + '" data-label="' + lab + '" data-wm="' + wm + '" data-drops="' + drops + '">Correct the IF</button>' : '') +
-                '<button class="dbtn gh" data-act="apverify" data-id="' + id + '" data-label="' + lab + '">Re-check</button>' +
+                (open ? sugHtml(n.suggestions, true, t.id) + anyIfHtml(free, t.id) : '') +
+                '<div class="row2"><button class="dbtn btn-addif" data-act="apaddopen" data-id="' + id + '">' + (open ? '− Hide the IF picker' : '+ Add an IF to this truck') + '</button>' +
                 '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">Open truck</button></div></div>';
-        }
-        // Bridge until Task 5 reworks this screen: one card per needs_fix truck from approvals.trucks + its approvals.fixes.
-        function fixCards(r) {
-            return (r.trucks || []).map(tk => {
-                const mine = (r.fixes || []).filter(fx => String(fx.truckId) === String(tk.truck.id));
-                const drops = (tk.ifs || []).filter(f => f.gone || f.empty).map(f => ({ key: (f.gone ? 'if_gone:' : 'if_empty:') + f.ifId, kind: f.gone ? 'if_gone' : 'if_empty',
-                    ifId: f.ifId, ifNum: f.ifNum, text: f.ifNum + (f.gone ? ' is no longer Picked/Packed' : ' has nothing loaded') + ' → drop it' }));
-                return Object.assign({}, tk, { diffs: mine.concat(drops), corrections: mine.reduce((a, fx) => a.concat(fx.corrections || []), []), writeMode: r.writeMode });
-            });
         }
         // Manager only (spec §7): any Picked/Packed IF no truck has, not just the suggested ones.
         function anyIfHtml(free, truckId) {
             if (!free || !free.length) return '';
             return '<label class="f">Add any Packed IF</label><div class="row2"><select class="inp" id="apfree_' + esc(truckId) + '"><option value="">Pick an IF…</option>' +
                 free.map(f => '<option value="' + esc(f.ifId) + '">' + esc(f.ifNum + ' · ' + f.toNum + ' · ' + (f.lines || []).map(l => l.sku + ' ' + l.qty).join(', ')) + '</option>').join('') +
-                '</select><button class="dbtn gh" data-act="apaddany" data-id="' + esc(truckId) + '">Add</button></div>';
+                '</select><button class="dbtn btn-addif" data-act="apaddany" data-id="' + esc(truckId) + '">Add</button></div>';
         }
+        // Ship confirmations waiting ≥ 30 min: a count badge on the Approvals tab.
+        function setLate(n) { if (S.lateShips !== n) { S.lateShips = n; paintNav(); } }
         SCREENS.approve = async (msg) => {
             main((msg || '') + '<div class="muted">Loading…</div>');
             const r = await api('approvals');
-            if (!r.ok) { main(errBox(r.error)); return; }
-            const fixList = fixCards(r);
-            const fix = fixList.length ? '<h3>Needs IF fix</h3>' + fixList.map(n => fixCard(n, r.freeIfs)).join('') : '';
+            if (S.tab !== 'approve') return;
+            if (!r.ok) { main((msg || '') + errBox(r.error)); return; }
+            S.appr = r;
+            paintApprove(msg);
+        };
+        function paintApprove(msg) {
+            const r = S.appr;
+            setLate((r.shipPending || []).filter(x => x.ageMin != null && x.ageMin >= LATE_MIN).length);
+            const ship = (r.shipPending || []).length ? '<h3>Ship confirmations</h3>' + r.shipPending.map(shipConfirmCard).join('') : '';
+            const fix = (r.fixes || []).length ? '<h3>Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
+            const trk = (r.trucks || []).length ? '<h3>Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs)).join('') : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
                 (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');
@@ -1067,7 +1142,47 @@ h3{font-size:15px;margin:16px 0 8px}
                     (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
                     '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
             }).join('');
-            main((msg || '') + (fix + ret + rec || '<div class="muted">Nothing waiting for approval</div>'));
+            main((msg || '') + (ship + fix + trk + (ret ? '<h3>Stalled departures</h3>' + ret : '') + (rec ? '<h3>Receipts</h3>' + rec : '') || '<div class="muted">Nothing waiting for approval</div>'));
+        }
+        ACT.apaddopen = el => { S.addOpen = S.addOpen || {}; S.addOpen[el.dataset.id] = !S.addOpen[el.dataset.id]; if (S.appr) paintApprove(''); };
+        ACT.apconfirm = async el => {
+            const label = el.dataset.label || 'this truck';
+            if (!confirm('Confirm ' + label + ' shipped? It gets its Truck # and its IFs are stamped/shipped in NetSuite (as the write mode allows).')) return;
+            busy(el, true);
+            const r = await api('ship_confirm', { truckId: el.dataset.id });
+            tone(r.ok && !r.needsFix ? 'ok' : 'bad');
+            if (!r.ok) { SCREENS.approve(errBox(r.error)); return; }
+            if (r.needsFix) { SCREENS.approve(flash('red', '❌ ' + esc(label) + ' no longer matches its IFs: back to Needs IF fix', '', (r.diffs || []).map(d => esc(d.text)).join('<br>'))); return; }
+            const t = r.view.truck;
+            SCREENS.approve(flash('green', '✅ ' + esc(t.label) + ' shipped', esc('Seal ' + ((t.depart || {}).seal || '')),
+                t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged'));
+        };
+        ACT.apsendback = async el => {
+            const label = el.dataset.label || 'this truck';
+            const note = prompt('Send ' + label + ' back to the floor. Note for the floor (required):');
+            if (note == null) return;
+            if (!note.trim()) { tone('bad'); SCREENS.approve(errBox('Enter a note for the floor')); return; }
+            busy(el, true);
+            const r = await api('ship_sendback', { truckId: el.dataset.id, note: note.trim() });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? flash('amber', '↩ ' + esc(label) + ' sent back to the floor', esc(note.trim())) : errBox(r.error));
+        };
+        // Read-only look at a truck (manager): lines, pallets, other items.
+        ACT.opentruck = async el => {
+            if (!isMgr) return floorOpenTruck(el);
+            const r = await api('truck_get', { truckId: el.dataset.id });
+            if (!r.ok) { tone('bad'); return; }
+            const v = r.view, t = v.truck;
+            closeNote();
+            const m = document.createElement('div');
+            m.id = 'nmodal';
+            m.className = 'modal';
+            m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs</div>' +
+                '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' + v.lines.map(l => '<tr><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) + '</td><td>' + num(l.scanned) + ' / ' + num(l.expected) + '</td></tr>').join('') +
+                v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td>' + num(x.scanned) + ' extra</td></tr>').join('') + '</table>' +
+                ((v.otherItems || []).length ? '<div class="muted">Other: ' + v.otherItems.map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ') + '</div>' : '') + noteHtml(v.shortNote) +
+                '<div class="row2"><button class="dbtn gh" data-act="notecancel">Close</button></div></div>';
+            document.body.appendChild(m);
         };
         ACT.apretry = async el => { if (!confirm('Retry departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
         ACT.aprelease = async el => {

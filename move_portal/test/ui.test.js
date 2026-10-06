@@ -73,7 +73,7 @@ test('fix11: mark-shipped confirm text, stuck receipt button, scrollable report'
 
 test('manager page uses the NetSuite login, no "I am" picker; floor keeps it', () => {
     const src = ui._clientMain.toString();
-    assert.ok(src.indexOf('if (isMgr) S.who = B.me;') !== -1, 'manager who defaults to the NetSuite user');
+    assert.ok(src.indexOf('if (isMgr) { S.who = B.me;') !== -1, 'manager who defaults to the NetSuite user');
     assert.ok(/const whoCtl = isMgr \? ''/.test(src), 'no picker on the manager page');
     assert.ok(src.indexOf("if (w) w.onchange") !== -1, 'picker wiring guarded');
 });
@@ -159,4 +159,28 @@ test('floor rework: tab order, shipped today, other-item remove, ship-pending un
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.indexOf('SCREENS.void'), -1, 'Void screen still there');
     assert.equal(src.indexOf('departForm('), -1, 'departure form still on the truck screen');
+});
+
+test('manager rework: 4 tabs, no toggle, merged Labels, approvals hierarchy', () => {
+    const src = ui._clientMain.toString();
+    ["['labels', 'Labels']", "['approve', 'Approvals']", "['dash', 'Dashboard']", "['report', 'Report']", 'SCREENS.labels', "api('ship_confirm'", "api('ship_sendback'",
+        'btn-correct', 'btn-addif', 'Add an IF to this truck', 'Ship confirmations'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    assert.equal(src.indexOf("['queue', 'Print queue']"), -1, 'old label tabs removed');
+});
+
+test('manager rework: default Approvals, late badge, otherDiffs, Drop calls drop_if, CSS hierarchy, note modal kept on error', () => {
+    const src = ui._clientMain.toString();
+    ["mgr: 'approve'", 'LATE_MIN = 30', "waiting ' + x.ageMin + ' min", 'S.lateShips', 'n.otherDiffs', "api('truck_drop_if'", 'class="btn-correct" data-act="apcorrect"',
+        'class="dbtn btn-addif" data-act="apaddopen"', 'labelQueue(', 'labelSku(', 'labelPlan(', 'labelReprint(', 'labelConfigs(', "S.poll = setInterval(loadQueue, 15000)",
+        "String(r.view.truck.id) !== String(S.truckId)"].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    ['SCREENS.queue', 'SCREENS.plan', 'SCREENS.sku', 'SCREENS.configs', 'SCREENS.reprint'].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
+    const i = src.indexOf('ACT.apdrop =');
+    assert.ok(i !== -1 && src.slice(i, i + 400).indexOf('truck_correct') === -1, 'Drop never corrects');
+    const j = src.indexOf('ACT.notesave =');
+    assert.ok(j !== -1 && src.slice(j, j + 300).indexOf('closeNote()') === -1, 'the note modal stays until the verify goes through');
+    const k = src.indexOf('ACT.otherrm =');
+    assert.ok(k !== -1 && src.slice(k, k + 120).indexOf('needWho()') !== -1);
+    const page = ui.buildPage({ url: '/x?a=1', mode: 'manager', me: 'X', roster: [], fromName: 'R', toName: 'T', maxPrint: 1 });
+    assert.match(page, /\.btn-correct\{[^}]*font-size:19px/);
+    assert.match(page, /\.dbtn\.btn-addif\{background:#fff;border:1px solid/);
 });

@@ -1184,7 +1184,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             // fixes: one Correct-the-IF card per correctable diff; trucks: one card per waiting truck (its IFs, add/drop).
             fix.forEach(x => {
                 const ps = loaded[String(x.id)] || [], diffs = (x.data.verify || {}).diffs || [], label = truckLabel(x), corr = x.data.corrections || [];
-                pubDiffs(diffs, ps, sk).filter(d => FIX_KINDS.indexOf(d.kind) !== -1).forEach(d => fixes.push(Object.assign({ truckId: x.id, truckLabel: label, key: d.key, kind: d.kind, text: d.text },
+                const pub = pubDiffs(diffs, ps, sk);
+                pub.filter(d => FIX_KINDS.indexOf(d.kind) !== -1).forEach(d => fixes.push(Object.assign({ truckId: x.id, truckLabel: label, key: d.key, kind: d.kind, text: d.text },
                     d.ifId ? { ifId: d.ifId, ifNum: d.ifNum } : {}, d.toNum ? { toNum: d.toNum } : {}, d.toId ? { toId: d.toId } : {}, d.item ? { item: d.item, sku: d.sku } : {},
                     { shortNote: x.data.shortNote || null, corrections: corr.filter(k => k.key === d.key), correctError: x.data.correctError || '' })));
                 const flag = kind => { const o = {}; diffs.filter(d => d.kind === kind).forEach(d => { o[String(d.ifId)] = true; }); return o; };
@@ -1192,7 +1193,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 fixTrucks.push({ truck: truckSummary(x, countsFromPallets(x.id, ps)), trailer: x.data.trailer || '',
                     ifs: (x.data.ifs || []).map(f => ({ ifId: f.ifId, ifNum: f.ifNum, toNum: f.toNum, lines: f.lines, gone: !!(f.gone || gone[String(f.ifId)]), empty: !!empty[String(f.ifId)] })),
                     suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned), orphans: orphanCreates(x), stuck: stuckCorrect(x), correctError: x.data.correctError || '',
-                    shortNote: x.data.shortNote || null, verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '' });
+                    shortNote: x.data.shortNote || null, verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '',
+                    otherDiffs: pub.filter(d => FIX_KINDS.indexOf(d.kind) === -1).map(d => d.text) });   // why it waits when no Correct card explains it
             });
         }
         const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
