@@ -13,13 +13,23 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - `move_portal/local/`: node-only `snapshot_ns.js` (reads a prod snapshot) and `local_store.js` (persists to `local/store.json`, gitignored).
 - `move_portal/snapshot/` (gitignored): `prod-<date>.json` snapshots pulled read-only via the SuiteQL connector.
 - `move_portal/test/`: node tests with in-memory fakes, plus `preview_server.js` = the **local beta** on port 8765 (launch config `move-preview` / `move-preview-beta`). Manager view `http://localhost:8765/`, floor view `/?floor=1`. It serves the newest `snapshot/prod-*.json` (else the test fixture) and saves to `local/store.json`.
-- **Tests:** `node --test "move_portal/test/*.test.js"` → **203/203 pass** (2026-10-05, v3 + Verify Load). A bare folder path fails on Windows.
+- **Tests:** `node --test "move_portal/test/*.test.js"` → **239/239 pass** (2026-10-06, v3 + Verify Load + floor/manager rework). A bare folder path fails on Windows.
 - **Spec:** `docs/superpowers/specs/2026-09-27-move-portal-design.md`. **D2 is SUPERSEDED** by `docs/superpowers/specs/2026-09-28-move-portal-bulk-to-design.md`.
 - **Plan:** `docs/superpowers/plans/2026-09-27-move-portal.md` (Tasks 0–15).
 - **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
 - **SDD ledger, with every ruling:** `docs/sdd-ledger/progress.md`, plus the task briefs and reports. The review diffs were left out (the history covers them).
 
-## 🧭 READ FIRST — HANDOFF (2026-10-05, night): VERIFY LOAD BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
+## 🧭 READ FIRST — HANDOFF (2026-10-06): FLOOR/MANAGER REWORK BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA (floor + manager), THEN STAGE 2 (Tasks 15–16) ON HIS GO
+- **Rework** (spec `docs/superpowers/specs/2026-10-06-move-portal-floor-manager-rework-design.md`, plan `docs/superpowers/plans/2026-10-06-move-portal-floor-manager-rework.md`) is built on `feat/v3-verification`, every task reviewed, final review + fix wave, re-review: ready. Tests 239/239. Browser-walked 2026-10-06 (floor + manager at 375px, no errors).
+- **Trucks are named by trailer #** (entered at Start truck, ≤20 chars, unique among open trucks; "✎ trailer" edits it). **Short pick → required typed note** (shown on the manager's Correct card). **Other items** (desc × count) ride on the truck, print on the manifest, checklist at unload.
+- **Floor tabs:** Load out (default) · Shipments · Request label; Inbound: Unload. No Void. **Shipments:** Ready trucks → seal # → **Mark shipped** → "Waiting for manager". **Manager tabs:** Labels · Approvals · Dashboard · Report (no toggle). Approvals order: Ship confirmations (Confirm shipped / Send back + note; amber at 30 min) → **Correct the IF** (one big card per IF) → Trucks (quiet; + Add an IF / Drop) → Retry/Release → Receipts.
+- **PROCESS NOTE:** a truck can't be unloaded at Tippecanoe until a manager confirms shipping — managers confirm before the truck pulls out.
+- **Commit trailer is now `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`** (model changed 2026-10-06).
+- **Local store:** the pre-rework store was archived as `move_portal/local/store.before-rework-2026-10-06.json` (its trucks had no trailer); the beta starts clean.
+- **Snapshot refresh now needs two more things:** the `onHand` query (`v.SQL('35','46').onHand`, from `aggregateItemLocation`) and the onHand item ids added to the `items` query, so the Labels → Print plan shows real Riverside stock. The NetSuite connector in the 2026-10-06 session could NOT read `aggregateItemLocation`/`location` (restricted role) — Jack to reconnect, then "refresh the move snapshot". Until then the local Print plan uses fixture stock.
+- **Task 15 must-dos** unchanged (lazy `move_ns`, SQL status filter, prod check of ItemShip search filters) plus: `truckNoForDay` same-day race; Shipments N+1 `truck_get`.
+
+## (previous) HANDOFF (2026-10-05, night): VERIFY LOAD BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
 - **Verify Load** (spec `docs/superpowers/specs/2026-10-05-move-portal-verify-load-design.md`, plan `docs/superpowers/plans/2026-10-05-move-portal-verify-load.md`) is built on `feat/v3-verification`, with every task reviewed plus a final review (verdict: ready for the beta). Tests: 203/203.
 - **Floor flow:** scan → **Verify load** → ✅ Ready to ship (only then trailer/seal) or ⚠ Needs IF fix (instructions; the truck stays open; take pallets off with ➖ **Take off** mode). A 30 s re-check, and a bottom banner on every floor device when a waiting truck matches. New office IFs show as "Add to this truck".
 - **Manager:** Approvals → Needs IF fix cards: **Correct the IF** (`off` = plan only; `qty` = IF qty edit; `on` = also a Packed add-on IF with find-before-create), Drop IF, add any free IF, Re-check. Departure needs no manager. A stuck departure has **Retry** or **Release to Needs IF fix**.

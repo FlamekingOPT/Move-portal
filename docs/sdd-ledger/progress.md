@@ -121,3 +121,25 @@ Minor (VL5): new device alerts for every already-ready truck; re-pressing Verify
 Final review (VL): done. Fixes d9f4727..e16319c (release restores in-transit pallets + clears verify; unchanged re-verify keeps at/by, poll = Auto re-check; ns.resetCache per action + after correct writes; manager add-any-IF picker; correction wording; if_qty no done-skip; smoke config; esc ids). Re-review: ready for beta. Browser smoke: Release path OK; stale Ready card after refused preview fixed in 65bc520. Tests 203/203.
 TASK 15 MUST-DO: lazy move_ns reads + SQL status filter (30s recheck cost); prod check of ItemShip search filters.
 ```
+
+
+## Floor/Manager Rework (2026-10-06)
+
+```
+# Floor/Manager Rework plan (docs/superpowers/plans/2026-10-06-move-portal-floor-manager-rework.md), start e01d03f. Commit trailer now: Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+RW Task 1: complete (commits e01d03f..9534a22, review clean + follow-ups: manager re-check needs no note; shortNote kept until finishDepart; trailer ≤20 refused / note ≤300; coverage). Tests 212.
+Minor (RW1): departInput still accepts a different a.trailer (moot after Task 2); trailer uniqueness check-then-create.
+RW Task 2: complete (commits 9534a22..451e4c3, review clean). Tests 218. Truck # assigned at confirm (gap-free) — keep.
+Follow-ups for Task 4/5 UI: unload "locked" result names the pending truck; manager Approvals shows age of ship_pending trucks (banner > 30 min); seal-collision message names the other truck. Minor (RW2): toNeedsFix-changed test now hits verifyTruck guard; post-claim mismatch test doesn't assert shipReq cleared; ship_mark on a truck w/ empty trailer; truckNoForDay same-day race (pre-existing).
+PROCESS NOTE FOR JACK: a truck can't be unloaded until a manager confirms shipping — managers should confirm before the truck pulls out.
+RW Task 3: complete (commits 451e4c3..47b8f0d, review clean). Tests 223.
+For Task 5: trucks[] needs otherDiffs text for plan_mismatch/no_ifs trucks; truck card Drop IF uses truck_drop_if (not a correct key); unload locked test assert 'Trailer '+trailer outright.
+Snapshot refresh procedure must add the onHand query AND include onHand item ids in the items query (CLAUDE.md/plan Task 13 step 5).
+RW Task 4: complete (commits 47b8f0d..0a0f51d, review clean). Tests 226.
+Minor (RW4, fold into Task 5): note lost if Save fails (close modal only on success); other-item handlers check truck id after await; otherrm needWho; Shipments N+1 truck_get; scans during modal land in textarea; marked-before-midnight truck vanishes from Shipped today.
+RW Task 5: complete (commits 0a0f51d..a20d375, review clean). Tests 229.
+Minor (RW5): stall hint points to a missing button when a stuck truck has no fix card (add truck-level Correct when n.stuck); gone/empty duplicated in otherDiffs; manager Open truck silent on error; picker toggle erases result msg; late badge only refreshes on Approvals load; send-back uses window.prompt.
+RW final review: done. Fix wave a20d375..d30d700 (trailer edit + ship_mark trailer, pallet_void mgr-only, caps, 7 default trailers, open-truck error, otherDiffs dedupe, free-stuck button). Re-review: ready. Tests 239. Old local store archived as store.before-rework-2026-10-06.json (trailer-less trucks).
+OPEN: snapshot refresh needs onHand query + onHand item ids in items query — NetSuite connector in this session can't read aggregateItemLocation/location; Jack to reconnect.
+Minor (RW final): free-stuck with nothing to run shows "Nothing to correct" though it freed; truckView.trailers not filtered; ttrailer uses window.prompt.
+```
