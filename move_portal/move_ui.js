@@ -784,8 +784,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="muted">' + esc('Trailer ' + (v.trailer || '')) + ' · IFs ' + esc(ifs.join(', ')) + '</div>' +
                 '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
                 (v.trailer ? '' : '<label class="f" for="s_tr_' + id + '">Trailer #</label><input class="inp" id="s_tr_' + id + '" data-keep="1" maxlength="20" placeholder="Trailer #" autocomplete="off">') +
-                '<label class="f" for="s_seal_' + id + '">Seal #</label><input class="inp" id="s_seal_' + id + '" data-keep="1" placeholder="Seal (tag) #" autocomplete="off">' +
-                '<label class="f" for="s_car_' + id + '">Carrier</label><input class="inp" id="s_car_' + id + '" data-keep="1" value="' + esc(v.carrier || carrier) + '">' +
+                '<label class="f" for="s_seal_' + id + '">Seal #</label><input class="inp" id="s_seal_' + id + '" data-keep="1" maxlength="30" placeholder="Seal (tag) #" autocomplete="off">' +
+                '<label class="f" for="s_car_' + id + '">Carrier</label><input class="inp" id="s_car_' + id + '" data-keep="1" maxlength="60" value="' + esc(v.carrier || carrier) + '">' +
                 '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">🚚 Mark shipped</button></div>';
         }
         // The re-check at Mark shipped no longer matches. "IF changed" only when an IF is gone or its qty differs from what the screen showed;

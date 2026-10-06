@@ -1904,3 +1904,13 @@ test('ship_mark: the truck trailer wins over a passed one', () => {
     const v = ctx.run('ship_mark', { truckId: t.id, seal: 'SM2', trailer: 'OTHER' }, false).view;
     assert.equal(v.truck.shipReq.trailer, own);
 });
+
+test('ship_mark caps: seal 30 chars, carrier 60 chars (trimmed; over is refused and names the field)', () => {
+    const ctx = setup();
+    const { t } = readyTruck(ctx, 42);
+    assert.throws(() => ctx.run('ship_mark', { truckId: t.id, seal: '9'.repeat(31) }, false), /seal # is too long \(30/i);
+    assert.throws(() => ctx.run('ship_mark', { truckId: t.id, seal: 'CP1', carrier: 'c'.repeat(61) }, false), /carrier is too long \(60/i);
+    assert.equal(ctx.data.getLoad(t.id).status, 'ready');
+    const v = ctx.run('ship_mark', { truckId: t.id, seal: ' ' + '9'.repeat(30) + ' ', carrier: ' ' + 'c'.repeat(60) + ' ' }, false).view;
+    assert.deepEqual([v.truck.shipReq.seal, v.truck.shipReq.carrier], ['9'.repeat(30), 'c'.repeat(60)]);
+});

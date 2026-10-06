@@ -923,6 +923,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         // A truck with no trailer (started before the rework) takes the one entered at the mark.
         const inp = { trailer: own || checkTrailer(a.trailer, x.id), seal: String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
         if (!inp.seal) throw userErr('Enter the seal #');
+        if (inp.seal.length > 30) throw userErr('The seal # is too long (30 characters max)');
+        if (inp.carrier.length > 60) throw userErr('The carrier is too long (60 characters max)');
         sealTaken(inp.seal, x.id);
         const v = verifyTruck(x.id, c, { truck: x, poll: true });    // an unchanged load keeps verify at/by
         if (!v.r.match) return Object.assign({ needsFix: true }, verifyOut(v, c));
