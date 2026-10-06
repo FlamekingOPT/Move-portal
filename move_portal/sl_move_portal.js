@@ -1651,12 +1651,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     act('report', true, (a, c) => {
-        const trucks = allTrucks().filter(x => x.data.depart), counts = data.palletStatusCounts(trucks.map(x => x.id));
+        const every = allTrucks(), trucks = every.filter(x => x.data.depart), counts = data.palletStatusCounts(every.map(x => x.id));   // one grouped read serves the day rows and the history
         const ids = {};
         trucks.forEach(x => (x.data.alloc || []).forEach(al => Object.keys(al.lines).forEach(k => { ids[k] = 1; })));
         const rows = verify.shadowRows({ trucks: trucks, ifInfo: ns.ifInfo(), ifsByTo: ns.ifsByTo(), receipts: ns.receiptsByIf(), sku: skuNames(Object.keys(ids)) });
         // Plan-only corrections on trucks still at the dock (the write mode left them to the office), while the diff is still open.
-        const mode = writeMode(c), pend = [], every = allTrucks();
+        const mode = writeMode(c), pend = [];
         every.forEach(x => orphanCreates(x).forEach(o => rows.push({ truck: truckLabel(x), seal: (x.data.depart || {}).seal || '', ifNum: 'IF ' + o.id,
             check: 'Dropped add-on IF', portal: 'Add-on IF ' + o.id + ' was dropped: delete or reuse it in NetSuite', netsuite: '—', ok: false })));
         every.filter(x => x.status === T.NEEDS_FIX).forEach(x => {
@@ -1682,7 +1682,26 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             dd.trucks++; dd.pallets += sts.reduce((s, st) => s + cnt(counts, x.id, st), 0); dd.pieces += pcsOf(counts, x.id, sts);
             dd.diffs += diffsBy[truckLabel(x)] || 0;
         });
-        return { rows: rows, days: Object.values(days).sort((p, q) => (p.day < q.day ? 1 : -1)), pulledAt: ns.pulledAt(), writeMode: writeMode(c) };
+        // Truck history (spec §4): every v3 truck, newest first.
+        const skAll = skuNames([...new Set(every.reduce((s, x) => s.concat((x.data.corrections || []).filter(k => k.op && k.op.op === 'if_qty').map(k => String(k.op.item))), []))]);
+        const corrText = k => {
+            if (k.kind === 'pallet_accept') return '+ ' + k.code + ' accepted' + (k.ifNum ? ' · ' + k.ifNum : k.toNum ? ' · new IF on ' + k.toNum : '') + (k.pending ? ' (office IF pending)' : '');
+            if (k.kind === 'pallet_reject') return '↩ ' + k.code + ' rejected · "' + (k.note || '') + '"';
+            const op = k.op || {};
+            if (op.op === 'if_qty') return (op.to < op.from ? '⬇ ' : '⬆ ') + op.ifNum + ' ' + (skAll[String(op.item)] || op.item) + ' ' + verify._fmt(op.from) + '→' + verify._fmt(op.to);
+            if (op.op === 'if_create') return '➕ add-on IF on ' + (op.toNum || op.toId);
+            if (op.op === 'drop_if') return '✕ ' + op.ifNum + ' dropped';
+            return String(op.op || k.kind || '');
+        };
+        const history = every.slice().sort((p, q) => Number(q.id) - Number(p.id)).map(x => {
+            const d = x.data, dep = d.depart || null, q = d.shipReq || {}, sts = [VP.LOADED, VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING];
+            return { truckId: x.id, day: dep ? dep.day : dayOfStamp(d.startedAt), truck: truckLabel(x), truckNo: dep ? dep.truckNo : null, trailer: dep ? dep.trailer : (d.trailer || ''),
+                seal: dep ? dep.seal : (q.seal || ''), ifs: verify.liveIfs(d.ifs).map(f => f.ifNum), pallets: sts.reduce((s, st) => s + cnt(counts, x.id, st), 0), pcs: pcsOf(counts, x.id, sts),
+                status: x.status, stage: stageOf(x), startedBy: whoName(d.startedBy), startedAt: d.startedAt || '', markedBy: whoName(q.by), markedAt: q.at || (dep && dep.markedBy ? dep.at : ''),
+                confirmedBy: dep ? whoName(dep.approvedBy) || dep.approvedByRoster || '' : '', confirmedAt: dep ? dep.at : '', receivedAt: d.recvApprovedAt || '',
+                corrections: (d.corrections || []).map(corrText) };
+        });
+        return { rows: rows, days: Object.values(days).sort((p, q) => (p.day < q.day ? 1 : -1)), history: history, pulledAt: ns.pulledAt(), writeMode: writeMode(c) };
     });
 
     // ── entry points ─────────────────────────────────────────────────────

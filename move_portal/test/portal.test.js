@@ -2508,3 +2508,20 @@ test('fix wave 3: a pending create stops reserving once the office IF exists (Ne
     officeIfs(ctx, [officeIf('9100', 'B')]);                                                          // the office made it (not settled yet: no approvals call)
     assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big(1100, 'Jc2').code }, false).result, 'addon');
 });
+
+test('report.history: every truck newest first with who/when per step and correction lines', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const a = departed(ctx, 42, '5260030');
+    const s = strayOn(ctx, a.t);
+    a.ps.forEach(p => ctx.run('unload_scan', { truckId: a.t.id, raw: p.code }, false));
+    ctx.run('pallet_accept', { truckId: a.t.id, palletId: s.id });
+    const b = truckWith(ctx, 3, '9002');                                             // still loading
+    const h = ctx.run('report').history;
+    assert.deepEqual(h.map(r => [r.truckId, r.stage]), [[b.t.id, 'Loading'], [a.t.id, 'Unloading']]);
+    const ra = h[1];
+    assert.deepEqual([ra.day, ra.truck, ra.truckNo, ra.trailer, ra.seal, ra.ifs, ra.pallets, ra.pcs, ra.startedBy, ra.markedBy, ra.confirmedBy],
+        ['2026-10-14', 'Truck 1 · 10/14', 1, ctx.data.getLoad(a.t.id).data.trailer, '5260030', ['IF9001'], 43, 516, 'Miguel', 'Miguel', 'Jack K']);
+    assert.deepEqual(ra.corrections, ['+ ' + s.code + ' accepted · IF9001']);
+    assert.deepEqual([h[0].seal, h[0].markedAt, h[0].corrections], ['', '', []]);
+});
