@@ -2152,3 +2152,58 @@ test('fix wave 1: unposted counts a completed accept once; a settled pending ent
     assert.equal(ctx.data.getLoad(t.id).data.unposted, 2);              // the scanned pallet plus the accepted one, each once
     assert.equal(ctx.run('unload_get', { truckId: t.id }, false).view.decided.length, 1);
 });
+
+// ── fix wave 2: the accept target is computed after the claim ──
+// Runs `fn` once, right after the next call of obj[name] has read its result (the caller gets that earlier, now stale, result), then restores the hook.
+function hookOnce(obj, name, fn) {
+    const real = obj[name];
+    obj[name] = function () { obj[name] = real; const res = real.apply(this, arguments); fn(); return res; };
+}
+
+test('fix wave 2: a concurrent accept of the same SKU lands during the pre-claim phase; the second targets 528, not 516', () => {
+    const ctx = setup();
+    const { t } = departed(ctx, 42, '5260016');
+    const s1 = strayOn(ctx, t), s2 = strayOn(ctx, t);
+    let r1;
+    hookOnce(ctx.data, 'palletsByIds', () => { r1 = ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id }); });   // s1 completes while s2 is still doing its pre-claim reads (s2 keeps the pre-s1 view)
+    const r2 = ctx.run('pallet_accept', { truckId: t.id, palletId: s2.id });
+    assert.equal(r1.text, '⏳ Accepted · office sets IF9001 YSN100 to 516 · receipt waits');
+    assert.equal(r2.text, '⏳ Accepted · office sets IF9001 YSN100 to 528 · receipt waits');
+    assert.equal(ctx.data.getPallet(s2.id).data.decision.op.to, 528);
+    ctx.run('unload_done', { truckId: t.id }, false);
+    const realInfo = ctx.ns.ifInfo;
+    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 528 }]; return o; };
+    const ap = ctx.run('approvals');
+    assert.deepEqual([ap.receipts[0].pending.length, ap.receipts[0].decided.length, ap.receipts[0].canApprove], [0, 2, true]);
+    assert.deepEqual([ctx.data.getPallet(s1.id).status, ctx.data.getPallet(s2.id).status], ['received', 'received']);
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 528);
+});
+
+test('fix wave 2: the claim keeps the truck status it just read (a floor unload scan that moved departed to receiving is not rolled back)', () => {
+    ['pallet_accept', 'pallet_reject'].forEach(action => {
+        const ctx = setup();
+        const { t } = departed(ctx, 42, action === 'pallet_accept' ? '5260017' : '5260018');
+        const stray = strayOn(ctx, t);
+        assert.equal(ctx.data.getLoad(t.id).status, 'departed');
+        const flip = () => ctx.data.updateLoad(ctx.data.getLoad(t.id), { status: 'receiving' });
+        if (action === 'pallet_accept') hookOnce(ctx.ns, 'ifInfo', flip);
+        else {
+            hookOnce(ctx.data, 'getPallet', flip);                           // reject reads no NetSuite data: flip on its first pallet read
+        }
+        ctx.run(action, { truckId: t.id, palletId: stray.id, note: 'n' });
+        assert.equal(ctx.data.getLoad(t.id).status, 'receiving', action);
+    });
+});
+
+test('fix wave 2: NetSuite already above the target (the office pre-raised the IF) is not lowered by an accept', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260019');
+    const stray = strayOn(ctx, t);
+    const realInfo = ctx.ns.ifInfo;
+    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 528 }]; return o; };
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    assert.equal(r.outcome, 'accepted');
+    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_qty').length, 0);
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+});

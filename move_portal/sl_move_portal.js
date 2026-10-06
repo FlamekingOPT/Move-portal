@@ -63,6 +63,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // Flips the load to a working status under a fresh claim token, then re-reads it to confirm
     // no other request's write interleaved. Returns the fresh load and the claim to re-check later.
+    // `status` null keeps the status of the guarded fresh read (a decision must not roll back a status change that landed meanwhile).
     function claimLoad(Ld, status, phase, mustBe, extraData) {
         const cur = data.getLoad(Ld.id);               // never merge over a stale copy: re-read, then guard, then claim
         if (!cur) throw userErr('Load not found');
@@ -70,7 +71,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         Ld = cur;
         const extra = typeof extraData === 'function' ? extraData(cur) : extraData;   // computed from the guarded copy, written with the claim
         const claim = String(Date.now()) + Math.random().toString(36).slice(2, 8);
-        data.updateLoad(Ld, { status: status, data: Object.assign({ workingAt: Date.now(), error: '', phase: phase, claim: claim }, extra || {}) });
+        data.updateLoad(Ld, { status: status === null ? Ld.status : status, data: Object.assign({ workingAt: Date.now(), error: '', phase: phase, claim: claim }, extra || {}) });
         const fresh = data.getLoad(Ld.id);
         if (fresh.data.claim !== claim) throw userErr((Ld.number || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
         return { Ld: fresh, claim: claim };
@@ -1146,19 +1147,30 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         decideGuard(x0);
         const p0 = mustFlaggedOn(x0, a.palletId), item = String((p0.lines[0] || {}).item || ''), pcs = Number(p0.pieces) || 0;
         if (!item || !pcs || (p0.lines || []).length !== 1) throw userErr('Only a single-SKU pallet can be accepted here: reject it and call the office');
-        const info = ns.ifInfo(), sk = skuNames([item])[item] || item;
-        const target = ifForItem(x0, item, info);
-        if (!target) return acceptOffIf(x0, p0, item, sk, pcs, c);           // Task 2
+        const sk = skuNames([item])[item] || item;
         // The target is what the IF must read once every accepted pallet of this SKU on it is in: the truck's alloc plus the other pending accepts, plus this pallet.
-        const base = target.alloc + pendingAccepts(x0).filter(q => String(q.id) !== String(p0.id) && q.data.decision.ifId === target.ifId && String(q.data.decision.item) === item)
-            .reduce((n, q) => n + (Number(q.data.decision.pcs) || Number(q.pieces) || 0), 0), to = base + pcs;
-        const op = { op: 'if_qty', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, item: item, from: target.from, to: to };
-        const dec = { kind: 'accepted_pending', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, toNum: target.toNum, item: item, sku: sk, pcs: pcs, op: op, by: c.user, at: c.now.stamp };
-        const cl = claimLoad(x0, x0.status, 'accept', decideGuard, {});
+        const planFor = (Ld, info) => {
+            const target = ifForItem(Ld, item, info);
+            if (!target) return null;
+            const base = target.alloc + pendingAccepts(Ld).filter(q => String(q.id) !== String(p0.id) && q.data.decision.ifId === target.ifId && String(q.data.decision.item) === item)
+                .reduce((n, q) => n + (Number(q.data.decision.pcs) || Number(q.pieces) || 0), 0), to = base + pcs;
+            const op = { op: 'if_qty', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, item: item, from: target.from, to: to };
+            return { target: target, base: base, to: to, op: op,
+                dec: { kind: 'accepted_pending', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, toNum: target.toNum, item: item, sku: sk, pcs: pcs, op: op, by: c.user, at: c.now.stamp } };
+        };
+        if (!planFor(x0, ns.ifInfo())) return acceptOffIf(x0, p0, item, sk, pcs, c);           // Task 2 (fail-fast: nothing claimed yet)
+        const cl = claimLoad(x0, null, 'accept', decideGuard, {});
         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
         const release = patch => { assertClaim(id, claim, label, 'accept'); data.updateLoad(data.getLoad(id), { data: Object.assign({ claim: '', workingAt: 0, phase: '' }, patch) }); };
-        try { mustFlaggedOn(cl.Ld, a.palletId); } catch (e) { dropClaim(id, claim); throw e; }   // another decision may have landed between the first check and the claim
-        const done = target.from === to;                            // NetSuite already reads the target (a retry after a write that landed, or the office did it)
+        let plan;
+        try {
+            mustFlaggedOn(cl.Ld, a.palletId);                       // another decision may have landed between the first check and the claim
+            if (ns.resetCache) ns.resetCache();
+            plan = planFor(cl.Ld, ns.ifInfo());                     // the real target: from the claimed truck, with the pending accepts and NetSuite as they are now
+            if (!plan) throw userErr('This truck changed while it was being checked. Try again.');
+        } catch (e) { dropClaim(id, claim); throw e; }
+        const target = plan.target, base = plan.base, to = plan.to, op = plan.op, dec = plan.dec;
+        const done = target.from >= to;                             // NetSuite already reads the target or more (a retry after a write that landed, or the office did it): never lower it
         let res = { planOnly: [] }, err = null;
         if (!done) {
             try {
@@ -1201,7 +1213,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x0 = mustTruck(a.truckId);
         decideGuard(x0);
         const p0 = mustFlaggedOn(x0, a.palletId);
-        const cl = claimLoad(x0, x0.status, 'reject', decideGuard, {});
+        const cl = claimLoad(x0, null, 'reject', decideGuard, {});
         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
         const text = '↩ Rejected · "' + note + '" · back to labeled';
         let p;
