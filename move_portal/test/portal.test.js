@@ -91,9 +91,10 @@ test('label requests: floor asks, manager prints once, radio requests keep the c
 test('void only unloaded labels; relabel prints a new one and voids the old', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 2);
-    ctx.run('pallet_void', { palletId: ps[0].id, reason: 'Sent to customer' }, false);
+    assert.throws(() => ctx.run('pallet_void', { palletId: ps[0].id, reason: 'Sent to customer' }, false), /Managers only/);   // the floor can't void
+    ctx.run('pallet_void', { palletId: ps[0].id, reason: 'Sent to customer' });
     assert.equal(ctx.data.getPallet(ps[0].id).status, 'void');
-    assert.throws(() => ctx.run('pallet_void', { palletId: ps[0].id }, false), /Only labels not on a load/);
+    assert.throws(() => ctx.run('pallet_void', { palletId: ps[0].id }), /Only labels not on a load/);
     assert.throws(() => ctx.run('pallet_relabel', { palletId: ps[1].id, lines: [LINE201] }, false), /Managers only/);
     const r = ctx.run('pallet_relabel', { palletId: ps[1].id, lines: [{ item: '11', sku: 'YSN201', cfg: 'A', pcs: 90 }] });
     const fresh = ctx.data.palletsByJob(r.job)[0];
@@ -902,7 +903,7 @@ test('fix11: a load scan that is not a labeled pallet reads no TO lines and no t
     const a = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
     const b = ctx.run('truck_start', { ifIds: ['9002'], trailer: tr() }).view.truck;
     ctx.run('truck_scan', { truckId: a.id, raw: ps[0].code });
-    ctx.run('pallet_void', { palletId: ps[1].id }, false);
+    ctx.run('pallet_void', { palletId: ps[1].id });
     const to = { n: 0 }, origTo = ctx.ns.openToLines;
     ctx.ns.openToLines = () => { to.n++; return origTo(); };
     const lists = countCalls(ctx, 'loadsByStatus');

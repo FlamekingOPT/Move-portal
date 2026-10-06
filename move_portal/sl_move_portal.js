@@ -508,7 +508,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { pallet: pubPallet(p, { loadNumber: Ld ? Ld.number : '', edLines: edLines }) };
     });
 
-    act('pallet_void', false, (a, c) => {
+    act('pallet_void', true, (a, c) => {
         const p = mustPallet(a.palletId);
         if (p.status !== VP.LABELED) throw userErr(p.code + ' is ' + p.status + '. Only labels not on a load can be voided.');
         data.updatePallet(p, { status: VP.VOID, data: { voidReason: String(a.reason || '').slice(0, 60), voidedBy: c.actor, voidedAt: c.now.stamp } });
