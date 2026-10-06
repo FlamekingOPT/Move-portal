@@ -3,156 +3,54 @@
 A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The target is Nov 15, a Sunday, so the last move day is Sat Nov 14; move days are Mon–Sat. It's a separate app from the picker portal (which lives in `FlamekingOPT/netsuite-picker-portal`, folder `G:\My Drive\Netsuite OPT`). The picker portal is untouched.
 
 ## Where things live
-- **Repo:** https://github.com/FlamekingOPT/Move-portal (branch `main`).
+- **Repo:** https://github.com/FlamekingOPT/Move-portal. **All work is on branch `feat/v3-verification`** (pushed, not merged to `main`). `main` still has the old v2 code.
 - **Working copy:** `G:\My Drive\Move-portal`, reachable from both the desktop and the laptop. GitHub is the sync point: `git pull` before you start and `git push` when you're done, so the two machines don't fight over Drive sync.
-- The old laptop worktree `C:/Users/Jack/wt/move-portal` (branch `feat/move-portal` in the Netsuite OPT repo) is **retired**. Don't commit there.
-- History was split out of the Netsuite OPT repo on 2026-09-28. Commit hashes quoted in the ledger and older handoffs are from that repo and **won't match** hashes here; match by commit message.
+- The old laptop worktree `C:/Users/Jack/wt/move-portal` is **retired**. Don't commit there.
+- Commit trailer: `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (model changed 2026-10-06; earlier commits say Opus 5.5).
 
 ## Files
-- `move_portal/`: `move_core`, `move_verify` (v3 pure rules), `move_label_template`, `move_data`, `move_tx` (v3 `apply` ops only), `move_ui`, `sl_move_portal`, `label_tester.html`.
-- `move_portal/local/`: node-only `snapshot_ns.js` (reads a prod snapshot) and `local_store.js` (persists to `local/store.json`, gitignored).
-- `move_portal/snapshot/` (gitignored): `prod-<date>.json` snapshots pulled read-only via the SuiteQL connector.
-- `move_portal/test/`: node tests with in-memory fakes, plus `preview_server.js` = the **local beta** on port 8765 (launch config `move-preview` / `move-preview-beta`). Manager view `http://localhost:8765/`, floor view `/?floor=1`. It serves the newest `snapshot/prod-*.json` (else the test fixture) and saves to `local/store.json`.
-- **Tests:** `node --test "move_portal/test/*.test.js"` → **239/239 pass** (2026-10-06, v3 + Verify Load + floor/manager rework). A bare folder path fails on Windows.
-- **Spec:** `docs/superpowers/specs/2026-09-27-move-portal-design.md`. **D2 is SUPERSEDED** by `docs/superpowers/specs/2026-09-28-move-portal-bulk-to-design.md`.
-- **Plan:** `docs/superpowers/plans/2026-09-27-move-portal.md` (Tasks 0–15).
-- **Mockup:** `docs/mockups/2026-09-27 move portal mockup.html`.
-- **SDD ledger, with every ruling:** `docs/sdd-ledger/progress.md`, plus the task briefs and reports. The review diffs were left out (the history covers them).
+- `move_portal/`: `move_core` (labels, configs, calendar), `move_verify` (**v3 pure rules**: scan rules, verifyLoad, departure/receipt plans, write gate, shadow compare, SuiteQL text + snapshot reads), `move_tx` (NetSuite writes: `apply(op)` for `if_qty`, `if_stamp`, `if_create`, `receipt`), `move_data` (custom records), `move_ui` (the single-page client), `sl_move_portal` (Suitelet actions), `move_label_template`, `label_tester.html`.
+- `move_portal/local/` (node only): `snapshot_ns.js` (reads a prod snapshot as the NetSuite data layer), `local_store.js` (persists to `local/store.json`, gitignored), `label_html.js` (printable 4×6 QR labels for the local beta).
+- `move_portal/snapshot/` (gitignored): `prod-<date>.json`, pulled read-only via the SuiteQL connector. Current: `prod-2026-10-05.json` (12 planned IFs, 6 open TO lines, **no `onHand` yet**).
+- `move_portal/test/`: node tests with in-memory fakes (`fake_data`, `fake_tx`, fixture `fixtures/snapshot_sample.json`), plus `preview_server.js` = the **local beta**.
+- **Tests:** `node --test "move_portal/test/*.test.js"` → **239/239 pass** (2026-10-06). The quoted glob is required on Windows.
+- **Specs** (each amends the one before): `docs/superpowers/specs/2026-10-01-move-portal-verification-design.md` (v3: portal = verification) → `2026-10-05-move-portal-verify-load-design.md` (Verify step, Needs IF fix, Take off, Correct the IF) → `2026-10-06-move-portal-floor-manager-rework-design.md` (trailer-named trucks, short-pick note, other items, Shipments + manager ship confirm, merged manager tabs). The 2026-09-27/28 specs are superseded.
+- **Plans:** `docs/superpowers/plans/2026-10-05-move-portal-verification.md` (Tasks 1–14 done; **Tasks 15–16 = Stage 2, not started**), `2026-10-05-move-portal-verify-load.md` (done), `2026-10-06-move-portal-floor-manager-rework.md` (done).
+- **SDD ledger:** `docs/sdd-ledger/progress.md` (every ruling, review finding, minor and ON-MODE GATE item), with every task brief/report under `docs/sdd-ledger/v3/`, `verify-load/`, `rework/`.
+- **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
-## 🧭 READ FIRST — HANDOFF (2026-10-06): FLOOR/MANAGER REWORK BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA (floor + manager), THEN STAGE 2 (Tasks 15–16) ON HIS GO
-- **Rework** (spec `docs/superpowers/specs/2026-10-06-move-portal-floor-manager-rework-design.md`, plan `docs/superpowers/plans/2026-10-06-move-portal-floor-manager-rework.md`) is built on `feat/v3-verification`, every task reviewed, final review + fix wave, re-review: ready. Tests 239/239. Browser-walked 2026-10-06 (floor + manager at 375px, no errors).
-- **Trucks are named by trailer #** (entered at Start truck, ≤20 chars, unique among open trucks; "✎ trailer" edits it). **Short pick → required typed note** (shown on the manager's Correct card). **Other items** (desc × count) ride on the truck, print on the manifest, checklist at unload.
-- **Floor tabs:** Load out (default) · Shipments · Request label; Inbound: Unload. No Void. **Shipments:** Ready trucks → seal # → **Mark shipped** → "Waiting for manager". **Manager tabs:** Labels · Approvals · Dashboard · Report (no toggle). Approvals order: Ship confirmations (Confirm shipped / Send back + note; amber at 30 min) → **Correct the IF** (one big card per IF) → Trucks (quiet; + Add an IF / Drop) → Retry/Release → Receipts.
-- **PROCESS NOTE:** a truck can't be unloaded at Tippecanoe until a manager confirms shipping — managers confirm before the truck pulls out.
-- **Commit trailer is now `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`** (model changed 2026-10-06).
-- **Local store:** the pre-rework store was archived as `move_portal/local/store.before-rework-2026-10-06.json` (its trucks had no trailer); the beta starts clean.
-- **Snapshot refresh now needs two more things:** the `onHand` query (`v.SQL('35','46').onHand`, from `aggregateItemLocation`) and the onHand item ids added to the `items` query, so the Labels → Print plan shows real Riverside stock. The NetSuite connector in the 2026-10-06 session could NOT read `aggregateItemLocation`/`location` (restricted role) — Jack to reconnect, then "refresh the move snapshot". Until then the local Print plan uses fixture stock.
-- **Task 15 must-dos** unchanged (lazy `move_ns`, SQL status filter, prod check of ItemShip search filters) plus: `truckNoForDay` same-day race; Shipments N+1 `truck_get`.
+## 🧭 READ FIRST — HANDOFF (2026-10-06 evening) · ⏭ NEXT SESSION CHECKLIST
+**State:** v3 + Verify Load + floor/manager rework are built, reviewed (per-task reviews, final reviews, fix waves) and pushed on `feat/v3-verification`. The local beta works end to end and was browser-walked on 2026-10-06 (floor and manager at phone width, no console or server errors). Write mode is `off` locally: nothing touches NetSuite.
 
-## (previous) HANDOFF (2026-10-05, night): VERIFY LOAD BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
-- **Verify Load** (spec `docs/superpowers/specs/2026-10-05-move-portal-verify-load-design.md`, plan `docs/superpowers/plans/2026-10-05-move-portal-verify-load.md`) is built on `feat/v3-verification`, with every task reviewed plus a final review (verdict: ready for the beta). Tests: 203/203.
-- **Floor flow:** scan → **Verify load** → ✅ Ready to ship (only then trailer/seal) or ⚠ Needs IF fix (instructions; the truck stays open; take pallets off with ➖ **Take off** mode). A 30 s re-check, and a bottom banner on every floor device when a waiting truck matches. New office IFs show as "Add to this truck".
-- **Manager:** Approvals → Needs IF fix cards: **Correct the IF** (`off` = plan only; `qty` = IF qty edit; `on` = also a Packed add-on IF with find-before-create), Drop IF, add any free IF, Re-check. Departure needs no manager. A stuck departure has **Retry** or **Release to Needs IF fix**.
-- **Removed:** pending departures, manager departure approval, "Depart without this edit".
-- **Local beta limits:** the snapshot is static and write mode is `off`. So the office-fix → ready → alert loop only happens after "refresh the move snapshot" plus a server restart. Don't set the local beta to `qty` (`fake_tx` doesn't update the snapshot).
-- **Smoke-test config:** `move-preview-smoke` runs on :8798 with `move_portal/local/smoke-store.json` (gitignored); delete that file afterwards.
-- **Task 15 must-dos:** lazy `move_ns` reads plus an SQL status filter (recheck cost); prod check of the ItemShip search filters (status A/B plus createdfrom). The ON-MODE GATE list is in the SDD ledger (VL3/VL4) and doesn't affect `qty`.
+**Tomorrow, in order:**
+1. `git pull`, then start the beta (see "Run the beta"). The store starts clean (the pre-rework store is archived as `move_portal/local/store.before-rework-2026-10-06.json`; its trucks had no trailer).
+2. **Jack reconnects the NetSuite connector.** The 2026-10-06 session's connector could not read `aggregateItemLocation` or `location` (a restricted role). Test with `SELECT id, name FROM location WHERE id IN (35,46)`.
+3. **Refresh the snapshot** (procedure below). It now needs the `onHand` query, and the onHand item ids must be added to the `items` query. Then restart the beta: Labels → Print plan should show real Riverside stock.
+4. **Jack tests the floor and manager flows** and lists changes. Expect a short brainstorm → spec amendment → plan → subagent build, the same loop as 2026-10-05/06.
+5. Then **Stage 2 on Jack's go**: Task 15 (live `move_ns.js` via N/query) and Task 16 (prod records, files, script, two deployments, supervised `qty` write check on one Packed IF). Task 15 must-dos: lazy `move_ns` reads + an SQL status filter (the 30 s floor recheck polls `trucks_recheck`); `ns.resetCache()` already runs per action; prod check of the ItemShip search filters (status A/B + createdfrom) used by add-on find-before-create; `truckNoForDay` same-day race; Shipments N+1 `truck_get`.
 
-## (previous) HANDOFF (2026-10-05, late): v3 LOCAL BETA BUILT · ⏭ NEXT = JACK TRIES THE LOCAL BETA, THEN STAGE 2 (Tasks 15–16) ON HIS GO
-- **Branch `feat/v3-verification`** (pushed; not merged to main). Plan `docs/superpowers/plans/2026-10-05-move-portal-verification.md`: Tasks 1–14 done, every task reviewed. The SDD ledger with every review finding and minor is in `docs/sdd-ledger/progress.md` (v3 section).
-- **Final-review fix wave done (items 1–11)** on `feat/v3-verification` (not pushed): skip a refused IF edit (`depart_skip_write`), grouped pallet counts, stale-copy guards, IF re-read at departure, TO room reservations, floor deploy gate (`customdeploy_move_portal_floor`), NetSuite-user approvers, full-length truck JSON reads, flagged list on the truck, no empty departures, minors. Report: `.superpowers/sdd/final-fix-report.md`.
-- **Run the beta:** `node move_portal/test/preview_server.js` → manager `http://localhost:8765/`, floor `http://localhost:8765/?floor=1` (scanners on the same wifi: `http://<pc-ip>:8765/?floor=1`). Write mode is `off`. Delete `move_portal/local/store.json` to start clean.
-- **Refresh the snapshot:** ask Claude to "refresh the move snapshot". It runs `v.SQL('35','46')` queries (toLines, ifLines, then links/receipts on those ids, items) read-only and writes `move_portal/snapshot/prod-<date>.json`, as in plan Task 13 Step 5. The first one is `prod-2026-10-05.json`: 12 planned IFs, 6 open TO lines.
-- **Smoke-tested 2026-10-05 against that snapshot:** load out IF72287 (short + YSN301 add-on from TO11710, YSN335-ALM blocked: TO11716 has no qty left) → floor request → manager approve → unload 21/23 + never-loaded flag → short receipt approved → report rows ⏳ (office hasn't acted yet). No console/server errors; no horizontal scroll at 375px.
-- **Decisions made during the build (Jack, 2026-10-05):** compare seals by digits; NetSuite writes must return an id; untick IF lines instead of removeLine (+ refuse to empty an IF); departure/receipt claim guards with 10-min stale Retry; standing approval to fix behavior-neutral hardening without asking.
-- **Stage 2 must check in prod (on a test IF):** does TO `quantityfulfilled` count Picked/Packed IFs; bins/inventorydetail on Riverside items; `itemreceive=false` on a Packed IF drops the line; `defaultValues.itemfulfillment` on TO→receipt.
-- **Prod facts:** Tippecanoe = location **46** (sandbox 42). Trailers in rotation: 537224, 416460, 105488, 522051, 211659, 543804, 487491.
+**How the portal works now (so you can answer Jack without reading code):**
+- **Floor** (`?floor=1`, no login): tabs **Load out** (default) · **Shipments** · Request label; Inbound: **Unload**. Start truck = pick IF(s) + **trailer #** (the truck is "Trailer 537224"; ✎ edits it). Scan pallets (➕ Load / ➖ **Take off** returns a pallet to Riverside without voiding). **+ Add other item** (desc × count, e.g. office desks) rides on the truck, ignored by Verify, checklist at unload. **Verify load** → ✅ Ready (go to Shipments) or ⚠ **Needs IF fix** with instructions; a short asks for a required typed note. The truck stays open; a 30 s recheck + bottom banner on every floor device when it matches. New office IFs appear as "Add to this truck". **Shipments:** seal # → **Mark shipped** → "Waiting for manager".
+- **Manager** (logged-in page): tabs **Labels** (requests queue, Print a SKU, print plan, Reprint incl. void, SKU configs) · **Approvals** · Dashboard · Report. Approvals order: **Ship confirmations** (Confirm shipped = Truck # of the day + stamp plan; Send back with a note; amber after 30 min) → **Correct the IF** (one big card per IF, with the floor's note; `off` = plan only, `qty` = IF qty edit, `on` = + Packed add-on IF) → **Trucks** (quiet card: + Add an IF / Drop) → Retry / Release → Receipts (every receipt needs a manager).
+- **PROCESS NOTE for managers:** a truck can't be unloaded at Tippecanoe until a manager has confirmed it shipped. Confirm before the truck pulls out.
+- **Extra labeled pallets** load only when an open office TO covers the SKU (else "set aside, call the office"). The portal never creates TOs.
 
-## (previous) HANDOFF (2026-10-05): SPEC WRITTEN · ⏭ NEXT = JACK REVIEWS SPEC, THEN superpowers:writing-plans, THEN LOCAL BETA
-- **Spec:** `docs/superpowers/specs/2026-10-01-move-portal-verification-design.md` (V1–V12). It supersedes both older specs.
-- **Open questions closed 2026-10-05:**
-  - Extra SKU with no open TO → **block the scan**.
-  - BOL reprint → **keep the original BOL #, REV 2, list all IFs**.
-  - `custbody7` = `SEAL: <n>` is **confirmed** in prod.
-- **New decisions 2026-10-05:**
-  - Write modes are `off | qty | on`. The **Suitelet beta = `qty`**: a manager-approved correction edits the Packed IF line qty, and nothing else is written.
-  - **Every receipt needs a manager OK.**
-  - Manager approvals are made only on the logged-in page.
-- **Prod fact:** only 5 trailers rotate (537224, 416460, 105488, 522051, 211659), and every seal is unique.
+**Run the beta:** launch config `move-preview` (or `node move_portal/test/preview_server.js`) → manager `http://localhost:8765/`, floor `http://localhost:8765/?floor=1`; scanners on the same Wi-Fi use `http://<pc-ip>:8765/?floor=1` (the PC was 192.168.77.133 on 2026-10-05). It must be started by the Claude app or in a terminal that stays open; it dies with the session. Print opens a 4×6 QR label page (print from Chrome: scale Default, headers off, 4×6, margins None; needs internet for the QR library). Smoke tests use `move-preview-smoke` on :8798 with `move_portal/local/smoke-store.json` (delete it afterwards). Never kill node by image name.
 
-## (previous) HANDOFF (2026-10-01): REDESIGN, PORTAL = VERIFICATION ONLY
-This **supersedes** both the original design and the bulk-TO amendment (2026-09-28). Brainstorm decisions below are Jack's, confirmed 2026-10-01. No code has changed yet.
+**Refresh the snapshot** ("refresh the move snapshot"): `node -e "const v=require('./move_portal/test/amd').loadAmd('move_verify.js'); console.log(JSON.stringify(v.SQL('35','46'),null,1))"` prints the queries. Run `toLines`, `ifLines`, then `links` with `{IDS}` = the distinct IF ids, `receipts` with `{IDS}` = the distinct receipt ids, **`onHand`**, and `items` with `{IDS}` = the distinct items from toLines **plus onHand**. Write `move_portal/snapshot/prod-<date>.json` as `{pulledAt, locFrom:"35", locTo:"46", toLines, ifLines, links, receipts, onHand, items}` with the rows exactly as returned (lowercase keys). Sanity: `buildReads(...).plannedIfs().length` and `.onHand()`. Restart the beta.
 
-**Process (what really happens today, from real prod data + BOL photos):**
-- Office creates the TO (1 per SKU), the **IF ahead of time (status Packed)**, and a VICS BOL. Today's BOL # = the TO # (not unique), "Additional shipper info" = the IF #. 1 BOL = 1 IF.
-- The floor hand-writes "Truck #N" + date, trailer #, seal #, departure time and carrier (Armstrong Group) on the BOL.
-- The office types trailer → **Container Number** (`custbody_rsm_container_no`) and `SEAL: <n>` → **Master BOL Number** (probably `custbody7`, ⚠ confirm) on the **Item Receipt** at Tippecanoe.
-- Real data: the only Riverside move IFs so far are 17 on **TO11663 / YSN100**, created by Cesar Uicab. **42 pallets × 12 = 504 per truck.** No truck id on any IF. 30 more IFs to Tippecanoe are import containers from In-Transit California (Sherylle); the tracker already excludes them (it filters ship-from = Riverside).
-- The tracker artifact (https://claude.ai/artifact/WP1LLc7kJ6Jb8kJXvzYTkG) now links each receipt to its IF via `PreviousTransactionLink` linktype `TOrdCost` (FIFO only as a `*` fallback). 1 receipt = 1 IF.
+**Decisions Jack made (all in the specs/ledger):** block a scan with no open TO; BOL reprint keeps the original BOL # (REV 2, lists all IFs); write modes `off | qty | on`, Suitelet beta = `qty`; every receipt needs a manager; option C corrections (office fixes in NetSuite, manager can Correct in the portal); floor stays open after a failed Verify; trailer # names the truck; short-pick reason = free text; manager confirms shipping (option B); extra labels only with a TO (option A); other items as typed lines (option A); several managers, so no PIN; standing approval to fix behavior-neutral hardening without asking.
 
-**New design (decided):**
-1. **Office keeps building the TO + IF (Packed) + BOL.** Each Packed IF on a move TO = a planned truck in the portal. The portal does NOT build TOs/IFs for planned trucks.
-2. **Labels:** unique serial + SKU + units (`PLT<serial>⇥SKU⇥pcs`), **no IF on the label**. The scan at the dock ties a pallet to an IF. Duplicate scans are caught.
-3. **Loading:** scans verify against the IF lines (expected vs scanned pallets).
-4. **Seal entered at departure (Riverside)** assigns **Truck # of the day**, stamps trailer + seal + time on every IF on the truck (same 2 fields the office uses), and marks them Shipped. All NetSuite writes happen at that one confirm, never per scan.
-5. **Corrections (option C):** short → lower the IF qty (manager OK). Over, same SKU → raise the IF if the TO has qty left. Extra SKU → **add-on IF** from its oldest open office TO, on the same truck/seal. The BOL gets reprinted listing all IFs.
-6. **Unload at Tippecanoe:** scan every pallet; receipt per IF for the scanned qty, with trailer/seal copied; missing serials stay in transit; pallets that were never loaded get flagged.
-7. **Tracker counts trucks by distinct seal** (fallback 1 IF = 1 truck). Needs a small tracker update later.
-8. **Beta = option 4:** the real Suitelet with `WRITE_MODE='off'`. No writes to IFs/TOs/receipts; it writes only its own custom records (labels, scans, trucks) plus a saved **"would write" plan**. The floor uses a no-login URL (like the picker portal). It runs on **prod data**; the sandbox is skipped.
-9. **Build it locally first:** the local preview server + a **prod snapshot JSON** (pulled read-only via the SuiteQL connector) + a local scans store, then a shadow-compare report (plan vs what the office actually did in NetSuite). Same code as the Suitelet; only the data layer swaps. Optional: floor scanners hit `http://<pc>:8765` over wifi.
+**Stage 2 / ON-MODE GATE items** (nothing here affects the `off`/`qty` beta; full list in the ledger): depart_release after a landed-but-unrecorded stamp; partly stamped truck with a refused stamp has no exit; orphan add-on block too broad / should reflect live IF state; token-find must refuse an IF another truck holds. Prod checks on a test IF before `qty`: TO `quantityfulfilled` counts Picked/Packed?; bins/inventorydetail on Riverside items; `itemreceive=false` drops a line on save; `defaultValues.itemfulfillment` on TO→receipt; Long Text read-back of a ~10 KB truck via `getLoad` and `loadsByStatus`; `record.load` on a missing record.
 
-**Still open:** an extra SKU with no open office TO (overflow TO vs block the scan); confirm `custbody7` = Master BOL Number; BOL # on a reprint.
+**Prod facts:** Riverside = location **35**, Tippecanoe = **46** (sandbox 42). `custbody7` = `SEAL: <n>`, `custbody_rsm_container_no` = trailer (confirmed on IR20597). Trailers in rotation: 537224, 416460, 105488, 522051, 211659, 543804, 487491. Planned truck = an IF with status A (Picked) or B (Packed) on a Riverside→Tippecanoe TO. Receipt→IF link: `previoustransactionlink` linktype `TOrdCost`, previousdoc = IF.
 
-**Mockups:**
-- `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (current; also live at https://claude.ai/artifact/5W7K931oFEMdzTKoq62fNV)
-- `docs/mockups/2026-10-01 move portal v2 mockup.html` (superseded: build-the-IF model)
-- ⚠ The Claude app's file viewer doesn't run page scripts. Open mockups in Chrome or serve them (`python -m http.server` in docs/mockups).
+**Tracker:** the Move Tracker artifact (https://claude.ai/artifact/WP1LLc7kJ6Jb8kJXvzYTkG) reads NetSuite directly and stays the single progress view. Agreed direction: the portal runs the floor and writes to NetSuite; the tracker reads it. Later: count trucks by seal, show portal trucks still on the dock, drop the portal Dashboard. Not built yet.
 
-**⏭ NEXT:** write the spec `docs/superpowers/specs/2026-10-01-move-portal-verification-design.md` (superpowers:brainstorming, final steps), get Jack's review, then superpowers:writing-plans, then build the local beta. Kept from the old code: label template, QR payload, test harness, preview server. Replaced: load/claim/bulk-TO/IF-building logic.
-
-## (superseded) 🧭 SANDBOX DEPLOY DONE (2026-09-28, Task 13 steps 1–4)
-- **Move Settings row 1:** `labelCode` = `qr`, `start` = **2026-09-30** (first move day, per Jack).
-- **File Cabinet** `SuiteScripts/MovePortal` = folder **331983**: move_core **2055084**, move_data **2055085**, move_label_template **2055086**, move_tx **2055087**, move_ui **2055088**, sl_move_portal **2055089**.
-- **Script** `customscript_move_portal` = id **893** (Suitelet, API 2.1). **Deployment** `customdeploy_move_portal` = id **2771**: Testing (owner-only), Execute As Current Role, audience Administrator, log Debug.
-- **URL:** `https://8211645-sb1.app.netsuite.com/app/site/hosting/scriptlet.nl?script=893&deploy=1`
-- **Verified:** the page loads in manager view with no console errors (so `clientMain.toString()` works under GraalJS). `item_lookup` YSN201 returns on-hand 181,918 at Riverside. `dashboard` works (42 move days left).
-- **⏭ Next:** Jack prints 1–2 **Custom** labels from "Print a SKU" to the 4×6 printer and scans one. That checks the BFO PDF, the QR code and the page size. No configs are loaded (0 rows), so Custom is the only option.
-- **Upload gotcha:** the File Cabinet and Deployment Save buttons ignore automation clicks about half the time. `document.querySelector('#btn_multibutton_submitter').click()` works. Fix the Folder with `nlapiSetFieldValue('folder', <id>)`, because it defaults to the last-used folder.
-
-## 🧭 READ FIRST — HANDOFF (2026-09-28, latest): DESIGN CHANGED, NEXT = IMPLEMENTATION PLAN
-**New design (spec written; no code changed yet):**
-- The office creates **1 transfer order per SKU** by hand.
-- **1 truck = N item fulfillments** against those TOs.
-- Anything scanned that no office TO covers goes on **1 overflow TO**, created at Approve & Ship.
-
-**⏭ Next:** write the implementation plan for the bulk-TO design (superpowers:writing-plans), then build it. It replaces the "1 truck = 1 TO = 1 IF" logic in Approve & Ship and Approve Receipt. Task 13 sandbox deploy should wait until this is built, or deploy the current code only as a smoke test.
-
-## Earlier handoff (2026-09-28): code complete + reviewed, sandbox setup done
-- All batches passed task review. The final opus review's I1–I4 were fixed ("final-review wave" commit) and re-reviewed clean.
-
-**Key decisions (original design):**
-- Claim-token compare-and-set on ship and receive; `STALE_MS` = 10 min.
-- An orphaned TO is adopted by memo token `[mv:<loadId>:<kind>]`.
-- Undo is blocked while a receipt is pinned.
-- Catch-up loads are kept out of the outbound screens.
-- **QR code only on labels (Jack).** Payload `PLT<id>⇥SKU⇥pcs`, with every line for mixed pallets. Lookups use the leading `PLT<id>`; scan inputs keep Tab.
-- Deferred minors are in the ledger.
-
-**Sandbox setup DONE (Task 0):**
-- **Tippecanoe Warehouse location = id 42.** Riverside = 35 (same as prod).
-- **Manual TO test:**
-  - TO8719 (2587371) saved straight to Pending Fulfillment, so there's **no TO approval**.
-  - IF53831 (2587372) Shipped: Riverside −1, **native in-transit**.
-  - IR14492 (2587373): Tippecanoe +1.
-  - `ue_if_filled_status` stamps TO lines Filled (harmless). No RSM/SPS errors.
-- **Warehouse Portal Manager (2537):** Receive Order Full added; it already had TO/IF/Fulfill Full.
-- **Record types:** settings 742, config 743, load 744, pallet 745, scan 746, label_req 747. **All 32 fields** have exact `custrecord_mv*` ids.
-- **Move Settings row id 1:** locFrom 35, locTo 42, `start` 2026-10-01 (PLACEHOLDER; Jack to confirm), **labelCode 'both' (⚠ change to 'qr')**, toStatus B.
-- **Tip:** `nlapiSetFieldValue/Text` fills NetSuite UI forms, but List/Record field forms only save on a real mouse click on Save.
-
-**Task 13 / 14 checklist (still open):**
-1. **Move Settings row 1:** set labelCode → `qr`; set start → the real first move day.
-2. **Task 13:**
-   - Upload the 6 files to File Cabinet `SuiteScripts/MovePortal`.
-   - Create the Script with the file-first "New Script" page (not the 1.0 chooser): `customscript_move_portal`.
-   - Create the deployment `customdeploy_move_portal`: Testing, Execute As Current Role, audience Admin + Warehouse Portal Manager + Portal Picker + FK WH Mgr variants.
-   - Smoke test: CSV import, print PDF, scan.
-3. **Task 14:** the full flow, checking inventory at each step. Also verify:
-   - `clientMain.toString()` works under GraalJS;
-   - BFO accepts `<body width/height>` and `&#9;` in the QR value;
-   - a late 2nd receipt picks the right IF;
-   - Portal Picker item search works under the location restriction;
-   - a 5-line MIXED label fits one 4×6;
-   - walk the docks for cell signal.
-4. Prod (Task 15) only on Jack's go.
-
-**Label tester:** `move_portal/label_tester.html`
-- QR-only default, and the payload carries SKU and qty.
-- **Printing only works from a real Chrome tab.**
-- For a clean print: Scale **Default**, **Headers and footers off**, 4×6, margins None.
-- Open question for Jack: should the tester build a true 4×6 PDF?
-
-**Still unknown:** the scanner model, and whether it's wifi or cell.
+## Sandbox history (superseded; kept for ids)
+- Sandbox deploy 2026-09-28 of the **v2** code: File Cabinet folder 331983, script `customscript_move_portal` id 893, deployment `customdeploy_move_portal` id 2771. Record types: settings 742, config 743, load 744, pallet 745, scan 746, label_req 747, all 32 `custrecord_mv*` fields. Move Settings row 1: locFrom 35, locTo 42. Sandbox manual TO test: TO8719 → IF53831 (native in-transit) → IR14492, no TO approval step, `ue_if_filled_status` harmless. Stage 2 recreates the same record types **in prod** (plan Task 16) and skips the sandbox.
+- Upload gotcha: File Cabinet / Deployment Save buttons ignore automation clicks about half the time; `document.querySelector('#btn_multibutton_submitter').click()` works. Set the folder with `nlapiSetFieldValue('folder', <id>)`.
+- Still unknown: the scanner model, and whether the docks have Wi-Fi or cell.
 
 ## NetSuite accounts
 - Sandbox: https://8211645-sb1.app.netsuite.com
