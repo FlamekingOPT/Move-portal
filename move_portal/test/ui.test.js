@@ -189,3 +189,9 @@ test('final fixes: trailer edit on the truck header; ship_mark sends a trailer w
     const src = ui._clientMain.toString();
     ['data-act="ttrailer"', '✎ trailer', "api('truck_set_trailer'", 's_tr_', 'trl ? { trailer: tv } : {}'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
 });
+
+test('final fixes: manager Open truck shows the error in its modal when truck_get fails', () => {
+    const src = ui._clientMain.toString();
+    const i = src.indexOf('ACT.opentruck ='), j = src.indexOf('const v = r.view', i);
+    assert.ok(i !== -1 && j !== -1 && src.slice(i, j).indexOf('errBox(r.error)') !== -1, 'Open truck error not shown');
+});

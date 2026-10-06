@@ -1182,12 +1182,17 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.opentruck = async el => {
             if (!isMgr) return floorOpenTruck(el);
             const r = await api('truck_get', { truckId: el.dataset.id });
-            if (!r.ok) { tone('bad'); return; }
-            const v = r.view, t = v.truck;
             closeNote();
             const m = document.createElement('div');
             m.id = 'nmodal';
             m.className = 'modal';
+            if (!r.ok) {
+                tone('bad');
+                m.innerHTML = '<div role="dialog" aria-modal="true"><h4>Open truck</h4>' + errBox(r.error) + '<div class="row2"><button class="dbtn gh" data-act="notecancel">Close</button></div></div>';
+                document.body.appendChild(m);
+                return;
+            }
+            const v = r.view, t = v.truck;
             m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs</div>' +
                 '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' + v.lines.map(l => '<tr><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) + '</td><td>' + num(l.scanned) + ' / ' + num(l.expected) + '</td></tr>').join('') +
                 v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td>' + num(x.scanned) + ' extra</td></tr>').join('') + '</table>' +
