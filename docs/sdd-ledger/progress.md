@@ -172,3 +172,4 @@ Final re-review: ready for the beta walk. Minor (final): reject of a pending acc
 ```
 OPEN resolved 2026-10-06 pm: prod connector reads aggregateItemLocation; snapshot prod-2026-10-06.json pulled (15 planned IFs, 382 onHand). Sandbox connector role still restricted (no transaction/location).
 Sandbox test data 2026-10-06: TO8720 (2587474) YSN401 2×1,152, IF53832 (2587475) Packed 1,152; role customrole2538 widened (TO/IF/IR Full, Items/Locations View); SuiteQL transaction still hidden to that role.
+Sandbox v3 live 2026-10-06 pm: 8 files uploaded (move_verify 2055190, move_ns 2055191 new), floor deploy 2772 login-required (AWL refused: 500/no privileges, no log; tried Administrator and MCP Test Minimal), move_ns receipts fallback for missing custbody7, page() external URL only when anonymous. Tests 286. Stage 2 Task 15 core done (one pull per action; lazy reads + SQL status filter still open).
