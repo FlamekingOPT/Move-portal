@@ -170,3 +170,4 @@ ON-MODE GATE / Stage 2:
 Final review: fix wave 27404ae (settle claim, withdraw pending accept, locked-truck guard, block-in-claim, flagged pallet refused at Riverside, docs). Stage 2 / ON-MODE GATE: half-done accept recovery (write truck before pallet or reconcile), pendingReservations read cost (one palletsByIds per request), stale flagged ids on old trucks, pending pallet UI text on the floor list, two-IF split tests.
 Final re-review: ready for the beta walk. Minor (final): reject of a pending accept the office already did (check pendingDone after the claim, ON-MODE GATE); completeAccept guard untested; F3 wording for claimed/departing trucks; truck_move_here has no flagged guard.
 ```
+OPEN resolved 2026-10-06 pm: prod connector reads aggregateItemLocation; snapshot prod-2026-10-06.json pulled (15 planned IFs, 382 onHand). Sandbox connector role still restricted (no transaction/location).
