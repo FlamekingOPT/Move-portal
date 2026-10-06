@@ -1,0 +1,385 @@
+31a9aee docs: final-review fix wave notes (CLAUDE.md gaps, ledger line, fix report)
+27404ae fix(portal): final review wave: settle claim, withdraw pending accept, locked-truck guard, block inside claim, flagged pallet refused at Riverside
+
+ CLAUDE.md                       |  4 +-
+ move_portal/move_ui.js          |  1 +
+ move_portal/sl_move_portal.js   | 41 ++++++++++++++----
+ move_portal/test/portal.test.js | 95 +++++++++++++++++++++++++++++++++++++++++
+ move_portal/test/ui.test.js     |  2 +-
+ 5 files changed, 132 insertions(+), 11 deletions(-)
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 8ad66de..8961b8e 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -28,27 +28,27 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
+ 3. **Refresh the snapshot** (procedure below). It now needs the `onHand` query, and the onHand item ids must be added to the `items` query. Then restart the beta: Labels → Print plan should show real Riverside stock.
+ 4. **Jack tests the floor and manager flows** and lists changes. Expect a short brainstorm → spec amendment → plan → subagent build, the same loop as 2026-10-05/06.
+ 5. Then **Stage 2 on Jack's go**: Task 15 (live `move_ns.js` via N/query) and Task 16 (prod records, files, script, two deployments, supervised `qty` write check on one Packed IF). Task 15 must-dos: lazy `move_ns` reads + an SQL status filter (the 30 s floor recheck polls `trucks_recheck`); `ns.resetCache()` already runs per action; prod check of the ItemShip search filters (status A/B + createdfrom) used by add-on find-before-create; `truckNoForDay` same-day race; Shipments N+1 `truck_get`.
+ 
+ **How the portal works now (so you can answer Jack without reading code):**
+ - **Floor** (`?floor=1`, no login): tabs **Load out** (default) · **Shipments** · Request label; Inbound: **Unload**. Start truck = pick IF(s) + **trailer #** (the truck is "Trailer 537224"; ✎ edits it). Scan pallets (➕ Load / ➖ **Take off** returns a pallet to Riverside without voiding). **+ Add other item** (desc × count, e.g. office desks) rides on the truck, ignored by Verify, checklist at unload. **Verify load** → ✅ Ready (go to Shipments) or ⚠ **Needs IF fix** with instructions; a short asks for a required typed note. The truck stays open; a 30 s recheck + bottom banner on every floor device when it matches. New office IFs appear as "Add to this truck". **Shipments:** seal # → **Mark shipped** → "Waiting for manager".
+ - **Manager** tabs **Dashboard** (default: Waiting for approval card → Approvals; truck tiles; Active loads one row per IF with search/status/sort; trucks per day; exceptions) · **Approvals** (Ship confirmations → Correct the IF → Trucks → **Flagged pallets** (Accept / Reject) → Retry/Release → Receipts; Approve receipt waits for undecided flagged pallets) · **Labels** (Print a SKU first) · **Report** (day table, NetSuite checks, **Truck history**). Ship confirmation = Truck # of the day + stamp plan; Correct the IF: `off` = plan only, `qty` = IF qty edit, `on` = + Packed add-on IF; every receipt needs a manager.
+ - **PROCESS NOTE for managers:** a truck can't be unloaded at Tippecanoe until a manager has confirmed it shipped. Confirm before the truck pulls out.
+ - **Extra labeled pallets** load only when an open office TO covers the SKU (else "set aside, call the office"). The portal never creates TOs.
+ 
+-**Run the beta:** launch config `move-preview` (or `node move_portal/test/preview_server.js`) → manager `http://localhost:8765/`, floor `http://localhost:8765/?floor=1`; scanners on the same Wi-Fi use `http://<pc-ip>:8765/?floor=1` (the PC was 192.168.77.133 on 2026-10-05). It must be started by the Claude app or in a terminal that stays open; it dies with the session. Print opens a 4×6 QR label page (print from Chrome: scale Default, headers off, 4×6, margins None; needs internet for the QR library). Smoke tests use `move-preview-smoke` on :8798 with `move_portal/local/smoke-store.json` (delete it afterwards). Never kill node by image name.
++**Run the beta:** launch config `move-preview` (or `node move_portal/test/preview_server.js`) → manager `http://localhost:8765/`, floor `http://localhost:8765/?floor=1`; scanners on the same Wi-Fi use `http://<pc-ip>:8765/?floor=1` (the PC was 192.168.77.133 on 2026-10-05). It must be started by the Claude app or in a terminal that stays open; it dies with the session. Print opens a 4×6 QR label page (print from Chrome: scale Default, headers off, 4×6, margins None; needs internet for the QR library). Smoke tests use `move-preview-smoke` on :8798 with `move_portal/local/smoke-store.json` (delete it afterwards). Never kill node by image name. The beta stand-in's writes (`if_qty` / `if_create` / `if_stamp`) live only in memory: a beta restart forgets them, so after a restart a corrected IF reads its snapshot quantity again.
+ 
+ **Refresh the snapshot** ("refresh the move snapshot"): `node -e "const v=require('./move_portal/test/amd').loadAmd('move_verify.js'); console.log(JSON.stringify(v.SQL('35','46'),null,1))"` prints the queries. Run `toLines`, `ifLines`, then `links` with `{IDS}` = the distinct IF ids, `receipts` with `{IDS}` = the distinct receipt ids, **`onHand`**, and `items` with `{IDS}` = the distinct items from toLines **plus onHand**. Write `move_portal/snapshot/prod-<date>.json` as `{pulledAt, locFrom:"35", locTo:"46", toLines, ifLines, links, receipts, onHand, items}` with the rows exactly as returned (lowercase keys). Sanity: `buildReads(...).plannedIfs().length` and `.onHand()`. Restart the beta.
+ 
+ **Decisions Jack made (all in the specs/ledger):** block a scan with no open TO; BOL reprint keeps the original BOL # (REV 2, lists all IFs); write modes `off | qty | on`, Suitelet beta = `qty`; every receipt needs a manager; option C corrections (office fixes in NetSuite, manager can Correct in the portal); floor stays open after a failed Verify; trailer # names the truck; short-pick reason = free text; manager confirms shipping (option B); extra labels only with a TO (option A); other items as typed lines (option A); several managers, so no PIN; trucks are the progress metric, no finish date in the portal (the Move Tracker owns it); flagged pallets get Accept/Reject in either place (Approvals card or receipt card); standing approval to fix behavior-neutral hardening without asking.
+ 
+-**Stage 2 / ON-MODE GATE items** (nothing here affects the `off`/`qty` beta; full list in the ledger): depart_release after a landed-but-unrecorded stamp; partly stamped truck with a refused stamp has no exit; orphan add-on block too broad / should reflect live IF state; token-find must refuse an IF another truck holds. Prod checks on a test IF before `qty`: TO `quantityfulfilled` counts Picked/Packed?; bins/inventorydetail on Riverside items; `itemreceive=false` drops a line on save; `defaultValues.itemfulfillment` on TO→receipt; Long Text read-back of a ~10 KB truck via `getLoad` and `loadsByStatus`; `record.load` on a missing record.
++**Stage 2 / ON-MODE GATE items** (nothing here affects the `off`/`qty` beta; full list in the ledger): depart_release after a landed-but-unrecorded stamp; partly stamped truck with a refused stamp has no exit; orphan add-on block too broad / should reflect live IF state; token-find must refuse an IF another truck holds. Prod checks on a test IF before `qty`: TO `quantityfulfilled` counts Picked/Packed?; bins/inventorydetail on Riverside items; `itemreceive=false` drops a line on save; `defaultValues.itemfulfillment` on TO→receipt; Long Text read-back of a ~10 KB truck via `getLoad` and `loadsByStatus`; `record.load` on a missing record. `setIfItemQty` on a Shipped (C) IF must be verified in prod before `qty` (an on-IF Accept writes to an already-shipped IF).
+ 
+ **Prod facts:** Riverside = location **35**, Tippecanoe = **46** (sandbox 42). `custbody7` = `SEAL: <n>`, `custbody_rsm_container_no` = trailer (confirmed on IR20597). Trailers in rotation: 537224, 416460, 105488, 522051, 211659, 543804, 487491. Planned truck = an IF with status A (Picked) or B (Packed) on a Riverside→Tippecanoe TO. Receipt→IF link: `previoustransactionlink` linktype `TOrdCost`, previousdoc = IF.
+ 
+ **Tracker:** the Move Tracker artifact (https://claude.ai/artifact/WP1LLc7kJ6Jb8kJXvzYTkG) reads NetSuite directly and stays the single progress view. Agreed direction: the portal runs the floor and writes to NetSuite; the tracker reads it. Later: count trucks by seal, show portal trucks still on the dock, drop the portal Dashboard. Not built yet.
+ 
+ ## Sandbox history (superseded; kept for ids)
+ - Sandbox deploy 2026-09-28 of the **v2** code: File Cabinet folder 331983, script `customscript_move_portal` id 893, deployment `customdeploy_move_portal` id 2771. Record types: settings 742, config 743, load 744, pallet 745, scan 746, label_req 747, all 32 `custrecord_mv*` fields. Move Settings row 1: locFrom 35, locTo 42. Sandbox manual TO test: TO8719 → IF53831 (native in-transit) → IR14492, no TO approval step, `ue_if_filled_status` harmless. Stage 2 recreates the same record types **in prod** (plan Task 16) and skips the sandbox.
+ - Upload gotcha: File Cabinet / Deployment Save buttons ignore automation clicks about half the time; `document.querySelector('#btn_multibutton_submitter').click()` works. Set the folder with `nlapiSetFieldValue('folder', <id>)`.
+ - Still unknown: the scanner model, and whether the docks have Wi-Fi or cell.
+ 
+diff --git a/move_portal/move_ui.js b/move_portal/move_ui.js
+index 067bcef..c071295 100644
+--- a/move_portal/move_ui.js
++++ b/move_portal/move_ui.js
+@@ -724,20 +724,21 @@ h3{font-size:15px;margin:16px 0 8px}
+                 case 'taken_off': return flash('amber', '➖ Taken off: ' + esc(p.code) + ' → back to Riverside', esc(p.summary), r.view.totals.pallets + ' pallets on the truck');
+                 case 'not_on_truck': return flash('red', '❌ Not on this truck', line || raw, 'Nothing was taken off.');
+                 case 'over': return flash('amber', '🟡 Over the IF qty', line, 'Verify will ask for an IF fix.');
+                 case 'addon': return flash('amber', '🟡 Not on this truck\'s IFs', line, 'Needs an add-on IF from ' + esc(r.addonTo ? r.addonTo.toNum : 'an office TO') + '. Verify will ask for it.');
+                 case 'no_to': return flash('red', '❌ No open TO for ' + esc(r.sku), line, 'Set it aside and call the office.');
+                 case 'dup': return flash('amber', '🟡 Already on this truck', line, 'No change.');
+                 case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + esc(p.id) + '">Move here</button><button data-act="clearres">Leave it</button>');
+                 case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + (r.reason === 'ship_pending' ? ', marked shipped' : ', departing'), line, 'Check with the supervisor.');
+                 case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
+                 case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
++                case 'flagged_tippecanoe': return flash('red', '❌ Flagged at Tippecanoe', line, 'A manager is deciding this pallet in Approvals. Set it aside.');
+                 default: return flash('red', '❌ Unknown label', raw, 'Not a move label. Maybe a product barcode?');
+             }
+         }
+         // mode: the scan mode when the code was scanned (queued scans keep theirs).
+         async function doTruckScan(v, mode) {
+             if (!S.who) { tone('bad'); $('scanres').innerHTML = errBox('Pick your name in "I am" first, then scan again.'); return; }
+             if (S.tmode === 'off') setMode('off');            // a scan restarts the 2-minute fallback to Load
+             const r = await api('truck_scan', { truckId: S.truckId, raw: v, mode: mode });
+             if (!$('scanres')) return;
+             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
+diff --git a/move_portal/sl_move_portal.js b/move_portal/sl_move_portal.js
+index 789f899..763d987 100644
+--- a/move_portal/sl_move_portal.js
++++ b/move_portal/sl_move_portal.js
+@@ -664,20 +664,24 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         }
+         data.logScan({ pallet: p ? p.id : '', load: x.id, result: result, data: { raw: s.raw, mode: 'off', actor: c.actor, at: c.now.stamp } });
+         return { result: result, raw: s.raw, tone: result === 'taken_off' ? 'warn' : 'bad', pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: truckView(mustTruck(x.id), c) };
+     }
+ 
+     act('truck_scan', false, (a, c) => {
+         const x = mustOpenTruck(a.truckId);
+         const s = core.parseScan(a.raw);
+         const p = s.palletId ? data.getPallet(s.palletId) : null;
+         if (a.mode === 'off') return takeOff(x, s, p, c);
++        if (p && ((p.data.decision && p.data.decision.kind === 'accepted_pending') || p.data.flag === 'never_loaded')) {   // a manager is deciding it at Tippecanoe: it must not load here
++            data.logScan({ pallet: p.id, load: x.id, result: 'flagged_tippecanoe', data: { raw: s.raw, mode: 'load', actor: c.actor, at: c.now.stamp } });
++            return { result: 'flagged_tippecanoe', raw: s.raw, tone: 'bad', pallet: pubPallet(p), view: truckView(mustTruck(x.id), c) };
++        }
+         let sc;                                       // capacity data (TO lines, all trucks) only for a pallet that can actually load
+         if (p && p.status === VP.LABELED) sc = scanCtx(x, c);
+         else {
+             const o = p && p.loadId ? data.getLoad(p.loadId) : null;
+             sc = { truckId: x.id, trucks: o ? scanTruckMap([o]) : {} };
+         }
+         const r = verify.classifyLoadScan(Object.assign({ pallet: p }, sc));
+         if (r.set) {
+             mustOpenTruck(x.id);
+             data.updatePallet(p, { status: r.set.status, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
+@@ -1065,39 +1069,46 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         if (UNLOADABLE.indexOf(cur.status) === -1) throw userErr('This truck is ' + cur.status + ', its pallets cannot be decided yet');
+         if (inFlight(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+     }
+     // Gives the claim back after a failure (never throws): the truck must not stay locked for the stale window.
+     function dropClaim(id, claim) {
+         try {
+             const cur = data.getLoad(id);
+             if (cur && cur.data.claim === claim) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '' } });
+         } catch (e) { log.error({ title: 'move dropClaim ' + id, details: (e && e.stack) || String(e) }); }
+     }
+-    function mustFlaggedOn(x, palletId) {
++    // allowPending: Reject may withdraw a pending accept (nothing was written to NetSuite for it); Accept may not.
++    function mustFlaggedOn(x, palletId, allowPending) {
+         const p = data.getPallet(palletId);
+         if (!p || p.data.flag !== 'never_loaded' || String(p.data.flaggedTruck) !== String(x.id) || (x.data.flagged || []).indexOf(String(p.id)) === -1) throw userErr('That pallet is not flagged on this truck');
+-        if (p.data.decision && p.data.decision.kind === 'accepted_pending') throw userErr('That pallet is already accepted: the office finishes it in NetSuite');
++        if (!allowPending && p.data.decision && p.data.decision.kind === 'accepted_pending') throw userErr('That pallet is already accepted: the office finishes it in NetSuite');
+         if (p.status !== VP.LABELED && p.status !== VP.LOADED) throw userErr('That pallet is ' + p.status + ', nothing to decide');
++        if (p.status === VP.LOADED && p.loadId) {                 // taking it off a truck that is locked would knock that truck to needs_fix at confirm
++            const o = data.getLoad(p.loadId);
++            if (o && !isOpen(o)) throw userErr('That pallet is on ' + truckLabel(o) + ', which is waiting for ship confirmation: confirm or send back that truck first');
++        }
+         return p;
+     }
+     // The pallet physically arrived here, so it leaves the open truck it was scanned onto at Riverside (that truck's ready reverts).
+     function unloadFromOther(p, c) {
+         if (p.status !== VP.LOADED || !p.loadId) return;
+         const o = data.getLoad(p.loadId);
+         data.updatePallet(p, { status: VP.LABELED, load: '', data: { takenOffAt: c.now.stamp, takenOffBy: c.actor, takenOffTruck: p.loadId, takenOffWhy: 'arrived_tippecanoe' } });
+         if (o && isOpen(o)) touched(o.id, { lastStep: stepOf('taken_off', c) });
+     }
+     function corrEntry(kind, p, extra, c) {
+         return Object.assign({ kind: kind, palletId: String(p.id), code: p.code, pcs: p.pieces, by: c.user, at: c.now.stamp }, extra || {});
+     }
+     // The pallet joins the truck: received on it, its pieces in the truck's alloc for the IF, the flag closed.
+     function completeAccept(id, p, dec, c) {
++        const fresh = data.getPallet(p.id);                      // a second request may have finished this pallet already: never grow the alloc twice
++        if (!fresh || (fresh.data.decision && fresh.data.decision.kind === 'accepted')) throw userErr('That pallet was already decided');
+         const x = mustTruck(id), item = String(dec.item), pcs = Number(dec.pcs);
+         let alloc = (x.data.alloc || []).map(a => Object.assign({}, a, { lines: Object.assign({}, a.lines) }));
+         let a = alloc.find(y => String(y.ifId) === String(dec.ifId));
+         if (!a) { a = { ifId: String(dec.ifId), ifNum: dec.ifNum, toId: String(dec.toId), toNum: dec.toNum, lines: {}, addOn: true }; alloc.push(a); }
+         a.lines[item] = (Number(a.lines[item]) || 0) + pcs;
+         const ifs = (x.data.ifs || []).some(f => String(f.ifId) === String(dec.ifId)) ? x.data.ifs
+             : (x.data.ifs || []).concat([{ ifId: String(dec.ifId), ifNum: dec.ifNum, toId: String(dec.toId), toNum: dec.toNum, status: 'B', lines: [{ item: item, sku: dec.sku, qty: pcs }] }]);
+         data.updatePallet(p, { status: VP.RECEIVED, load: x.id, data: { flag: '', receivedAt: c.now.stamp, receivedBy: c.actor, decision: Object.assign({}, dec, { kind: 'accepted' }) } });
+         const cur = mustTruck(id), d = cur.data, text = dec.text;
+         const corr = (d.corrections || []).filter(k => !(k.kind === 'pallet_accept' && String(k.palletId) === String(p.id)));
+@@ -1125,22 +1136,31 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+     // Settle pending accepts whose NetSuite side is done (the office acted). Called by approvals for every truck it lists.
+     function settlePending(x, c, shared) {
+         const pend = pendingAccepts(x);
+         if (!pend.length) return x;
+         const info = shared.info || (shared.info = ns.ifInfo()), trucks = shared.trucks || (shared.trucks = allTrucks()), taken = shared.taken || (shared.taken = {});
+         pend.forEach(p => {
+             const dec = p.data.decision, got = pendingDone(Object.assign({}, dec, { truckId: x.id }), info, trucks, taken);
+             if (!got) return;
+             const cur = mustTruck(x.id);
+             if (inFlight(cur)) return;
+-            completeAccept(x.id, data.getPallet(p.id), Object.assign({}, dec, got, { text: acceptText(Object.assign({}, dec, got)) }), c);
+-            taken[got.ifId] = true;                                  // the cached trucks list does not show this attach: the next truck must not take the same IF
++            let cl;                                                  // a claim serialises overlapping approvals/dashboard requests settling the same pallet
++            try { cl = claimLoad(cur, null, 'settle', decideGuard, {}); } catch (e) { if (e.user) return; throw e; }
++            try {
++                const fresh = data.getPallet(p.id);                  // another request may have settled, rejected or reloaded it before our claim
++                if (fresh && fresh.data.decision && fresh.data.decision.kind === 'accepted_pending' && fresh.data.flag === 'never_loaded') {
++                    completeAccept(x.id, fresh, Object.assign({}, dec, got, { text: acceptText(Object.assign({}, dec, got)) }), c);
++                    taken[got.ifId] = true;                          // the cached trucks list does not show this attach: the next truck must not take the same IF
++                }
++            } catch (e) { dropClaim(x.id, cl.claim); throw e; }
++            const rel = data.getLoad(x.id);                          // fresh read: completeAccept just wrote the truck
++            if (rel && rel.data.claim === cl.claim) data.updateLoad(rel, { data: { claim: '', workingAt: 0, phase: '' } });
+         });
+         return mustTruck(x.id);
+     }
+     function acceptText(dec) {
+         if (dec.op && dec.op.op === 'if_create') return '✅ Accepted · ' + dec.ifNum + ' · new IF on ' + dec.toNum;
+         return dec.op && dec.op.op === 'if_qty' ? '✅ Accepted · ' + dec.ifNum + ' ' + verify._fmt(dec.op.from) + ' → ' + verify._fmt(dec.op.to) : '✅ Accepted · ' + dec.ifNum;
+     }
+     // The IF on this truck that carries the pallet's SKU (lowest IF number), read fresh from NetSuite for the from-qty.
+     function ifForItem(x, item, info) {
+         const cands = (x.data.alloc || []).filter(a => String(a.ifId).indexOf('new:') !== 0 && Number(a.lines[item]) > 0).sort((p, q) => Number(p.ifId) - Number(q.ifId));
+@@ -1298,35 +1318,38 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         } catch (e) {
+             dropClaim(id, claim);                                   // a retry must not be locked out (and finds the IF already at the target)
+             throw e;
+         }
+     });
+     act('pallet_reject', true, (a, c) => {
+         const note = String(a.note || '').trim().slice(0, 300);
+         if (!note) throw userErr('Enter a note: why is this pallet rejected?');
+         const x0 = mustTruck(a.truckId);
+         decideGuard(x0);
+-        const p0 = mustFlaggedOn(x0, a.palletId);
++        const p0 = mustFlaggedOn(x0, a.palletId, true);
+         const cl = claimLoad(x0, null, 'reject', decideGuard, {});
+         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
+-        const text = '↩ Rejected · "' + note + '" · back to labeled';
++        const pendingOne = !!(p0.data.decision && p0.data.decision.kind === 'accepted_pending');
++        const text = '↩ Rejected · "' + note + '"' + (pendingOne ? ' · pending accept withdrawn' : '') + ' · back to labeled';
+         let p;
+         try {
+-            mustFlaggedOn(cl.Ld, a.palletId);                       // another decision may have landed between the first check and the claim
++            const again = mustFlaggedOn(cl.Ld, a.palletId, true);   // another decision may have landed between the first check and the claim
++            if (!!(again.data.decision && again.data.decision.kind === 'accepted_pending') !== pendingOne) throw userErr('That pallet was just decided by someone else. Refresh.');
+             p = data.getPallet(p0.id);
+             unloadFromOther(p, c);
+             data.updatePallet(data.getPallet(p.id), { status: VP.LABELED, load: '', data: { flag: '', decision: { kind: 'rejected', note: note, by: c.user, at: c.now.stamp, text: text } } });
+         } catch (e) { dropClaim(id, claim); throw e; }
+         assertClaim(id, claim, label, 'reject');
+         const cur = data.getLoad(id);
+         data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', flagged: (cur.data.flagged || []).filter(k => String(k) !== String(p.id)), lastStep: stepOf('pallet_rejected', c),
+-            corrections: (cur.data.corrections || []).concat([corrEntry('pallet_reject', p, { note: note, text: text }, c)]) } });
++            corrections: (cur.data.corrections || []).filter(k => !(k.kind === 'pallet_accept' && k.pending && String(k.palletId) === String(p.id)))
++                .concat([corrEntry('pallet_reject', p, { note: note, text: text }, c)]) } });
+         return { outcome: 'rejected', text: text, view: unloadView(mustTruck(id), c) };
+     });
+     function mustUnloadable(id) {
+         const x = mustTruck(id);
+         if (UNLOADABLE.indexOf(x.status) === -1) throw userErr('This truck is ' + x.status + ', not ready to unload');
+         return x;
+     }
+     // Every update goes through a fresh read: updateLoad rebuilds data from the copy it is given.
+     function mustViewable(id) {
+         const x = mustTruck(id);
+@@ -1433,20 +1456,22 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+     act('receipt_approve', true, (a, c) => {
+         const canApprove = cur => (UNLOADABLE.indexOf(cur.status) !== -1 && !inFlight(cur)) || (cur.status === T.APPROVING && (cur.data.error || stale(cur)));
+         const x0 = mustTruck(a.truckId);
+         if (!canApprove(x0)) throw userErr(x0.status === T.APPROVING ? 'This truck is already being approved. Wait a few minutes, then try again.' : 'This truck is ' + x0.status + ', not ready to unload');
+         const block = blockReasonOf(x0);
+         if (block) throw userErr(block);
+         if (!receiptPlan(x0).ops.length) throw userErr('Nothing new scanned in on this truck');
+         const prevStatus = x0.status === T.APPROVING ? (x0.data.prevStatus || T.RECEIVING) : x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
+         const cl = claimLoad(x0, T.APPROVING, 'receive', cur => {
+             if (!canApprove(cur)) throw userErr('This truck is ' + cur.status + ', not ready to approve');
++            const b = blockReasonOf(cur);                           // a pallet may have been flagged since the fail-fast check above
++            if (b) throw userErr(b);
+         }, { prevStatus: prevStatus });
+         const x = cl.Ld, claim = cl.claim, label = truckLabel(x);
+         const rp = receiptPlan(x), seq = (Number(x.data.recvSeq) || 0) + 1;
+         const writes = Object.assign({}, x.data.writes);
+         data.updateLoad(data.getLoad(x.id), { data: { recvApprovedBy: c.user, recvApprovedByRoster: c.actor, recvApprovedAt: c.now.stamp } });
+         let res;
+         try {
+             res = verify.runOps(rp.ops, writeMode(c), op => { assertClaim(x.id, claim, label, 'receive'); return tx.apply(verify.resolveNew(op, writes)); }, writes,
+                 (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });
+         } catch (e) {
+diff --git a/move_portal/test/portal.test.js b/move_portal/test/portal.test.js
+index b6a6ab8..d99e8a8 100644
+--- a/move_portal/test/portal.test.js
++++ b/move_portal/test/portal.test.js
+@@ -2518,10 +2518,105 @@ test('report.history: every truck newest first with who/when per step and correc
+     ctx.run('pallet_accept', { truckId: a.t.id, palletId: s.id });
+     const b = truckWith(ctx, 3, '9002');                                             // still loading
+     const h = ctx.run('report').history;
+     assert.deepEqual(h.map(r => [r.truckId, r.stage]), [[b.t.id, 'Loading'], [a.t.id, 'Unloading']]);
+     const ra = h[1];
+     assert.deepEqual([ra.day, ra.truck, ra.truckNo, ra.trailer, ra.seal, ra.ifs, ra.pallets, ra.pcs, ra.startedBy, ra.markedBy, ra.confirmedBy],
+         ['2026-10-14', 'Truck 1 · 10/14', 1, ctx.data.getLoad(a.t.id).data.trailer, '5260030', ['IF9001'], 43, 516, 'Miguel', 'Miguel', 'Jack K']);
+     assert.deepEqual(ra.corrections, ['+ ' + s.code + ' accepted · IF9001']);
+     assert.deepEqual([h[0].seal, h[0].markedAt, h[0].corrections], ['', '', []]);
+ });
++
++// ── final review fix wave (F1-F5) ──
++test('final fix F1: two overlapping approvals settle one pending accept once (alloc 516, received once)', () => {
++    const ctx = setup();
++    const { t } = departed(ctx, 42, '5260050', '9001');
++    const stray = strayOn(ctx, t);
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');   // off mode: the office edits the IF
++    const realInfo = ctx.ns.ifInfo;
++    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 516 }]; return o; };
++    let receives = 0;
++    const realUpd = ctx.data.updatePallet;
++    ctx.data.updatePallet = (cur, patch) => { if (patch.status === 'received' && String(cur.id) === String(stray.id)) receives++; return realUpd(cur, patch); };
++    hookOnce(ctx.ns, 'ifInfo', () => ctx.run('approvals'));                   // a second request runs while the first is about to settle
++    ctx.run('approvals');
++    ctx.data.updatePallet = realUpd;
++    const x = ctx.data.getLoad(t.id);
++    assert.deepEqual([x.data.alloc[0].lines['975'], receives, x.data.unposted, x.data.claim || '', ctx.data.getPallet(stray.id).status], [516, 1, 1, '', 'received']);
++    assert.equal(x.data.corrections.filter(k => k.kind === 'pallet_accept').length, 1);
++});
++
++test('final fix F1: completeAccept refuses a pallet that is already accepted', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260051', '9001');
++    const stray = strayOn(ctx, t);
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'accepted');
++    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
++    // the same pallet can no longer be decided again (flag cleared), and the alloc stays at 516
++    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /not flagged/);
++    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
++});
++
++test('final fix F2: a pending accept can be withdrawn by Reject; the receipt unblocks and the TO room is freed', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t, ps } = departed(ctx, 42, '5260052', '9001');
++    const stray = strayOn(ctx, t, LINE201);
++    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');
++    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /already accepted/);
++    ctx.run('unload_done', { truckId: t.id }, false);
++    const lt = truckWith(ctx, 2, '9002').t;
++    const big = printLabels(ctx, 1, 'Jwd1', [{ item: '11', sku: 'YSN201', cfg: '', pcs: 1100 }])[0];
++    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false).result, 'no_to');   // 1,100 + the pending 120 is over TO700's 1,200
++    assert.equal(ctx.run('approvals').receipts[0].canApprove, false);
++    const r = ctx.run('pallet_reject', { truckId: t.id, palletId: stray.id, note: 'office will not make an IF' });
++    assert.equal(r.outcome, 'rejected');
++    assert.equal(r.text, '↩ Rejected · "office will not make an IF" · pending accept withdrawn · back to labeled');
++    const p = ctx.data.getPallet(stray.id), x = ctx.data.getLoad(t.id);
++    assert.deepEqual([p.status, p.loadId, p.data.flag, p.data.decision.kind, p.data.decision.text], ['labeled', '', '', 'rejected', r.text]);
++    assert.deepEqual([x.data.flagged, x.data.claim || '', x.data.corrections.filter(k => k.pending).length, x.data.corrections.filter(k => k.kind === 'pallet_reject').length], [[], '', 0, 1]);
++    const ap = ctx.run('approvals');
++    assert.deepEqual([ap.receipts[0].canApprove, ap.receipts[0].pending.length, ap.receipts[0].blockReason], [true, 0, '']);
++    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false).result, 'addon');       // the reservation is gone
++});
++
++test('final fix F3: a pallet on a truck marked shipped cannot be accepted or rejected off it', () => {
++    ['pallet_accept', 'pallet_reject'].forEach(action => {
++        const ctx = setup();
++        ctx.data.db.settings.writeMode = 'qty';
++        const { t } = departed(ctx, 42, '5260053', '9001');
++        const other = readyTruck(ctx, 2, '9002');
++        assert.equal(ctx.run('unload_scan', { truckId: t.id, raw: other.ps[0].code }, false).result, 'never_loaded');
++        ctx.run('ship_mark', { truckId: other.t.id, seal: '5260054' }, false);
++        assert.equal(ctx.data.getLoad(other.t.id).status, 'ship_pending');
++        assert.throws(() => ctx.run(action, { truckId: t.id, palletId: other.ps[0].id, note: 'n' }),
++            /That pallet is on Trailer [^,]+, which is waiting for ship confirmation: confirm or send back that truck first/, action);
++        assert.deepEqual([ctx.data.getPallet(other.ps[0].id).status, ctx.data.getPallet(other.ps[0].id).loadId], ['loaded', other.t.id]);
++        assert.equal(ctx.data.getLoad(other.t.id).status, 'ship_pending');
++    });
++});
++
++test('final fix F4: a pallet flagged between the receipt checks and the claim still blocks the approve (no claim left behind)', () => {
++    const ctx = setup();
++    const { t, ps } = departed(ctx, 42, '5260055', '9001');
++    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
++    ctx.run('unload_done', { truckId: t.id }, false);
++    const s = printLabels(ctx, 1, 'Jfl4', [L975])[0];
++    hookOnce(ctx.data, 'palletsByLoad', () => ctx.run('unload_scan', { truckId: t.id, raw: s.code }, false));   // a floor scan flags it mid-request
++    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet first/);
++    const x = ctx.data.getLoad(t.id);
++    assert.deepEqual([x.status === 'approving', x.data.claim || ''], [false, '']);
++});
++
++test('final fix F5: a pending-accepted or flagged pallet is refused at Riverside and not loaded', () => {
++    const ctx = setup();
++    const { t } = departed(ctx, 42, '5260056', '9001');
++    const stray = strayOn(ctx, t);
++    const lt = truckWith(ctx, 2, '9002').t;
++    let r = ctx.run('truck_scan', { truckId: lt.id, raw: stray.code }, false);               // flagged, undecided
++    assert.deepEqual([r.result, r.tone, ctx.data.getPallet(stray.id).status], ['flagged_tippecanoe', 'bad', 'labeled']);
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');
++    r = ctx.run('truck_scan', { truckId: lt.id, raw: stray.code }, false);                   // accepted, pending the office
++    assert.deepEqual([r.result, r.tone, r.pallet.id, ctx.data.getPallet(stray.id).status, r.view.totals.pallets], ['flagged_tippecanoe', 'bad', stray.id, 'labeled', 2]);
++});
+diff --git a/move_portal/test/ui.test.js b/move_portal/test/ui.test.js
+index a36adc2..44193f8 100644
+--- a/move_portal/test/ui.test.js
++++ b/move_portal/test/ui.test.js
+@@ -207,21 +207,21 @@ test('final fixes: a stalled correction on a truck with no fix card gets a truck
+ test('2026-10-06 pm: Dashboard first and default; Labels start with Print a SKU', () => {
+     const src = ui._clientMain.toString();
+     assert.ok(src.indexOf("mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]") !== -1, 'tab order');
+     assert.ok(src.indexOf("mgr: 'dash'") !== -1, 'default tab');
+     assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
+ });
+ 
+ test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject; Approve waits; anchors for the dashboard links', () => {
+     const src = ui._clientMain.toString();
+     ['Flagged pallets', 'data-act="apaccept"', 'data-act="apreject"', "api('pallet_accept'", "api('pallet_reject'", 'Accept onto this truck', 'x.blockReason', 'x.canApprove', 'r.flagged', 'x.pending', 'x.decided',
+-        'id="ap_ship"', 'id="ap_fix"', 'id="ap_trucks"', 'id="ap_flag"', 'id="ap_retry"', 'id="ap_rec"', 'ACT.goapprove =', 'decide now, or later on the receipt card', 'waiting for the manager', 'v.decided']
++        'id="ap_ship"', 'id="ap_fix"', 'id="ap_trucks"', 'id="ap_flag"', 'id="ap_retry"', 'id="ap_rec"', 'ACT.goapprove =', 'decide now, or later on the receipt card', 'waiting for the manager', 'v.decided', 'Flagged at Tippecanoe', "case 'flagged_tippecanoe'"]
+         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+     assert.equal(src.indexOf('The office will sort these out.'), -1);
+     ['apaccept', 'apreject'].forEach(n => {
+         const i = src.indexOf('ACT.' + n + ' =');
+         assert.ok(i !== -1 && src.slice(i, i + 600).indexOf(n === 'apaccept' ? 'confirm(' : 'prompt(') !== -1, 'no dialog in ' + n);
+     });
+ });
+ 
+ test('2026-10-06 pm: Dashboard shows waiting queues, truck tiles, Active loads with search/filter/sort; Report has the history table', () => {
+     const src = ui._clientMain.toString();

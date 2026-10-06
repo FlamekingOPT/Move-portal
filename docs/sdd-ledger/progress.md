@@ -168,4 +168,5 @@ ON-MODE GATE / Stage 2:
 (d) The dashboard runs approvalsView incl. settlePending, so it is not a pure read.
 (e) Task 15 lazy-read list: pendingReservations adds an ns.ifInfo read per reservedToLines call when pendings exist; the dashboard's grouped shipped-pallet read grows with history.
 Final review: fix wave 27404ae (settle claim, withdraw pending accept, locked-truck guard, block-in-claim, flagged pallet refused at Riverside, docs). Stage 2 / ON-MODE GATE: half-done accept recovery (write truck before pallet or reconcile), pendingReservations read cost (one palletsByIds per request), stale flagged ids on old trucks, pending pallet UI text on the floor list, two-IF split tests.
+Final re-review: ready for the beta walk. Minor (final): reject of a pending accept the office already did (check pendingDone after the claim, ON-MODE GATE); completeAccept guard untested; F3 wording for claimed/departing trucks; truck_move_here has no flagged guard.
 ```
