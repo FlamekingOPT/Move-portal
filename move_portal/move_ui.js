@@ -78,6 +78,7 @@ textarea.inp{font-family:monospace;font-size:13px}textarea.inp.note{font-family:
 .modal{position:fixed;inset:0;z-index:30;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
 .modal>div{background:#fff;border-radius:14px;padding:16px;width:100%;max-width:480px;max-height:90vh;overflow:auto}.modal h4{margin:0 0 8px;font-size:18px}
 .oform{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.oform .inp{flex:1 1 160px;min-width:0;margin:0}.oform .num{flex:0 0 76px}
+.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}.tools .inp{flex:1 1 180px;margin:0;padding:9px;font-size:14px}.tools select.inp{flex:0 1 220px}th.sortable{cursor:pointer;color:var(--blue)}
 h3{font-size:15px;margin:16px 0 8px}
 @media (max-width:900px){.grid4{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr}}
 `;
@@ -1311,17 +1312,35 @@ h3{font-size:15px;margin:16px 0 8px}
         };
 
         // ── Manager: shadow report (v3) ──────────────────────────────────
+        function histTable(rows) {
+            const cols = ['Day', 'Truck', 'Trailer · seal', 'IFs', 'Pallets · pcs', 'Status', 'Started', 'Shipped', 'Confirmed', 'Received', 'Corrections'];
+            return '<div style="overflow-x:auto"><table class="tbl"><tr>' + cols.map(c => '<th>' + c + '</th>').join('') + '</tr>' + (rows.map(x => '<tr data-act="dashrow" data-id="' + esc(x.truckId) + '" style="cursor:pointer">' +
+                '<td>' + esc(x.day) + '</td><td><b>' + esc(x.truck) + '</b></td><td>' + esc([x.trailer, x.seal].filter(Boolean).join(' · ')) + '</td><td>' + esc((x.ifs || []).join(', ')) + '</td><td>' + num(x.pallets) + ' · ' + num(x.pcs) + '</td>' +
+                '<td>' + statusPill(x.status) + '</td><td class="muted">' + esc([x.startedBy, x.startedAt].filter(Boolean).join(' ')) + '</td><td class="muted">' + esc([x.markedBy, x.markedAt].filter(Boolean).join(' ')) + '</td>' +
+                '<td class="muted">' + esc([x.confirmedBy, x.confirmedAt].filter(Boolean).join(' ')) + '</td><td class="muted">' + esc(x.receivedAt || '') + '</td><td class="muted">' + (x.corrections || []).map(esc).join('<br>') + '</td></tr>').join('') ||
+                '<tr><td colspan="11" class="muted">No trucks yet</td></tr>') + '</table></div>';
+        }
+        function paintHist() {
+            const r = S.report;
+            if (!r || !$('hist')) return;
+            const rows = sortRows(filterRows(r.history || [], S.histSt), S.histSt);
+            $('hist').innerHTML = tableTools('hs', S.histSt, rows.length, (r.history || []).length, SORTS) + histTable(rows);
+            wireTools('hs', S.histSt, paintHist);
+        }
         SCREENS.report = async () => {
             main('<div class="muted">Loading…</div>');
             const r = await api('report');
             if (!r.ok) { main(errBox(r.error)); return; }
+            S.report = r;
             const mark = ok => (ok === true ? '✅' : ok === false ? '❌' : '⏳');
             main('<div class="muted">Write mode <b>' + esc(r.writeMode) + '</b>' + (r.pulledAt ? ' · NetSuite data from ' + esc(r.pulledAt) : '') + '</div>' +
                 '<div class="card"><table class="tbl"><tr><th>Day</th><th>Trucks</th><th>Pallets</th><th>Pcs</th><th>Diffs</th></tr>' +
                 r.days.map(d => '<tr><td>' + esc(d.day) + '</td><td>' + d.trucks + '</td><td>' + d.pallets + '</td><td>' + num(d.pieces) + '</td><td>' + (d.diffs ? '❌ ' + d.diffs : '✅') + '</td></tr>').join('') + '</table></div>' +
                 '<div class="card"><div style="overflow-x:auto"><table class="tbl"><tr><th></th><th>Truck</th><th>IF</th><th>Check</th><th>Portal</th><th>NetSuite</th></tr>' +
                 r.rows.map(x => '<tr class="' + (x.ok === false ? 'warnrow' : '') + '"><td>' + mark(x.ok) + '</td><td>' + esc(x.truck) + '</td><td>' + esc(x.ifNum) + '</td><td>' + esc(x.check) +
-                    '</td><td>' + esc(x.portal) + '</td><td>' + esc(x.netsuite) + '</td></tr>').join('') + '</table></div></div>');
+                    '</td><td>' + esc(x.portal) + '</td><td>' + esc(x.netsuite) + '</td></tr>').join('') + '</table></div></div>' +
+                '<div class="card"><h4>Truck history</h4><div id="hist"></div></div>');
+            paintHist();
         };
 
         // ── Dashboard ────────────────────────────────────────────────────
@@ -1331,7 +1350,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const max = Math.max(needed || 0, 1, ...days.map(d => d.n)) * 1.15;
             const w = (W - x0 - 10) / days.length;
             const y = v => base - v / max * (base - top);
-            let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Pallets moved per day">';
+            let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Trucks shipped per day">';
             days.forEach((d, i) => {
                 const bx = x0 + i * w + w * 0.15, bw = w * 0.7, by = y(d.n);
                 s += '<rect x="' + bx + '" y="' + by + '" width="' + bw + '" height="' + (base - by) + '" rx="3" fill="' + (needed && d.n >= needed ? '#0d9488' : '#94a3b8') + '"/>';
@@ -1339,32 +1358,85 @@ h3{font-size:15px;margin:16px 0 8px}
                     '<text x="' + (bx + bw / 2) + '" y="176" font-size="9" text-anchor="middle" fill="#6b7280">' + d.day.slice(5) + '</text>';
             });
             if (needed) s += '<line x1="' + x0 + '" x2="' + (W - 10) + '" y1="' + y(needed) + '" y2="' + y(needed) + '" stroke="#dc2626" stroke-dasharray="6 5"/>' +
-                '<text x="' + (x0 + 4) + '" y="' + (y(needed) - 5) + '" font-size="11" fill="#dc2626">' + needed + ' needed</text>';
+                '<text x="' + (x0 + 4) + '" y="' + (y(needed) - 5) + '" font-size="11" fill="#dc2626">' + needed + ' plan</text>';
             return s + '<line x1="' + x0 + '" x2="' + (W - 10) + '" y1="' + base + '" y2="' + base + '" stroke="#cbd5e1"/></svg>';
         }
+        // ── Dashboard (spec 2026-10-06 pm §3) ───────────────────────────
+        const STAGES = ['Receipt pending', 'Waiting for manager', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
+        const SORTS = [['stage', 'Sort: furthest along'], ['newest', 'Sort: newest step'], ['oldest', 'Sort: oldest step (stuck first)'], ['if', 'Sort: IF'], ['trailer', 'Sort: trailer']];
+        const COLS = [['ifNum', 'Fulfillment'], ['toNum', 'TO'], ['truck', 'Truck'], ['', 'SKUs on truck'], ['pcs', 'Pallets · pcs'], ['', 'Received'], ['stage', 'Status'], ['newest', 'Last step']];
+        // Search box · status select · sort select · "n of m": shared by Active loads and the Report's truck history. Client-side only.
+        function tableTools(prefix, st, n, m, sorts) {
+            return '<div class="tools"><input class="inp" id="' + prefix + 'q" value="' + esc(st.q) + '" placeholder="Search IF, TO, trailer, seal, Truck # or SKU…">' +
+                '<select class="inp" id="' + prefix + 'st"><option value="">All statuses</option>' + STAGES.map(s => '<option' + (st.st === s ? ' selected' : '') + '>' + s + '</option>').join('') + '</select>' +
+                '<select class="inp" id="' + prefix + 'sort">' + sorts.map(s => '<option value="' + s[0] + '"' + (st.sort === s[0] ? ' selected' : '') + '>' + esc(s[1]) + '</option>').join('') + '</select>' +
+                '<span class="muted">' + n + ' of ' + m + '</span></div>';
+        }
+        function wireTools(prefix, st, repaint) {
+            const q = $(prefix + 'q'), s = $(prefix + 'st'), o = $(prefix + 'sort');
+            if (q) q.oninput = () => { st.q = q.value; repaint(); };
+            if (s) s.onchange = () => { st.st = s.value; repaint(); };
+            if (o) o.onchange = () => { st.sort = o.value; st.dir = 1; repaint(); };
+        }
+        function rowText(x) { return [x.ifNum, x.toNum, x.truck, x.trailer, x.seal, x.truckNo ? 'Truck ' + x.truckNo : '', (x.skus || []).map(s => s.sku).join(' '), (x.ifs || []).join(' ')].join(' ').toLowerCase(); }
+        function filterRows(rows, st) {
+            const q = (st.q || '').trim().toLowerCase();
+            return rows.filter(x => (!st.st || x.stage === st.st) && (!q || rowText(x).indexOf(q) !== -1));
+        }
+        function sortRows(rows, st) {
+            const dir = st.dir || 1, k = st.sort || 'stage';
+            const key = x => k === 'stage' ? STAGES.indexOf(x.stage) : k === 'newest' ? -(Date.parse(x.lastAt || x.confirmedAt || x.startedAt || 0) || 0) : k === 'oldest' ? (Date.parse(x.lastAt || 0) || 0)
+                : k === 'if' || k === 'ifNum' ? Number(String(x.ifNum || (x.ifs || [])[0] || '').replace(/\D/g, '')) : k === 'trailer' ? String(x.trailer || '') : k === 'pcs' ? -Number(x.pcs || 0) : String(x[k] || '');
+            return rows.slice().sort((p, q) => { const a = key(p), b = key(q); return (a < b ? -1 : a > b ? 1 : 0) * dir || Number(q.truckId) - Number(p.truckId); });
+        }
+        S.dashSt = { q: '', st: '', sort: 'stage', dir: 1 };
+        S.histSt = { q: '', st: '', sort: 'newest', dir: 1 };
+        function ago(min) { return min == null ? '' : min < 60 ? min + ' m ago' : Math.floor(min / 60) + ' h ' + (min % 60) + ' m ago'; }
+        function loadsTable(rows) {
+            const head = COLS.map(c => '<th' + (c[0] ? ' class="sortable" data-act="dashsort" data-k="' + c[0] + '"' : '') + '>' + esc(c[1]) + (c[0] && S.dashSt.sort === c[0] ? (S.dashSt.dir < 0 ? ' ↑' : ' ↓') : '') + '</th>').join('');
+            return '<div style="overflow-x:auto"><table class="tbl"><tr>' + head + '</tr>' + (rows.map(x => '<tr data-act="dashrow" data-id="' + esc(x.truckId) + '" style="cursor:pointer">' +
+                '<td><b>' + esc(x.ifNum) + '</b></td><td>' + esc(x.toNum || '') + '</td><td>' + esc(x.truck) + (x.truckNo && x.trailer ? ' · Trailer ' + esc(x.trailer) : '') + (x.seal ? ' · seal ' + esc(x.seal) : '') + '</td>' +
+                '<td>' + (x.skus || []).map(s => esc(s.sku) + ' <span class="muted">×' + num(s.qty) + '</span>').join(', ') + '</td><td>' + num(x.pallets) + ' · ' + num(x.pcs) + '</td>' +
+                '<td>' + (x.received == null ? '—' : num(x.received)) + (x.flagged ? ' <span class="warn">+' + x.flagged + ' flagged</span>' : '') + '</td><td>' + statusPill(x.status) + '</td>' +
+                '<td class="muted' + (x.status === 'ship_pending' && x.lastMin >= LATE_MIN ? ' warn' : '') + '">' + esc((x.lastBy ? x.lastBy + ' ' : '') + String(x.lastKind || '').replace(/_/g, ' ')) + (x.lastMin == null ? '' : ' · ' + ago(x.lastMin)) + '</td></tr>').join('') ||
+                '<tr><td colspan="8" class="muted">No active loads</td></tr>') + '</table></div>';
+        }
+        function paintLoads() {
+            const r = S.dash;
+            if (!r || !$('dashloads')) return;
+            const rows = sortRows(filterRows(r.rows, S.dashSt), S.dashSt);
+            $('dashloads').innerHTML = tableTools('dl', S.dashSt, rows.length, r.rows.length, SORTS) + loadsTable(rows) +
+                '<div class="muted">Default sort is furthest along first; click a column header or use the Sort menu. Received trucks drop off at the end of their day; the Report keeps the full history.</div>';
+            wireTools('dl', S.dashSt, paintLoads);
+        }
+        ACT.dashsort = el => { const k = el.dataset.k; if (S.dashSt.sort === k) S.dashSt.dir = -S.dashSt.dir; else { S.dashSt.sort = k; S.dashSt.dir = 1; } paintLoads(); };
+        ACT.dashrow = el => ACT.opentruck(el);
         SCREENS.dash = async () => {
             main('<div class="muted">Loading…</div>');
             const r = await api('dashboard');
+            if (S.tab !== 'dash') return;
             if (!r.ok) { main(errBox(r.error)); return; }
-            const m = r.m, fin = m.projectedFinish;
+            S.dash = r;
+            const shipQ = (r.waiting || []).find(w => w.queue === 'ship');
+            setLate(shipQ && shipQ.late ? shipQ.count : 0);
             const k = (label, big, sub, cls) => '<div class="kpi ' + (cls || '') + '"><small>' + esc(label) + '</small><b>' + big + '</b><span>' + sub + '</span></div>';
-            main('<div class="grid4">' +
-                k('Total pallets to move (est.)', num(m.total), num(r.labeled) + ' labeled, not shipped') +
-                k('Pallets moved (shipped)', num(m.moved), num(r.received) + ' received at ' + esc(B.toName)) +
-                k('Pallets remaining', num(m.remaining), m.total ? Math.round(m.remaining / m.total * 100) + '% left' : '') +
-                k('Move days left', m.daysLeft, 'Mon–Sat through ' + esc(r.target)) +
-                k('Needed per day', m.neededPerDay == null ? '—' : m.neededPerDay, 'remaining ÷ days left', m.neededPerDay == null && m.remaining ? 'bad' : '') +
-                k('Moved today · 7-day avg', m.movedToday + ' · ' + m.avg7, 'all-time avg ' + m.avgAll) +
-                k('Projected finish', fin || '—', fin ? (m.onTrack ? '✅ on track for ' + esc(r.target) : '⚠ after ' + esc(r.target)) : 'needs a few days of data', fin ? (m.onTrack ? 'good' : 'bad') : '') +
-                k('In transit', num(r.inTransit), r.exc.missing + ' missing') + '</div>' +
-                '<div class="card"><h4>Pallets moved per day</h4>' + barChart(r.days, m.neededPerDay) + '</div><div class="grid3">' +
-                '<div class="card"><h4>Recent trucks</h4>' + (r.trucks.map(t => '<div class="warnrow"><span>' + esc(t.label) + ' · ' + t.pallets + ' pallets</span>' + statusPill(t.status) + '</div>').join('') ||
-                    '<div class="muted">None</div>') + '</div>' +
-                '<div class="card"><h4>Exceptions</h4>' + [['Missing pallets (in transit)', r.exc.missing], ['Never loaded', r.exc.neverLoaded],
-                    ['Damaged, flagged', r.exc.damaged], ['Edited at dock', r.exc.edited], ['Labeled, never loaded (stale)', r.exc.stale], ['SKUs with stock but no config', r.exc.noConfig]]
-                    .map(x => '<div class="warnrow"><span>' + esc(x[0]) + '</span><b>' + x[1] + '</b></div>').join('') +
-                    (r.noConfigSkus.length ? '<div class="muted">' + r.noConfigSkus.map(esc).join(', ') + '</div>' : '') + '</div>' +
-                '<div class="card"><h4>Remaining by SKU</h4>' + r.bySku.map(x => '<div class="warnrow"><span>' + esc(x.sku) + '</span><b>' + x.palletsLeft + '</b></div>').join('') + '</div></div>');
+            const w = r.waiting || [];
+            const waiting = '<div class="card ' + (w.length ? 'amberc' : '') + '"><h4>Waiting for approval' + (w.length ? ' <span class="pill p-amber">' + w.reduce((s, x) => s + x.count, 0) + '</span>' : '') + '</h4>' +
+                (w.length ? w.map(x => '<div class="warnrow" data-act="goapprove" data-v="ap_' + ({ ship: 'ship', fix: 'fix', trucks: 'trucks', flagged: 'flag', retry: 'retry', receipts: 'rec' })[x.queue] + '" style="cursor:pointer">' +
+                    '<span><a href="#" class="linkbtn">' + esc(x.title) + '</a> <span class="muted">' + esc(x.first) + '</span></span><span class="pill ' + (x.late ? 'p-amber' : 'p-gray') + '">' + x.count + (x.late ? ' · over 30 min' : '') + '</span></div>').join('')
+                    : '<div class="muted">Nothing waiting for approval</div>') + '</div>';
+            const t = r.tiles;
+            main(waiting + '<div class="grid4">' +
+                k('Trucks shipped today', num(t.today), 'manager-confirmed · plan ' + t.plan + '/day', t.today >= t.plan ? 'good' : '') +
+                k('Trucks per day · 7-day avg', t.avg7, 'move days Mon–Sat · all-time ' + t.avgAll) +
+                k('Trucks shipped · total', num(t.total), num(t.received) + ' received at ' + esc(B.toName)) +
+                k('In transit', num(t.inTransitTrucks) + ' truck' + (t.inTransitTrucks === 1 ? '' : 's'), num(t.inTransitPallets) + ' pallets · ' + t.missing + ' missing') +
+                k('Finish date', '<span class="muted" style="font-size:14px">see Move Tracker</span>', 'truckloads to move live there') + '</div>' +
+                '<div class="card"><h4>Active loads <span class="pill p-gray">' + new Set(r.rows.map(x => x.truckId)).size + ' trucks</span></h4><div class="muted">one row per IF, like the Move Tracker · not yet received · tap a row to open</div><div id="dashloads"></div></div>' +
+                '<div class="grid3"><div class="card"><h4>Trucks shipped per day</h4>' + barChart(r.days, r.tiles.plan) + '</div>' +
+                '<div class="card"><h4>Exceptions</h4>' + [['Missing pallets (in transit)', r.exc.missing], ['Flagged, waiting on manager', r.exc.neverLoaded], ['Damaged', r.exc.damaged], ['Edited at dock', r.exc.edited],
+                    ['Labeled, never loaded (stale)', r.exc.stale], ['SKUs with stock but no config', r.exc.noConfig]].map(x => '<div class="warnrow"><span>' + esc(x[0]) + '</span><b>' + x[1] + '</b></div>').join('') + '</div></div>');
+            paintLoads();
         };
 
         shell();

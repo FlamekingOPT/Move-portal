@@ -222,3 +222,14 @@ test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject;
         assert.ok(i !== -1 && src.slice(i, i + 600).indexOf(n === 'apaccept' ? 'confirm(' : 'prompt(') !== -1, 'no dialog in ' + n);
     });
 });
+
+test('2026-10-06 pm: Dashboard shows waiting queues, truck tiles, Active loads with search/filter/sort; Report has the history table', () => {
+    const src = ui._clientMain.toString();
+    ['Waiting for approval', 'Nothing waiting for approval', 'Trucks shipped today', 'Trucks per day · 7-day avg', 'Trucks shipped · total', 'In transit', 'see Move Tracker', 'Active loads',
+        'Trucks shipped per day', 'Flagged, waiting on manager', 'Search IF, TO, trailer, seal, Truck # or SKU', 'furthest along', 'oldest step', 'data-act="dashsort"', 'data-act="dashrow"', 'data-act="goapprove"',
+        'r.waiting', 'r.tiles', 'r.rows', 'Truck history', 'r.history', 'function tableTools(']
+        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+    ['Total pallets to move', 'Pallets remaining', 'Projected finish', 'Recent trucks', 'Remaining by SKU', 'r.bySku', 'm.projectedFinish'].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
+    assert.ok(src.indexOf("barChart(r.days, r.tiles.plan") !== -1, 'chart counts trucks against the plan line');
+    assert.equal(src.indexOf('Pallets moved per day'), -1);
+});
