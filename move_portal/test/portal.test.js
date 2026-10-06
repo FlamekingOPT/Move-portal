@@ -1865,8 +1865,24 @@ test('approvals: a needs_fix truck with no correctable diff still says why (othe
     const v = ctx.run('truck_verify', { truckId: t.id }, false);
     const a = ctx.run('approvals');
     assert.deepEqual([a.fixes.length, a.trucks.length], [0, 1]);
-    assert.deepEqual(a.trucks[0].otherDiffs, v.diffs.map(d => d.text));
-    assert.ok(a.trucks[0].otherDiffs[0].length > 0);
+    // if_gone / if_empty show as pills on the IF rows, so they are not repeated in otherDiffs.
+    assert.deepEqual(v.diffs.map(d => d.kind), ['if_empty']);
+    assert.deepEqual(a.trucks[0].otherDiffs, []);
+    assert.deepEqual(a.trucks[0].ifs.map(f => [f.ifId, f.empty]), [['9001', false], ['9002', true]]);
+});
+
+test('approvals: otherDiffs keeps a truck-level reason (no_ifs) and drops the gone-IF pill duplicate', () => {
+    const ctx = setup();
+    const { t } = truckWith(ctx, 42);
+    noTrailer(ctx, t.id);
+    goneIf(ctx, '9001');
+    const v = ctx.run('truck_verify', { truckId: t.id }, false);
+    const a = ctx.run('approvals');
+    const tc = a.trucks.find(x => String(x.truck.id) === String(t.id));
+    assert.ok(v.diffs.some(d => d.kind === 'if_gone'));
+    assert.deepEqual(tc.otherDiffs, v.diffs.filter(d => ['if_gone', 'if_empty', 'if_short', 'if_over', 'no_if'].indexOf(d.kind) === -1).map(d => d.text));
+    assert.ok(tc.otherDiffs.length > 0);
+    assert.equal(tc.ifs[0].gone, true);
 });
 
 // ── final-review fixes ──

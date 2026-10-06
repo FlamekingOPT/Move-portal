@@ -1182,6 +1182,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // ── v3 manager approvals and shadow report ───────────────────────────
     const FIX_KINDS = ['if_short', 'if_over', 'no_if'];
+    const IF_PILL_KINDS = ['if_gone', 'if_empty'];      // shown as pills on the truck card's IF rows
     // Whole minutes from a NetSuite stamp to now (null when either can't be read).
     function minutesSince(stamp, c) {
         const abs = p => p ? Date.UTC(Number(p.dayIso.slice(0, 4)), Number(p.dayIso.slice(5, 7)) - 1, Number(p.dayIso.slice(8, 10))) / 60000 + p.hour * 60 + (p.minute || 0) : null;
@@ -1216,7 +1217,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                     ifs: (x.data.ifs || []).map(f => ({ ifId: f.ifId, ifNum: f.ifNum, toNum: f.toNum, lines: f.lines, gone: !!(f.gone || gone[String(f.ifId)]), empty: !!empty[String(f.ifId)] })),
                     suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned), orphans: orphanCreates(x), stuck: stuckCorrect(x), correctError: x.data.correctError || '',
                     shortNote: x.data.shortNote || null, verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '',
-                    otherDiffs: pub.filter(d => FIX_KINDS.indexOf(d.kind) === -1).map(d => d.text) });   // why it waits when no Correct card explains it
+                    otherDiffs: pub.filter(d => FIX_KINDS.indexOf(d.kind) === -1 && IF_PILL_KINDS.indexOf(d.kind) === -1).map(d => d.text) });   // why it waits when no Correct card or IF pill explains it
             });
         }
         const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
