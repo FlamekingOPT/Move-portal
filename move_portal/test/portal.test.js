@@ -2525,3 +2525,98 @@ test('report.history: every truck newest first with who/when per step and correc
     assert.deepEqual(ra.corrections, ['+ ' + s.code + ' accepted · IF9001']);
     assert.deepEqual([h[0].seal, h[0].markedAt, h[0].corrections], ['', '', []]);
 });
+
+// ── final review fix wave (F1-F5) ──
+test('final fix F1: two overlapping approvals settle one pending accept once (alloc 516, received once)', () => {
+    const ctx = setup();
+    const { t } = departed(ctx, 42, '5260050', '9001');
+    const stray = strayOn(ctx, t);
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');   // off mode: the office edits the IF
+    const realInfo = ctx.ns.ifInfo;
+    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 516 }]; return o; };
+    let receives = 0;
+    const realUpd = ctx.data.updatePallet;
+    ctx.data.updatePallet = (cur, patch) => { if (patch.status === 'received' && String(cur.id) === String(stray.id)) receives++; return realUpd(cur, patch); };
+    hookOnce(ctx.ns, 'ifInfo', () => ctx.run('approvals'));                   // a second request runs while the first is about to settle
+    ctx.run('approvals');
+    ctx.data.updatePallet = realUpd;
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.data.alloc[0].lines['975'], receives, x.data.unposted, x.data.claim || '', ctx.data.getPallet(stray.id).status], [516, 1, 1, '', 'received']);
+    assert.equal(x.data.corrections.filter(k => k.kind === 'pallet_accept').length, 1);
+});
+
+test('final fix F1: completeAccept refuses a pallet that is already accepted', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260051', '9001');
+    const stray = strayOn(ctx, t);
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'accepted');
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+    // the same pallet can no longer be decided again (flag cleared), and the alloc stays at 516
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /not flagged/);
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+});
+
+test('final fix F2: a pending accept can be withdrawn by Reject; the receipt unblocks and the TO room is freed', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t, ps } = departed(ctx, 42, '5260052', '9001');
+    const stray = strayOn(ctx, t, LINE201);
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /already accepted/);
+    ctx.run('unload_done', { truckId: t.id }, false);
+    const lt = truckWith(ctx, 2, '9002').t;
+    const big = printLabels(ctx, 1, 'Jwd1', [{ item: '11', sku: 'YSN201', cfg: '', pcs: 1100 }])[0];
+    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false).result, 'no_to');   // 1,100 + the pending 120 is over TO700's 1,200
+    assert.equal(ctx.run('approvals').receipts[0].canApprove, false);
+    const r = ctx.run('pallet_reject', { truckId: t.id, palletId: stray.id, note: 'office will not make an IF' });
+    assert.equal(r.outcome, 'rejected');
+    assert.equal(r.text, '↩ Rejected · "office will not make an IF" · pending accept withdrawn · back to labeled');
+    const p = ctx.data.getPallet(stray.id), x = ctx.data.getLoad(t.id);
+    assert.deepEqual([p.status, p.loadId, p.data.flag, p.data.decision.kind, p.data.decision.text], ['labeled', '', '', 'rejected', r.text]);
+    assert.deepEqual([x.data.flagged, x.data.claim || '', x.data.corrections.filter(k => k.pending).length, x.data.corrections.filter(k => k.kind === 'pallet_reject').length], [[], '', 0, 1]);
+    const ap = ctx.run('approvals');
+    assert.deepEqual([ap.receipts[0].canApprove, ap.receipts[0].pending.length, ap.receipts[0].blockReason], [true, 0, '']);
+    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false).result, 'addon');       // the reservation is gone
+});
+
+test('final fix F3: a pallet on a truck marked shipped cannot be accepted or rejected off it', () => {
+    ['pallet_accept', 'pallet_reject'].forEach(action => {
+        const ctx = setup();
+        ctx.data.db.settings.writeMode = 'qty';
+        const { t } = departed(ctx, 42, '5260053', '9001');
+        const other = readyTruck(ctx, 2, '9002');
+        assert.equal(ctx.run('unload_scan', { truckId: t.id, raw: other.ps[0].code }, false).result, 'never_loaded');
+        ctx.run('ship_mark', { truckId: other.t.id, seal: '5260054' }, false);
+        assert.equal(ctx.data.getLoad(other.t.id).status, 'ship_pending');
+        assert.throws(() => ctx.run(action, { truckId: t.id, palletId: other.ps[0].id, note: 'n' }),
+            /That pallet is on Trailer [^,]+, which is waiting for ship confirmation: confirm or send back that truck first/, action);
+        assert.deepEqual([ctx.data.getPallet(other.ps[0].id).status, ctx.data.getPallet(other.ps[0].id).loadId], ['loaded', other.t.id]);
+        assert.equal(ctx.data.getLoad(other.t.id).status, 'ship_pending');
+    });
+});
+
+test('final fix F4: a pallet flagged between the receipt checks and the claim still blocks the approve (no claim left behind)', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 42, '5260055', '9001');
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('unload_done', { truckId: t.id }, false);
+    const s = printLabels(ctx, 1, 'Jfl4', [L975])[0];
+    hookOnce(ctx.data, 'palletsByLoad', () => ctx.run('unload_scan', { truckId: t.id, raw: s.code }, false));   // a floor scan flags it mid-request
+    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet first/);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status === 'approving', x.data.claim || ''], [false, '']);
+});
+
+test('final fix F5: a pending-accepted or flagged pallet is refused at Riverside and not loaded', () => {
+    const ctx = setup();
+    const { t } = departed(ctx, 42, '5260056', '9001');
+    const stray = strayOn(ctx, t);
+    const lt = truckWith(ctx, 2, '9002').t;
+    let r = ctx.run('truck_scan', { truckId: lt.id, raw: stray.code }, false);               // flagged, undecided
+    assert.deepEqual([r.result, r.tone, ctx.data.getPallet(stray.id).status], ['flagged_tippecanoe', 'bad', 'labeled']);
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');
+    r = ctx.run('truck_scan', { truckId: lt.id, raw: stray.code }, false);                   // accepted, pending the office
+    assert.deepEqual([r.result, r.tone, r.pallet.id, ctx.data.getPallet(stray.id).status, r.view.totals.pallets], ['flagged_tippecanoe', 'bad', stray.id, 'labeled', 2]);
+});

@@ -214,7 +214,7 @@ test('2026-10-06 pm: Dashboard first and default; Labels start with Print a SKU'
 test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject; Approve waits; anchors for the dashboard links', () => {
     const src = ui._clientMain.toString();
     ['Flagged pallets', 'data-act="apaccept"', 'data-act="apreject"', "api('pallet_accept'", "api('pallet_reject'", 'Accept onto this truck', 'x.blockReason', 'x.canApprove', 'r.flagged', 'x.pending', 'x.decided',
-        'id="ap_ship"', 'id="ap_fix"', 'id="ap_trucks"', 'id="ap_flag"', 'id="ap_retry"', 'id="ap_rec"', 'ACT.goapprove =', 'decide now, or later on the receipt card', 'waiting for the manager', 'v.decided']
+        'id="ap_ship"', 'id="ap_fix"', 'id="ap_trucks"', 'id="ap_flag"', 'id="ap_retry"', 'id="ap_rec"', 'ACT.goapprove =', 'decide now, or later on the receipt card', 'waiting for the manager', 'v.decided', 'Flagged at Tippecanoe', "case 'flagged_tippecanoe'"]
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.indexOf('The office will sort these out.'), -1);
     ['apaccept', 'apreject'].forEach(n => {

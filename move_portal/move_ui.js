@@ -731,6 +731,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + (r.reason === 'ship_pending' ? ', marked shipped' : ', departing'), line, 'Check with the supervisor.');
                 case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
+                case 'flagged_tippecanoe': return flash('red', '❌ Flagged at Tippecanoe', line, 'A manager is deciding this pallet in Approvals. Set it aside.');
                 default: return flash('red', '❌ Unknown label', raw, 'Not a move label. Maybe a product barcode?');
             }
         }

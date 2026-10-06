@@ -671,6 +671,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const s = core.parseScan(a.raw);
         const p = s.palletId ? data.getPallet(s.palletId) : null;
         if (a.mode === 'off') return takeOff(x, s, p, c);
+        if (p && ((p.data.decision && p.data.decision.kind === 'accepted_pending') || p.data.flag === 'never_loaded')) {   // a manager is deciding it at Tippecanoe: it must not load here
+            data.logScan({ pallet: p.id, load: x.id, result: 'flagged_tippecanoe', data: { raw: s.raw, mode: 'load', actor: c.actor, at: c.now.stamp } });
+            return { result: 'flagged_tippecanoe', raw: s.raw, tone: 'bad', pallet: pubPallet(p), view: truckView(mustTruck(x.id), c) };
+        }
         let sc;                                       // capacity data (TO lines, all trucks) only for a pallet that can actually load
         if (p && p.status === VP.LABELED) sc = scanCtx(x, c);
         else {
@@ -1072,11 +1076,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (cur && cur.data.claim === claim) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '' } });
         } catch (e) { log.error({ title: 'move dropClaim ' + id, details: (e && e.stack) || String(e) }); }
     }
-    function mustFlaggedOn(x, palletId) {
+    // allowPending: Reject may withdraw a pending accept (nothing was written to NetSuite for it); Accept may not.
+    function mustFlaggedOn(x, palletId, allowPending) {
         const p = data.getPallet(palletId);
         if (!p || p.data.flag !== 'never_loaded' || String(p.data.flaggedTruck) !== String(x.id) || (x.data.flagged || []).indexOf(String(p.id)) === -1) throw userErr('That pallet is not flagged on this truck');
-        if (p.data.decision && p.data.decision.kind === 'accepted_pending') throw userErr('That pallet is already accepted: the office finishes it in NetSuite');
+        if (!allowPending && p.data.decision && p.data.decision.kind === 'accepted_pending') throw userErr('That pallet is already accepted: the office finishes it in NetSuite');
         if (p.status !== VP.LABELED && p.status !== VP.LOADED) throw userErr('That pallet is ' + p.status + ', nothing to decide');
+        if (p.status === VP.LOADED && p.loadId) {                 // taking it off a truck that is locked would knock that truck to needs_fix at confirm
+            const o = data.getLoad(p.loadId);
+            if (o && !isOpen(o)) throw userErr('That pallet is on ' + truckLabel(o) + ', which is waiting for ship confirmation: confirm or send back that truck first');
+        }
         return p;
     }
     // The pallet physically arrived here, so it leaves the open truck it was scanned onto at Riverside (that truck's ready reverts).
@@ -1091,6 +1100,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     // The pallet joins the truck: received on it, its pieces in the truck's alloc for the IF, the flag closed.
     function completeAccept(id, p, dec, c) {
+        const fresh = data.getPallet(p.id);                      // a second request may have finished this pallet already: never grow the alloc twice
+        if (!fresh || (fresh.data.decision && fresh.data.decision.kind === 'accepted')) throw userErr('That pallet was already decided');
         const x = mustTruck(id), item = String(dec.item), pcs = Number(dec.pcs);
         let alloc = (x.data.alloc || []).map(a => Object.assign({}, a, { lines: Object.assign({}, a.lines) }));
         let a = alloc.find(y => String(y.ifId) === String(dec.ifId));
@@ -1132,8 +1143,17 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (!got) return;
             const cur = mustTruck(x.id);
             if (inFlight(cur)) return;
-            completeAccept(x.id, data.getPallet(p.id), Object.assign({}, dec, got, { text: acceptText(Object.assign({}, dec, got)) }), c);
-            taken[got.ifId] = true;                                  // the cached trucks list does not show this attach: the next truck must not take the same IF
+            let cl;                                                  // a claim serialises overlapping approvals/dashboard requests settling the same pallet
+            try { cl = claimLoad(cur, null, 'settle', decideGuard, {}); } catch (e) { if (e.user) return; throw e; }
+            try {
+                const fresh = data.getPallet(p.id);                  // another request may have settled, rejected or reloaded it before our claim
+                if (fresh && fresh.data.decision && fresh.data.decision.kind === 'accepted_pending' && fresh.data.flag === 'never_loaded') {
+                    completeAccept(x.id, fresh, Object.assign({}, dec, got, { text: acceptText(Object.assign({}, dec, got)) }), c);
+                    taken[got.ifId] = true;                          // the cached trucks list does not show this attach: the next truck must not take the same IF
+                }
+            } catch (e) { dropClaim(x.id, cl.claim); throw e; }
+            const rel = data.getLoad(x.id);                          // fresh read: completeAccept just wrote the truck
+            if (rel && rel.data.claim === cl.claim) data.updateLoad(rel, { data: { claim: '', workingAt: 0, phase: '' } });
         });
         return mustTruck(x.id);
     }
@@ -1305,13 +1325,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (!note) throw userErr('Enter a note: why is this pallet rejected?');
         const x0 = mustTruck(a.truckId);
         decideGuard(x0);
-        const p0 = mustFlaggedOn(x0, a.palletId);
+        const p0 = mustFlaggedOn(x0, a.palletId, true);
         const cl = claimLoad(x0, null, 'reject', decideGuard, {});
         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
-        const text = '↩ Rejected · "' + note + '" · back to labeled';
+        const pendingOne = !!(p0.data.decision && p0.data.decision.kind === 'accepted_pending');
+        const text = '↩ Rejected · "' + note + '"' + (pendingOne ? ' · pending accept withdrawn' : '') + ' · back to labeled';
         let p;
         try {
-            mustFlaggedOn(cl.Ld, a.palletId);                       // another decision may have landed between the first check and the claim
+            const again = mustFlaggedOn(cl.Ld, a.palletId, true);   // another decision may have landed between the first check and the claim
+            if (!!(again.data.decision && again.data.decision.kind === 'accepted_pending') !== pendingOne) throw userErr('That pallet was just decided by someone else. Refresh.');
             p = data.getPallet(p0.id);
             unloadFromOther(p, c);
             data.updatePallet(data.getPallet(p.id), { status: VP.LABELED, load: '', data: { flag: '', decision: { kind: 'rejected', note: note, by: c.user, at: c.now.stamp, text: text } } });
@@ -1319,7 +1341,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         assertClaim(id, claim, label, 'reject');
         const cur = data.getLoad(id);
         data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', flagged: (cur.data.flagged || []).filter(k => String(k) !== String(p.id)), lastStep: stepOf('pallet_rejected', c),
-            corrections: (cur.data.corrections || []).concat([corrEntry('pallet_reject', p, { note: note, text: text }, c)]) } });
+            corrections: (cur.data.corrections || []).filter(k => !(k.kind === 'pallet_accept' && k.pending && String(k.palletId) === String(p.id)))
+                .concat([corrEntry('pallet_reject', p, { note: note, text: text }, c)]) } });
         return { outcome: 'rejected', text: text, view: unloadView(mustTruck(id), c) };
     });
     function mustUnloadable(id) {
@@ -1440,6 +1463,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const prevStatus = x0.status === T.APPROVING ? (x0.data.prevStatus || T.RECEIVING) : x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
         const cl = claimLoad(x0, T.APPROVING, 'receive', cur => {
             if (!canApprove(cur)) throw userErr('This truck is ' + cur.status + ', not ready to approve');
+            const b = blockReasonOf(cur);                           // a pallet may have been flagged since the fail-fast check above
+            if (b) throw userErr(b);
         }, { prevStatus: prevStatus });
         const x = cl.Ld, claim = cl.claim, label = truckLabel(x);
         const rp = receiptPlan(x), seq = (Number(x.data.recvSeq) || 0) + 1;
