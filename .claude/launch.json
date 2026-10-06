@@ -1,8 +1,33 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "move-preview", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js"], "port": 8765 },
-    { "name": "move-preview-beta", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js"], "port": 8765 },
-    { "name": "move-preview-smoke", "runtimeExecutable": "node", "runtimeArgs": ["move_portal/test/preview_server.js", "--port", "8798", "--store", "move_portal/local/smoke-store.json"], "port": 8798 }
+    {
+      "name": "move-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "move_portal/test/preview_server.js"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "move-preview-beta",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "move_portal/test/preview_server.js"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "move-preview-smoke",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "move_portal/test/preview_server.js",
+        "--port",
+        "8798",
+        "--store",
+        "move_portal/local/smoke-store.json"
+      ],
+      "port": 8798
+    }
   ]
 }

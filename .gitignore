@@ -6,3 +6,4 @@ move_portal/snapshot/
 move_portal/local/store.json.tmp
 move_portal/local/smoke-store.json
 move_portal/local/smoke-store.json.tmp
+move_portal/local/store.before-*.json
