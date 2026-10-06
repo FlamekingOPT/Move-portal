@@ -171,3 +171,4 @@ Final review: fix wave 27404ae (settle claim, withdraw pending accept, locked-tr
 Final re-review: ready for the beta walk. Minor (final): reject of a pending accept the office already did (check pendingDone after the claim, ON-MODE GATE); completeAccept guard untested; F3 wording for claimed/departing trucks; truck_move_here has no flagged guard.
 ```
 OPEN resolved 2026-10-06 pm: prod connector reads aggregateItemLocation; snapshot prod-2026-10-06.json pulled (15 planned IFs, 382 onHand). Sandbox connector role still restricted (no transaction/location).
+Sandbox test data 2026-10-06: TO8720 (2587474) YSN401 2×1,152, IF53832 (2587475) Packed 1,152; role customrole2538 widened (TO/IF/IR Full, Items/Locations View); SuiteQL transaction still hidden to that role.
