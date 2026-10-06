@@ -1998,6 +1998,9 @@ test('pallet_accept in off mode is pending: receipt blocked until the IF reads a
     assert.equal(r.text, '⏳ Accepted · office sets IF9001 YSN100 to 516 · receipt waits');
     assert.equal(ctx.data.getPallet(stray.id).data.decision.kind, 'accepted_pending');
     assert.equal(ctx.data.getPallet(stray.id).status, 'labeled');
+    const b2 = departed(ctx, 42, '5260009', '9002');                       // scanned at another departed truck: stays on the first, not re-flagged there
+    assert.equal(ctx.run('unload_scan', { truckId: b2.t.id, raw: stray.code }, false).result, 'never_loaded');
+    assert.deepEqual([ctx.data.getPallet(stray.id).data.flaggedTruck, ctx.data.getLoad(b2.t.id).data.flagged || []], [t.id, []]);
     ctx.run('unload_done', { truckId: t.id }, false);
     assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet/);
     let ap = ctx.run('approvals');
@@ -2063,4 +2066,89 @@ test('lastStep rides on the existing writes: start, scan, verify, mark, confirm,
     assert.equal(step().kind, 'unload_done');
     ctx.run('receipt_approve', { truckId: t.id });
     assert.equal(step().kind, 'receipt_approved');
+});
+
+test('fix wave 1: a decided pallet cannot be decided again (accept then accept / reject), alloc unchanged', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260010');
+    const stray = strayOn(ctx, t);
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'accepted');
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /not flagged|nothing to decide|already accepted/);
+    assert.throws(() => ctx.run('pallet_reject', { truckId: t.id, palletId: stray.id, note: 'again' }), /not flagged|nothing to decide|already accepted/);
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+    assert.equal(ctx.data.getPallet(stray.id).status, 'received');
+});
+
+test('fix wave 1: the pallet is re-checked after the claim; a decision that lands in between is refused and the claim is released', () => {
+    ['pallet_accept', 'pallet_reject'].forEach(action => {
+        const ctx = setup();
+        ctx.data.db.settings.writeMode = 'qty';
+        const { t } = departed(ctx, 42, action === 'pallet_accept' ? '5260011' : '5260012');
+        const stray = strayOn(ctx, t);
+        const realUpdate = ctx.data.updateLoad;
+        ctx.data.updateLoad = (cur, patch) => {                            // another manager's decision lands just after our claim
+            const r = realUpdate(cur, patch);
+            if (patch.data && patch.data.phase && patch.data.claim) { ctx.data.updateLoad = realUpdate; ctx.data.updatePallet(ctx.data.getPallet(stray.id), { data: { flag: '' } }); }
+            return r;
+        };
+        assert.throws(() => ctx.run(action, { truckId: t.id, palletId: stray.id, note: 'n' }), /not flagged/);
+        const x = ctx.data.getLoad(t.id);
+        assert.deepEqual([x.data.claim, x.data.phase, x.data.alloc[0].lines['975']], ['', '', 504]);
+        assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_qty').length, 0);
+    });
+});
+
+test('fix wave 1: two strays of one SKU accepted in off mode target 516 then 528; the office sets 528 and one approvals call settles both', () => {
+    const ctx = setup();
+    const { t } = departed(ctx, 42, '5260013');
+    const s1 = strayOn(ctx, t), s2 = strayOn(ctx, t);
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id }).text, '⏳ Accepted · office sets IF9001 YSN100 to 516 · receipt waits');
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s2.id }).text, '⏳ Accepted · office sets IF9001 YSN100 to 528 · receipt waits');
+    ctx.run('unload_done', { truckId: t.id }, false);
+    const realInfo = ctx.ns.ifInfo;
+    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 528 }]; return o; };
+    const ap = ctx.run('approvals');
+    assert.deepEqual([ap.receipts[0].pending.length, ap.receipts[0].decided.length, ap.receipts[0].canApprove], [0, 2, true]);
+    assert.deepEqual([ctx.data.getPallet(s1.id).status, ctx.data.getPallet(s2.id).status], ['received', 'received']);
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 528);
+});
+
+test('fix wave 1: a retry after completeAccept failed does not write the IF a second time', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260014');
+    const stray = strayOn(ctx, t);
+    const realInfo = ctx.ns.ifInfo;
+    ctx.tx._t.onApply = op => { if (op.op === 'if_qty') ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: op.to }]; return o; }; };   // the write lands in NetSuite
+    const realUpdate = ctx.data.updatePallet;
+    ctx.data.updatePallet = (cur, patch) => {
+        if (patch.status === 'received') { ctx.data.updatePallet = realUpdate; throw new Error('boom: record write failed'); }
+        return realUpdate(cur, patch);
+    };
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /boom/);
+    ctx.data.updatePallet = realUpdate;
+    const p1 = ctx.data.getPallet(stray.id), x1 = ctx.data.getLoad(t.id);
+    assert.deepEqual([p1.status, p1.data.flag, p1.data.decision || null, x1.data.claim], ['labeled', 'never_loaded', null, '']);
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    assert.equal(r.outcome, 'accepted');
+    assert.equal(r.text, '✅ Accepted · IF9001 504 → 516');
+    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_qty').length, 1);
+    assert.equal(ctx.data.getPallet(stray.id).status, 'received');
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+});
+
+test('fix wave 1: unposted counts a completed accept once; a settled pending entry is not also listed as decided while pending', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 42, '5260015');
+    const stray = strayOn(ctx, t);
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { unposted: null } });   // as if the counter was never kept: it is recomputed from the pallets
+    ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    assert.deepEqual(ctx.run('unload_get', { truckId: t.id }, false).view.decided, [], 'a pending accept is not decided yet');
+    const realInfo = ctx.ns.ifInfo;
+    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 516 }]; return o; };
+    ctx.run('approvals');
+    assert.equal(ctx.data.getLoad(t.id).data.unposted, 2);              // the scanned pallet plus the accepted one, each once
+    assert.equal(ctx.run('unload_get', { truckId: t.id }, false).view.decided.length, 1);
 });
