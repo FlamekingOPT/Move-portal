@@ -1,0 +1,342 @@
+# Review package: bd0e68f..HEAD
+
+## Commits
+ca2d468 feat(ui): Dashboard first tab, Print a SKU first, Flagged pallets card and receipt rows with Accept/Reject, floor flagged wording
+
+## Files changed
+ move_portal/move_ui.js      | 69 ++++++++++++++++++++++++++++++++++++---------
+ move_portal/test/ui.test.js | 21 +++++++++++++-
+ 2 files changed, 76 insertions(+), 14 deletions(-)
+
+## Diff
+diff --git a/move_portal/move_ui.js b/move_portal/move_ui.js
+index 52ae2a8..72cea89 100644
+--- a/move_portal/move_ui.js
++++ b/move_portal/move_ui.js
+@@ -35,21 +35,21 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:1
+ .chips{display:flex;flex-wrap:wrap;gap:8px}
+ .chip{border:2px solid var(--line);background:#fff;border-radius:10px;padding:10px 12px;cursor:pointer;flex:1;min-width:30%;text-align:center;font-weight:600}
+ .chip small{display:block;color:var(--muted);font-size:11px;font-weight:400}.chip.on{border-color:var(--blue);background:var(--blue-soft)}
+ .stepper{display:flex;align-items:center;gap:8px}.stepper button{width:54px;height:54px;flex:0 0 54px;border-radius:12px;border:1px solid #cbd5e1;background:#fff;font-size:24px}
+ .stepper .inp{text-align:center;font-size:22px;font-weight:700;margin:0}
+ .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+ .card h4{margin:0 0 4px;font-size:15px}.card.bl{border-color:var(--blue)}.card.bt{border-color:var(--teal)}.card.bo{border-color:var(--orange)}.card.warnc{border-color:var(--red)}
+ [data-act="opentruck"],[data-act="openunload"]{cursor:pointer}
+ .muted{color:var(--muted);font-size:13px}.warn{color:var(--red)!important}
+ .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle}
+-.p-blue{background:var(--blue-soft);color:var(--blue)}.p-green{background:var(--green-soft);color:var(--green)}.p-amber{background:var(--amber-soft);color:var(--amber)}.p-red{background:var(--red-soft);color:var(--red)}.p-gray{background:#f1f5f9;color:#475569}
++.p-blue{background:var(--blue-soft);color:var(--blue)}.p-green{background:var(--green-soft);color:var(--green)}.p-amber{background:var(--amber-soft);color:var(--amber)}.p-red{background:var(--red-soft);color:var(--red)}.p-gray{background:#f1f5f9;color:#475569}.pill.p-violet{background:#ede9fe;color:#5b21b6}
+ .scanbox{display:flex;gap:8px;align-items:center;background:#fff;border:2px dashed #94a3b8;border-radius:12px;padding:10px 12px;margin:10px 0}
+ .scanbox span{font-size:22px}.scanbox input{border:0;flex:1;font-size:18px;outline:none;min-width:0}.scanbox button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px}
+ .scanbox.takeoff{border:3px solid var(--amber);background:var(--amber-soft)}
+ .smode{display:flex;gap:6px;margin-top:10px}.smode button{flex:1;border:2px solid var(--line);background:#fff;border-radius:10px;padding:10px 6px;font-weight:700;font-size:14px;color:var(--muted)}
+ .smode button.on{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}.smode button.on.off{border-color:var(--amber);background:var(--amber-soft);color:var(--amber)}
+ .card.amberc{border:2px solid var(--amber);background:#fffbeb}.card.greenc{border:2px solid var(--green);background:#f0fdf4}
+ .diffs div{padding:6px 0;border-bottom:1px solid var(--line);font-size:14px;overflow-wrap:anywhere}.diffs div:last-child{border:0}
+ .drow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}.drow:last-child{border:0}.drow span{overflow-wrap:anywhere;min-width:0}.drow button{flex:0 0 auto}
+ .banner{position:fixed;bottom:0;left:0;right:0;z-index:20;padding:8px 12px}
+ .banner div{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--green);color:#fff;border-radius:12px;padding:12px;margin-top:6px;font-weight:700;box-shadow:0 -4px 14px rgba(0,0,0,.25)}
+@@ -79,21 +79,21 @@ textarea.inp{font-family:monospace;font-size:13px}textarea.inp.note{font-family:
+ .modal>div{background:#fff;border-radius:14px;padding:16px;width:100%;max-width:480px;max-height:90vh;overflow:auto}.modal h4{margin:0 0 8px;font-size:18px}
+ .oform{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.oform .inp{flex:1 1 160px;min-width:0;margin:0}.oform .num{flex:0 0 76px}
+ h3{font-size:15px;margin:16px 0 8px}
+ @media (max-width:900px){.grid4{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr}}
+ `;
+ 
+     function clientMain(B) {
+         'use strict';
+         const isMgr = B.mode === 'manager';
+         const S = { side: get('mv_side') === 'in' ? 'in' : 'out', tab: null, who: get('mv_who') || '', poll: null,
+-            ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [] };
++            ed: null, edRender: null, truckId: null, tv: null, unloadId: null, lastIn: null, plan: null, pt: null, cfgRows: [], cfgImport: null, items: [], scrollTo: '' };
+         if (isMgr) { S.who = B.me; S.side = 'mgr'; }   // the manager page is a NetSuite login: that user is the actor, no "I am" pick and no side toggle
+ 
+         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+         function put(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
+         function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+         function $(id) { return document.getElementById(id); }
+         function main(html) { $('main').innerHTML = html; }
+         function busy(el, on) { if (el) el.disabled = on; }
+         function pdfUrl(q) { return B.url + '&action=pdf&' + q; }
+         function num(n) { return Number(n || 0).toLocaleString(); }
+@@ -139,27 +139,27 @@ h3{font-size:15px;margin:16px 0 8px}
+         function wmText(m) { return WM[m] || WM.off; }
+         function statusPill(s) { const p = PILL[s] || [s, 'p-gray']; return '<span class="pill ' + p[1] + '">' + esc(p[0]) + '</span>'; }
+ 
+         function needWho() {
+             if (S.who) return false;
+             alert('Pick your name in "I am" first.');
+             return true;
+         }
+ 
+         // ── shell ────────────────────────────────────────────────────────
+-        // Floor: Outbound / Inbound. Manager (spec 2026-10-06 §4): one tab bar, default Approvals.
++        // Floor: Outbound / Inbound. Manager (spec 2026-10-06 §4): one tab bar, default Dashboard.
+         const TABS = {
+             out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']],
+             in: [['unload', 'Unload']],
+-            mgr: [['labels', 'Labels'], ['approve', 'Approvals'], ['dash', 'Dashboard'], ['report', 'Report']]
++            mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]
+         };
+-        const DEF_TAB = { out: 'trucks', in: 'unload', mgr: 'approve' };
++        const DEF_TAB = { out: 'trucks', in: 'unload', mgr: 'dash' };
+ 
+         function shell() {
+             const whoCtl = isMgr ? ''
+                 : B.roster.length
+                     ? '<select id="who"><option value="">— pick —</option>' + B.roster.map(n => '<option' + (n === S.who ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
+                     : '<input id="who" value="' + esc(S.who) + '" placeholder="your name">';
+             document.body.innerHTML = '<div class="top"><div class="ttl"><b>Move Portal</b><span>' + esc(B.me) + (isMgr ? ' · manager' : '') + '</span></div>' +
+                 (isMgr ? '</div>' : '<div class="who">I am ' + whoCtl + '</div>' +
+                 '<div class="toggle"><button data-act="side" data-v="out" class="' + (S.side === 'out' ? 'on out' : '') + '">📤 Outbound · ' + esc(B.fromName) + '</button>' +
+                 '<button data-act="side" data-v="in" class="' + (S.side === 'in' ? 'on in' : '') + '">📥 Inbound · ' + esc(B.toName) + '</button></div></div>') +
+@@ -821,21 +821,21 @@ h3{font-size:15px;margin:16px 0 8px}
+             markSeen(r.view);
+             if (r.needsFix) { needsFixAgain(r, id); return; }
+             tone('ok');
+             seal.removeAttribute('data-keep');
+             shipList(flash('green', '🚚 ' + esc(r.view.truck.label) + ' marked shipped', esc('Seal ' + sv), 'A manager confirms it in Approvals.'));
+         };
+ 
+         // ── Manager: Labels (requests · print a SKU · print plan · reprint · SKU configs) ──
+         SCREENS.labels = () => {
+             const sec = (id, title) => '<div class="card lsec"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>';
+-            main(sec('lb_queue', 'Label requests') + sec('lb_sku', 'Print a SKU') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
++            main(sec('lb_sku', 'Print a SKU') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
+             labelQueue($('lb_queue'));
+             labelSku($('lb_sku'));
+             labelPlan($('lb_plan'));
+             labelReprint($('lb_reprint'));
+             labelConfigs($('lb_configs'));
+         };
+         // The queue refreshes every 15 s while Labels is open (renderNav clears S.poll on a tab change).
+         function labelQueue(box) {
+             S.ed = newEd();
+             box.innerHTML = '<div id="qlist"><div class="muted">Loading…</div></div><div id="qmsg"></div>' +
+@@ -1017,38 +1017,39 @@ h3{font-size:15px;margin:16px 0 8px}
+                 scanBox('rscan') + '<div id="scanres"></div><div class="card" id="uifs"></div><div class="card plist" id="uexp"></div><div class="card" id="uoth" style="display:none"></div><div id="ufoot"></div>');
+             wireScan('rscan', doUnloadScan);
+             paintUnload(r.view);
+         }
+         function paintUnload(v) {
+             const t = v.truck;
+             $('uhead').innerHTML = esc(t.label) + ' ' + statusPill(t.status);
+             $('usub').textContent = (t.depart ? 'Seal ' + t.depart.seal + ' · Trailer ' + t.depart.trailer + ' · ' : '') + v.counts.in + ' of ' + v.counts.of + ' pallets in';
+             $('uifs').innerHTML = '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' + v.perIf.map(f => '<tr class="' + (f.short ? '' : 'okrow') + '"><td>' + esc(f.ifNum) +
+                 '</td><td><b>' + num(f.received) + '</b> / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
+-                (v.flagged.length ? flash('amber', '🟠 ' + v.flagged.length + ' never-loaded pallet(s) flagged', esc(v.flagged.map(p => p.code).join(', ')), 'The office will sort these out.') : '');
++                (v.flagged.length ? flash('amber', '🟠 ' + v.flagged.length + ' never-loaded pallet(s) · waiting for the manager', esc(v.flagged.map(p => p.code).join(', ')), 'A manager accepts or rejects them in Approvals.') : '') +
++                ((v.decided || []).length ? '<div class="diffs">' + v.decided.map(d => '<div>' + esc(d.text) + ' · ' + esc(d.by) + '</div>').join('') + '</div>' : '');
+             $('uexp').innerHTML = '<h4>Still expected</h4>' + (v.expected.map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div></div>').join('') || '<div class="muted">All in ✅</div>');
+             const oth = v.otherItems || [], ob = $('uoth');
+             ob.style.display = oth.length ? '' : 'none';
+             ob.innerHTML = '<h4>Other items · ' + oth.filter(o => o.in).length + ' of ' + oth.length + ' in</h4>' + oth.map(o => '<div class="drow"><span>' + esc(o.desc) + ' × ' + num(o.qty) + '</span>' +
+                 '<button class="dbtn ' + (o.in ? 'go' : 'gh') + '" data-act="utick" data-id="' + esc(o.id) + '" data-on="' + (o.in ? '0' : '1') + '">' + (o.in ? '☑ In' : '☐ Tick') + '</button></div>').join('');
+             $('ufoot').innerHTML = (t.error ? errBox(t.error) : '') + '<button class="btn ghost sm" data-act="uundo">↶ Undo last scan</button>' + (S.lastIn ? '<button class="btn ghost sm" data-act="udamaged" data-id="' + esc(S.lastIn) + '">Mark last pallet damaged</button>' : '') +
+                 '<button class="btn go" data-act="udone">Unloading done: send to manager</button>';
+         }
+         function unloadResultHtml(r) {
+             const p = r.pallet, line = p ? esc(p.code + ' · ' + p.summary) : '';
+             switch (r.result) {
+                 case 'ok': return flash('green', '✅ ' + esc(p.headline), line, r.view.counts.in + ' of ' + r.view.counts.of + ' in');
+                 case 'late': return flash('green', '✅ Late arrival', line, 'It goes on a second receipt for this IF (manager OK).');
+                 case 'dup': return flash('amber', '🟡 Already scanned in', line, 'No change.');
+                 case 'dup_other': return flash('amber', '🟡 Already received on ' + esc(r.otherLabel), line, '');
+                 case 'other_truck': return flash('amber', '🟡 Belongs to ' + esc(r.otherLabel), line, '', '<button data-act="uother" data-id="' + esc(p.id) + '">Receive it there</button><button data-act="clearres">Set aside</button>');
+-                case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the office. Set it aside.');
++                case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the manager. Set it aside.');
+                 case 'locked': return r.reason === 'ship_pending' ? flash('red', '❌ ' + esc(r.otherLabel) + ' is waiting for a manager to confirm shipping', line, 'Ask a manager to confirm it in Approvals, then scan again.')
+                     : flash('red', '❌ Its truck is still departing', line, 'Wait a minute and scan again.');
+                 case 'void': return flash('red', '❌ Label cancelled', line, 'Set aside and call the supervisor.');
+                 default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), '');
+             }
+         }
+         async function doUnloadScan(v) {
+             if (!S.who) { tone('bad'); $('scanres').innerHTML = errBox('Pick your name in "I am" first, then scan again.'); return; }
+             const r = await api('unload_scan', { truckId: S.unloadId, raw: v });
+             if (!$('scanres')) return;
+@@ -1081,20 +1082,31 @@ h3{font-size:15px;margin:16px 0 8px}
+             const t = x.truck, id = esc(t.id), lab = esc(t.label), late = x.ageMin != null && x.ageMin >= LATE_MIN;
+             const oth = (x.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
+             return '<div class="card ' + (late ? 'amberc' : 'bl') + '"><h4>🚚 ' + lab + ' · marked shipped' + (late ? ' <span class="pill p-amber">waiting ' + x.ageMin + ' min</span>' : '') + '</h4>' +
+                 '<div class="muted">' + esc(['Trailer ' + x.trailer, 'Seal ' + x.seal, x.carrier].filter(Boolean).join(' · ')) + '</div>' +
+                 '<div class="diffs">' + (x.ifs || []).map(f => '<div><b>' + esc(f.ifNum) + '</b> · ' + esc((f.lines || []).map(l => l.sku + ' × ' + num(l.qty)).join(', ')) + '</div>').join('') + '</div>' +
+                 '<div class="muted">' + num(x.pallets) + ' pallets · ' + num(x.pcs) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
+                 '<div class="muted">Marked shipped by ' + esc(x.markedBy || '?') + ' at ' + esc(x.markedAt) + (x.ageMin != null ? ' · ' + x.ageMin + ' min ago' : '') + '</div>' +
+                 '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Confirm shipped</button>' +
+                 '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button></div></div>';
+         }
++        // One row per undecided never-loaded pallet (spec 2026-10-06 pm §2): Accept onto the truck it was scanned on, or Reject with a note.
++        function flagRow(f) {
++            return '<div class="drow"><span><b>' + esc(f.code) + '</b> · ' + esc(f.sku) + ' · ' + num(f.pcs) + ' pcs <span class="pill p-violet">' + esc(f.truckLabel) + '</span>' +
++                '<div class="muted">never loaded on any truck · scanned by ' + esc(f.by || '?') + (f.at ? ' · ' + esc(f.at) : '') + (f.truckStatus === 'receiving' || f.truckStatus === 'departed' ? ' · truck still unloading' : '') + '</div></span>' +
++                '<span class="row2" style="margin:0"><button class="dbtn go" data-act="apaccept" data-id="' + esc(f.truckId) + '" data-pid="' + esc(f.palletId) + '" data-label="' + esc(f.code) + '" data-truck="' + esc(f.truckLabel) + '">Accept onto this truck</button>' +
++                '<button class="dbtn gh" data-act="apreject" data-id="' + esc(f.truckId) + '" data-pid="' + esc(f.palletId) + '" data-label="' + esc(f.code) + '">Reject</button></span></div>';
++        }
++        function flaggedCard(list) {
++            return '<div class="card amberc"><h4>🟠 ' + list.length + ' pallet' + (list.length === 1 ? '' : 's') + ' scanned at ' + esc(B.toName) + ' that ' + (list.length === 1 ? 'was' : 'were') + ' never loaded</h4>' +
++                '<div class="muted">decide now, or later on the receipt card</div><div class="diffs">' + list.map(flagRow).join('') + '</div></div>';
++        }
+         // One standalone card per IF diff: the instruction in large type and one big Correct the IF button.
+         function fixCard(f, wmode) {
+             const id = esc(f.truckId), lab = esc(f.truckLabel), wm = esc(wmode);
+             const head = (f.ifNum ? f.ifNum : 'New IF from ' + (f.toNum || 'an office TO')) + (f.sku ? ' · ' + f.sku : '');
+             const can = f.kind !== 'no_if' || f.toId;
+             const corr = (f.corrections || []).map(k => '<div class="muted">📝 ' + corrLine(k.op || {}) + ' · ' + esc(whoName(k.by)) + ' · ' + esc(k.at) + '</div>').join('');
+             return '<div class="card fixc"><div class="muted"><b>' + esc(head) + '</b> · ' + lab + '</div><div class="fixtxt">' + esc(f.text) + '</div>' + noteHtml(f.shortNote) + corr +
+                 (f.correctError ? errBox('Correction refused: ' + f.correctError + ' — fix it in NetSuite') : '') +
+                 (can ? '<button class="btn-correct" data-act="apcorrect" data-id="' + id + '" data-key="' + esc(f.key) + '" data-label="' + lab + '" data-wm="' + wm + '">Correct the IF</button>'
+                     : '<div class="muted warn">No open TO covers this SKU: the office creates one in NetSuite.</div>') +
+@@ -1131,38 +1143,46 @@ h3{font-size:15px;margin:16px 0 8px}
+             main((msg || '') + '<div class="muted">Loading…</div>');
+             const r = await api('approvals');
+             if (S.tab !== 'approve') return;
+             if (!r.ok) { main((msg || '') + errBox(r.error)); return; }
+             S.appr = r;
+             paintApprove(msg);
+         };
+         function paintApprove(msg) {
+             const r = S.appr;
+             setLate((r.shipPending || []).filter(x => x.ageMin != null && x.ageMin >= LATE_MIN).length);
+-            const ship = (r.shipPending || []).length ? '<h3>Ship confirmations</h3>' + r.shipPending.map(shipConfirmCard).join('') : '';
+-            const fix = (r.fixes || []).length ? '<h3>Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
+-            const trk = (r.trucks || []).length ? '<h3>Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))).join('') : '';
++            const ship = (r.shipPending || []).length ? '<h3 id="ap_ship">Ship confirmations</h3>' + r.shipPending.map(shipConfirmCard).join('') : '';
++            const fix = (r.fixes || []).length ? '<h3 id="ap_fix">Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
++            const trk = (r.trucks || []).length ? '<h3 id="ap_trucks">Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))).join('') : '';
++            const flg = (r.flagged || []).length ? '<h3 id="ap_flag">Flagged pallets</h3>' + flaggedCard(r.flagged) : '';
+             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
+                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
+                 (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');
+             const rec = r.receipts.map(x => {
+                 const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
+                 if (!x.perIf) return '<div class="card warnc">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + errBox(x.error || 'Could not build the receipt') +
+                     '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : 'Approve receipt') + '</button></div>';
+                 const missing = x.missing || [];
+                 return '<div class="card">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + (x.error ? errBox(x.error) : '') +
+                     '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' +
+                     x.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
+                     (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
+-                    '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button></div>';
++                    ((x.flagged || []).length || (x.pending || []).length || (x.decided || []).length
++                        ? '<div class="muted" style="margin-top:8px"><b>Flagged pallets' + ((x.flagged || []).length ? ' · ' + x.flagged.length + ' to decide' : '') + '</b></div>' +
++                          '<div class="diffs">' + (x.flagged || []).map(flagRow).join('') + (x.pending || []).map(p => '<div><b>' + esc(p.code) + '</b> · ' + esc(p.text) + '</div>').join('') +
++                          (x.decided || []).map(d => '<div class="muted">' + esc(d.text) + ' · ' + esc(d.by) + '</div>').join('') + '</div>' : '') +
++                    (x.canApprove === false
++                        ? '<button class="btn go" disabled>Approve receipt — ' + esc((x.blockReason || '').toLowerCase()) + '</button>'
++                        : '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button>') + '</div>';
+             }).join('');
+-            main((msg || '') + (ship + fix + trk + (ret ? '<h3>Stalled departures</h3>' + ret : '') + (rec ? '<h3>Receipts</h3>' + rec : '') || '<div class="muted">Nothing waiting for approval</div>'));
++            main((msg || '') + (ship + fix + trk + flg + (ret ? '<h3 id="ap_retry">Stalled departures</h3>' + ret : '') + (rec ? '<h3 id="ap_rec">Receipts</h3>' + rec : '') || '<div class="muted">Nothing waiting for approval</div>'));
++            if (S.scrollTo) { const a = $(S.scrollTo); S.scrollTo = ''; if (a) a.scrollIntoView({ block: 'start' }); }
+         }
+         ACT.apaddopen = el => { S.addOpen = S.addOpen || {}; S.addOpen[el.dataset.id] = !S.addOpen[el.dataset.id]; if (S.appr) paintApprove(''); };
+         ACT.apconfirm = async el => {
+             const label = el.dataset.label || 'this truck';
+             if (!confirm('Confirm ' + label + ' shipped? It gets its Truck # and its IFs are stamped/shipped in NetSuite (as the write mode allows).')) return;
+             busy(el, true);
+             const r = await api('ship_confirm', { truckId: el.dataset.id });
+             tone(r.ok && !r.needsFix ? 'ok' : 'bad');
+             if (!r.ok) { SCREENS.approve(errBox(r.error)); return; }
+             if (r.needsFix) { SCREENS.approve(flash('red', '❌ ' + esc(label) + ' no longer matches its IFs: back to Needs IF fix', '', (r.diffs || []).map(d => esc(d.text)).join('<br>'))); return; }
+@@ -1260,20 +1280,43 @@ h3{font-size:15px;margin:16px 0 8px}
+         };
+         ACT.aprecv = async el => {
+             if (!confirm('Approve receipt for ' + ((el.dataset.label) || 'this truck') + '? This posts in NetSuite when writes are on.')) return;
+             busy(el, true);
+             const r = await api('receipt_approve', { truckId: el.dataset.id });
+             tone(r.ok ? 'ok' : 'bad');
+             const w = r.ok ? (r.written || []) : [], m = r.ok ? (r.missing || []) : [];
+             SCREENS.approve(r.ok ? flash('green', '✅ Receipt approved', w.length ? w.length + ' written to NetSuite' : 'Plan saved (no NetSuite write in this mode)', m.length ? m.length + ' pallets stay in transit' : '') : errBox(r.error));
+         };
+ 
++        ACT.apaccept = async el => {
++            if (!confirm('Accept ' + (el.dataset.label || 'this pallet') + ' onto ' + (el.dataset.truck || 'this truck') + '? Its IF is raised (or an add-on IF is planned) as the write mode allows, and it joins the receipt.')) return;
++            busy(el, true);
++            const r = await api('pallet_accept', { truckId: el.dataset.id, palletId: el.dataset.pid });
++            tone(r.ok && r.outcome !== 'refused' ? 'ok' : 'bad');
++            SCREENS.approve(r.ok ? flash(r.outcome === 'accepted' ? 'green' : r.outcome === 'pending' ? 'amber' : 'red', esc(r.text)) : errBox(r.error));
++        };
++        ACT.apreject = async el => {
++            const note = prompt('Reject ' + (el.dataset.label || 'this pallet') + '. Note for the floor (required):');
++            if (note == null) return;
++            if (!note.trim()) { tone('bad'); SCREENS.approve(errBox('Enter a note: why is this pallet rejected?')); return; }
++            busy(el, true);
++            const r = await api('pallet_reject', { truckId: el.dataset.id, palletId: el.dataset.pid, note: note.trim() });
++            tone(r.ok ? 'ok' : 'bad');
++            SCREENS.approve(r.ok ? flash('amber', esc(r.text)) : errBox(r.error));
++        };
++        // From the Dashboard's Waiting card: open Approvals scrolled to that section.
++        ACT.goapprove = el => {
++            S.tab = 'approve';
++            S.scrollTo = el.dataset.v || '';
++            renderNav();
++        };
++
+         // ── Manager: shadow report (v3) ──────────────────────────────────
+         SCREENS.report = async () => {
+             main('<div class="muted">Loading…</div>');
+             const r = await api('report');
+             if (!r.ok) { main(errBox(r.error)); return; }
+             const mark = ok => (ok === true ? '✅' : ok === false ? '❌' : '⏳');
+             main('<div class="muted">Write mode <b>' + esc(r.writeMode) + '</b>' + (r.pulledAt ? ' · NetSuite data from ' + esc(r.pulledAt) : '') + '</div>' +
+                 '<div class="card"><table class="tbl"><tr><th>Day</th><th>Trucks</th><th>Pallets</th><th>Pcs</th><th>Diffs</th></tr>' +
+                 r.days.map(d => '<tr><td>' + esc(d.day) + '</td><td>' + d.trucks + '</td><td>' + d.pallets + '</td><td>' + num(d.pieces) + '</td><td>' + (d.diffs ? '❌ ' + d.diffs : '✅') + '</td></tr>').join('') + '</table></div>' +
+                 '<div class="card"><div style="overflow-x:auto"><table class="tbl"><tr><th></th><th>Truck</th><th>IF</th><th>Check</th><th>Portal</th><th>NetSuite</th></tr>' +
+diff --git a/move_portal/test/ui.test.js b/move_portal/test/ui.test.js
+index a959c5f..4354ca8 100644
+--- a/move_portal/test/ui.test.js
++++ b/move_portal/test/ui.test.js
+@@ -163,21 +163,21 @@ test('floor rework: tab order, shipped today, other-item remove, ship-pending un
+ 
+ test('manager rework: 4 tabs, no toggle, merged Labels, approvals hierarchy', () => {
+     const src = ui._clientMain.toString();
+     ["['labels', 'Labels']", "['approve', 'Approvals']", "['dash', 'Dashboard']", "['report', 'Report']", 'SCREENS.labels', "api('ship_confirm'", "api('ship_sendback'",
+         'btn-correct', 'btn-addif', 'Add an IF to this truck', 'Ship confirmations'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+     assert.equal(src.indexOf("['queue', 'Print queue']"), -1, 'old label tabs removed');
+ });
+ 
+ test('manager rework: default Approvals, late badge, otherDiffs, Drop calls drop_if, CSS hierarchy, note modal kept on error', () => {
+     const src = ui._clientMain.toString();
+-    ["mgr: 'approve'", 'LATE_MIN = 30', "waiting ' + x.ageMin + ' min", 'S.lateShips', 'n.otherDiffs', "api('truck_drop_if'", 'class="btn-correct" data-act="apcorrect"',
++    ["mgr: 'dash'", 'LATE_MIN = 30', "waiting ' + x.ageMin + ' min", 'S.lateShips', 'n.otherDiffs', "api('truck_drop_if'", 'class="btn-correct" data-act="apcorrect"',
+         'class="dbtn btn-addif" data-act="apaddopen"', 'labelQueue(', 'labelSku(', 'labelPlan(', 'labelReprint(', 'labelConfigs(', "S.poll = setInterval(loadQueue, 15000)",
+         "String(r.view.truck.id) !== String(S.truckId)"].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+     ['SCREENS.queue', 'SCREENS.plan', 'SCREENS.sku', 'SCREENS.configs', 'SCREENS.reprint'].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
+     const i = src.indexOf('ACT.apdrop =');
+     assert.ok(i !== -1 && src.slice(i, i + 400).indexOf('truck_correct') === -1, 'Drop never corrects');
+     const j = src.indexOf('ACT.notesave =');
+     assert.ok(j !== -1 && src.slice(j, j + 300).indexOf('closeNote()') === -1, 'the note modal stays until the verify goes through');
+     const k = src.indexOf('ACT.otherrm =');
+     assert.ok(k !== -1 && src.slice(k, k + 120).indexOf('needWho()') !== -1);
+     const page = ui.buildPage({ url: '/x?a=1', mode: 'manager', me: 'X', roster: [], fromName: 'R', toName: 'T', maxPrint: 1 });
+@@ -196,10 +196,29 @@ test('final fixes: manager Open truck shows the error in its modal when truck_ge
+     assert.ok(i !== -1 && j !== -1 && src.slice(i, j).indexOf('errBox(r.error)') !== -1, 'Open truck error not shown');
+ });
+ 
+ test('final fixes: a stalled correction on a truck with no fix card gets a truck-level free button', () => {
+     const src = ui._clientMain.toString();
+     ['Free the stuck correction', 'n.stuck && !hasFix', 'truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))']
+         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
+     const i = src.indexOf('Free the stuck correction'), b = src.lastIndexOf('<button', i);
+     assert.ok(/class="btn-correct" data-act="apcorrect"/.test(src.slice(b, i)) && src.slice(b, i).indexOf('data-key') === -1, 'free button: btn-correct apcorrect with no key');
+ });
++
++test('2026-10-06 pm: Dashboard first and default; Labels start with Print a SKU', () => {
++    const src = ui._clientMain.toString();
++    assert.ok(src.indexOf("mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]") !== -1, 'tab order');
++    assert.ok(src.indexOf("mgr: 'dash'") !== -1, 'default tab');
++    assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
++});
++
++test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject; Approve waits; anchors for the dashboard links', () => {
++    const src = ui._clientMain.toString();
++    ['Flagged pallets', 'data-act="apaccept"', 'data-act="apreject"', "api('pallet_accept'", "api('pallet_reject'", 'Accept onto this truck', 'x.blockReason', 'x.canApprove', 'r.flagged', 'x.pending', 'x.decided',
++        'id="ap_ship"', 'id="ap_fix"', 'id="ap_trucks"', 'id="ap_flag"', 'id="ap_retry"', 'id="ap_rec"', 'ACT.goapprove =', 'decide now, or later on the receipt card', 'waiting for the manager', 'v.decided']
++        .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
++    assert.equal(src.indexOf('The office will sort these out.'), -1);
++    ['apaccept', 'apreject'].forEach(n => {
++        const i = src.indexOf('ACT.' + n + ' =');
++        assert.ok(i !== -1 && src.slice(i, i + 600).indexOf(n === 'apaccept' ? 'confirm(' : 'prompt(') !== -1, 'no dialog in ' + n);
++    });
++});

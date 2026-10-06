@@ -1,0 +1,312 @@
+# Review package: efbb904..HEAD
+
+## Commits
+02d3459 feat(dashboard): trucks per day, approvals waiting (non-zero queues), Active loads rows per IF with stage and last step; pallet tracker maths removed
+
+## Files changed
+ move_portal/sl_move_portal.js   | 125 ++++++++++++++++++++++++++++++----------
+ move_portal/test/portal.test.js |  57 ++++++++++++------
+ 2 files changed, 133 insertions(+), 49 deletions(-)
+
+## Diff
+diff --git a/move_portal/sl_move_portal.js b/move_portal/sl_move_portal.js
+index 7a44c9a..198ac62 100644
+--- a/move_portal/sl_move_portal.js
++++ b/move_portal/sl_move_portal.js
+@@ -591,49 +591,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         });
+         const labeledPallets = rows.reduce((x, r) => x + r.labeled, 0);
+         const need = isFinite(m.neededPerDay) ? m.neededPerDay : m.remaining;
+         const sugg = core.suggestPlan(rows.filter(r => r.palletsLeft > 0), Math.max(0, need - labeledPallets));
+         rows.forEach(r => { r.suggest = sugg[r.item] || 0; });
+         rows.sort((x, y) => y.palletsLeft - x.palletsLeft);
+         return { dayLabel: c.now.dayIso, neededPerDay: isFinite(m.neededPerDay) ? m.neededPerDay : null, labeledPallets: labeledPallets,
+             rows: rows.filter(r => r.palletsLeft > 0 || r.labeled > 0), noConfig: noConfig };
+     });
+ 
+-    // ── dashboard ────────────────────────────────────────────────────────
+-    act('dashboard', true, (a, c) => {
+-        const sm = stockModel(c);
+-        const m = tracker(c, sm.est);
+-        const moved = data.movedByDay();
+-        const end = c.now.dayIso < c.S.target ? c.now.dayIso : c.S.target;
+-        const days = core.moveDays(c.S.start, end, c.S.skip || []).map(d => ({ day: d, n: moved[d] || 0 }));
+-        const every = allTrucks(), trucks = every.slice(0, 15), counts = data.palletStatusCounts(trucks.map(x => x.id));
+-        const exc = {
+-            missing: data.countPallets({ status: [VP.MISSING] }),
+-            neverLoaded: stillFlagged([].concat.apply([], every.map(x => x.data.flagged || []))).length,
+-            damaged: data.countPallets({ damaged: true }),
+-            edited: data.countPallets({ edited: true, status: [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING] }),
+-            stale: data.countPallets({ status: [VP.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
+-            noConfig: sm.est.unknownItems.length
+-        };
+-        const skuOf = k => (sm.stock[k] ? sm.stock[k].sku : k);
+-        const bySku = Object.keys(sm.est.byItem).map(k => ({ sku: skuOf(k), palletsLeft: sm.est.byItem[k] }))
+-            .sort((x, y) => y.palletsLeft - x.palletsLeft).slice(0, 20);
+-        return {
+-            m: Object.assign({}, m, { neededPerDay: isFinite(m.neededPerDay) ? m.neededPerDay : null }),
+-            labeled: data.countPallets({ status: [VP.LABELED, VP.LOADED] }),
+-            inTransit: data.countPallets({ status: [VP.IN_TRANSIT, VP.MISSING] }),
+-            received: data.countPallets({ status: [VP.RECEIVED] }),
+-            target: c.S.target, days: days, trucks: trucks.map(x => truckSummary(x, counts)), exc: exc, bySku: bySku,
+-            noConfigSkus: sm.est.unknownItems.map(skuOf)
+-        };
+-    });
+-
+     act('truck_planned', false, (a, c) => {
+         const trucks = allTrucks(), taken = {}, dp = defPcs(c);
+         trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
+         const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING);
+         // Shipped today (Shipments tab): trucks that left with today's departure day.
+         const shipped = trucks.filter(x => x.status !== T.DEPARTING && x.data.depart && x.data.depart.day === c.now.dayIso);
+         const counts = data.palletStatusCounts(open.concat(shipped).map(x => x.id));
+         const busy = {};
+         trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
+         return { planned: ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)),
+@@ -1505,21 +1476,21 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+     // ── v3 manager approvals and shadow report ───────────────────────────
+     const FIX_KINDS = ['if_short', 'if_over', 'no_if'];
+     const IF_PILL_KINDS = ['if_gone', 'if_empty'];      // shown as pills on the truck card's IF rows
+     // Whole minutes from a NetSuite stamp to now (null when either can't be read).
+     function minutesSince(stamp, c) {
+         const abs = p => p ? Date.UTC(Number(p.dayIso.slice(0, 4)), Number(p.dayIso.slice(5, 7)) - 1, Number(p.dayIso.slice(8, 10))) / 60000 + p.hour * 60 + (p.minute || 0) : null;
+         const a = abs(core.parseNsStamp(stamp)), b = abs(core.parseNsStamp(c.now.stamp));
+         return a == null || b == null ? null : Math.max(0, b - a);
+     }
+     function whoName(w) { return w && typeof w === 'object' ? String(w.name || w.id || '') : String(w == null ? '' : w); }
+-    act('approvals', true, (a, c) => {
++    function approvalsView(c) {
+         const trucks = allTrucks();
+         const stuck = x => !!(x.data.error || stale(x));
+         const counts = data.palletStatusCounts(trucks.filter(x => OPEN.indexOf(x.status) === -1).map(x => x.id));
+         const sum = x => truckSummary(x, counts);
+         // needs_fix: the stored diffs (only the manager's Re-check calls truck_verify again); one grouped read of loaded pallets.
+         const fix = trucks.filter(x => x.status === T.NEEDS_FIX);
+         let fixes = [], fixTrucks = [], freeIfs = [];
+         if (fix.length) {
+             const loaded = {}, dp = defPcs(c), planned = ns.plannedIfs(), taken = takenByOthers(trucks, null);
+             // Spec §7: a manager may add any Picked/Packed IF that no truck has (the card's picker), not only the suggested ones.
+@@ -1576,20 +1547,114 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+                     if (isStuck) o.stuck = true;
+                     return o;
+                 } catch (e) {
+                     log.error({ title: 'move approvals receipt ' + x.id, details: (e && e.stack) || String(e) });
+                     const o = { truck: { id: x.id, label: truckLabel(x) }, error: (e && e.message) || String(e) };
+                     if (isStuck) o.stuck = true;
+                     return o;
+                 }
+             }).filter(Boolean)
+         };
++    }
++    act('approvals', true, (a, c) => approvalsView(c));
++
++    // ── dashboard (spec 2026-10-06 pm §3): trucks, approvals waiting, Active loads ──
++    const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
++    function stageOf(x) {
++        if (x.status === T.RECEIVED) return 'Received';
++        if (x.status === T.APPROVING || (x.status === T.RECEIVING && x.data.recvRequested)) return 'Receipt pending';
++        if (x.status === T.RECEIVING) return 'Unloading';
++        if (x.status === T.DEPARTED || x.status === T.DEPARTING) return 'In transit';
++        if (x.status === T.SHIP_PENDING) return 'Waiting for manager';
++        if (x.status === T.READY) return 'Ready to ship';
++        if (x.status === T.NEEDS_FIX) return 'Needs IF fix';
++        return 'Loading';
++    }
++    function lastStepOf(x) {
++        const s = x.data.lastStep;
++        return s || (x.data.startedAt ? { kind: 'started', by: x.data.startedBy, at: x.data.startedAt } : { kind: '', by: '', at: '' });
++    }
++    function dayOfStamp(stamp) { const p = core.parseNsStamp(stamp); return p ? p.dayIso : ''; }
++    function firstText(q, ap, c) {
++        if (q === 'ship') { const s = ap.shipPending[0]; return s.truck.label + ' · marked shipped ' + (s.ageMin == null ? '' : s.ageMin + ' min ago'); }
++        if (q === 'fix') return ap.fixes[0].text;
++        if (q === 'trucks') return ap.trucks[0].truck.label;
++        if (q === 'flagged') { const f = ap.flagged[0]; return f.code + ' on ' + f.truckLabel + ' · never loaded'; }
++        if (q === 'retry') return ap.retries[0].label;
++        const r = ap.receipts[0];
++        return r.truck.label + (r.perIf && r.perIf.length ? ' · ' + r.perIf.reduce((s, f) => s + f.received, 0) + ' of ' + r.perIf.reduce((s, f) => s + f.shipped, 0) + ' pcs in' : '') + ((r.flagged || []).length ? ' · ' + r.flagged.length + ' flagged' : '');
++    }
++    act('dashboard', true, (a, c) => {
++        const ap = approvalsView(c), trucks = allTrucks();
++        const queues = [['ship', 'Ship confirmations', ap.shipPending], ['fix', 'Correct the IF', ap.fixes], ['trucks', 'Trucks waiting for an IF fix', ap.trucks],
++            ['flagged', 'Flagged pallets', ap.flagged], ['retry', 'Retry / Release', ap.retries], ['receipts', 'Receipts', ap.receipts]];
++        const waiting = queues.filter(q => q[2].length).map(q => ({ queue: q[0], title: q[1], count: q[2].length, first: firstText(q[0], ap, c),
++            late: q[0] === 'ship' && ap.shipPending.some(s => s.ageMin != null && s.ageMin >= 30) }));
++        // Trucks per move day: a truck counts on the day the manager confirmed it shipped (depart.day).
++        const byDay = {};
++        trucks.filter(x => x.data.depart).forEach(x => { byDay[x.data.depart.day] = (byDay[x.data.depart.day] || 0) + 1; });
++        const todayDone = (byDay[c.now.dayIso] || 0) > 0 && c.now.hour >= 15;
++        const m = core.trackerMetrics({ todayIso: c.now.dayIso, targetIso: c.S.target, startIso: c.S.start, skipDates: c.S.skip || [], remaining: 0, movedByDay: byDay, todayDone: todayDone });
++        const end = c.now.dayIso < c.S.target ? c.now.dayIso : c.S.target;
++        const days = core.moveDays(c.S.start, end, c.S.skip || []).map(d => ({ day: d, n: byDay[d] || 0 }));
++        // Active loads: every truck not received, plus trucks received today.
++        const active = trucks.filter(x => x.status !== T.RECEIVED || dayOfStamp(x.data.recvApprovedAt) === c.now.dayIso);
++        const counts = data.palletStatusCounts(active.map(x => x.id));
++        const loadedAll = {};
++        data.palletsByStatus([VP.LOADED]).forEach(p => { (loadedAll[String(p.loadId)] = loadedAll[String(p.loadId)] || []).push(p); });
++        // One grouped read for every shipped pallet, split by truck (never one search per truck).
++        const shippedAll = {}, activeIds = {};
++        active.forEach(x => { activeIds[String(x.id)] = true; });
++        data.palletsByStatus([VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]).forEach(p => {
++            if (activeIds[String(p.loadId)]) (shippedAll[String(p.loadId)] = shippedAll[String(p.loadId)] || []).push(p);
++        });
++        const rows = [];
++        active.forEach(x => {
++            const d = x.data, stage = stageOf(x), dep = d.depart || null, ls = lastStepOf(x);
++            const truck = truckLabel(x), base = { truckId: x.id, truck: truck, trailer: dep ? dep.trailer : (d.trailer || ''), seal: dep ? dep.seal : ((d.shipReq || {}).seal || ''),
++                truckNo: dep ? dep.truckNo : null, status: x.status, stage: stage, lastKind: ls.kind, lastBy: whoName(ls.by), lastAt: ls.at, lastMin: ls.at ? minutesSince(ls.at, c) : null,
++                flagged: stillFlagged(d.flagged).filter(p => p.data.flaggedTruck === x.id).length };
++            if (dep) {
++                const ps = shippedAll[String(x.id)] || [];
++                const rp = verify.planReceipts({ alloc: d.alloc || [], pallets: ps, received: d.received || {}, stamp: dep, seq: 0 }), got = cnt(counts, x.id, VP.RECEIVED) > 0;
++                const sk = skuNames([...new Set((d.alloc || []).reduce((s, al) => s.concat(Object.keys(al.lines)), []))]);
++                (d.alloc || []).forEach(al => {
++                    const per = rp.perIf.find(f => String(f.ifId) === String(al.ifId)) || { received: 0, shipped: 0 };
++                    const pcs = Object.keys(al.lines).reduce((s, k) => s + Number(al.lines[k]), 0);
++                    const pal = ps.filter(p => (p.lines || []).some(l => al.lines[String(l.item)] > 0)).length;      // pallets whose SKU this IF carries (a shared SKU counts on each IF)
++                    rows.push(Object.assign({}, base, { ifId: String(al.ifId), ifNum: al.ifNum, toNum: al.toNum, skus: Object.keys(al.lines).map(k => ({ sku: sk[k] || k, qty: Number(al.lines[k]) })),
++                        pallets: (d.alloc || []).length === 1 ? ps.length : pal, pcs: pcs, received: got || x.status === T.RECEIVED ? per.received : null }));
++                });
++            } else {
++                const live = verify.liveIfs(d.ifs), ps = loadedAll[String(x.id)] || [], fill = verify.fillExpected(live, verify.sumLines(ps));
++                live.forEach(f => {
++                    const al = fill.alloc[String(f.ifId)] || {}, pcs = Object.keys(al).reduce((s, k) => s + Number(al[k] || 0), 0);
++                    const pal = ps.filter(p => (p.lines || []).some(l => al[String(l.item)] > 0)).length;
++                    rows.push(Object.assign({}, base, { ifId: String(f.ifId), ifNum: f.ifNum, toNum: f.toNum, skus: (f.lines || []).map(l => ({ sku: l.sku, qty: l.qty })),
++                        pallets: live.length === 1 ? ps.length : pal, pcs: pcs, received: null }));
++                });
++            }
++        });
++        rows.sort((p, q) => STAGE_ORDER.indexOf(p.stage) - STAGE_ORDER.indexOf(q.stage) || Number(q.truckId) - Number(p.truckId) || Number(p.ifId) - Number(q.ifId));
++        const transit = trucks.filter(x => x.status === T.DEPARTED || x.status === T.DEPARTING);
++        const exc = {
++            missing: data.countPallets({ status: [VP.MISSING] }),
++            neverLoaded: stillFlagged([].concat.apply([], trucks.map(x => x.data.flagged || []))).length,
++            damaged: data.countPallets({ damaged: true }),
++            edited: data.countPallets({ edited: true, status: [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING] }),
++            stale: data.countPallets({ status: [VP.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
++            noConfig: stockModel(c).est.unknownItems.length
++        };
++        return { waiting: waiting, target: c.S.target, days: days, rows: rows, exc: exc, noConfigSkus: [],
++            tiles: { today: m.movedToday, plan: Number(c.S.trucksPerDay) > 0 ? Number(c.S.trucksPerDay) : 8, avg7: m.avg7, avgAll: m.avgAll, total: m.moved,
++                received: trucks.filter(x => x.status === T.RECEIVED).length, inTransitTrucks: transit.length,
++                inTransitPallets: data.countPallets({ status: [VP.IN_TRANSIT, VP.MISSING] }), missing: exc.missing } };
+     });
+ 
+     act('report', true, (a, c) => {
+         const trucks = allTrucks().filter(x => x.data.depart), counts = data.palletStatusCounts(trucks.map(x => x.id));
+         const ids = {};
+         trucks.forEach(x => (x.data.alloc || []).forEach(al => Object.keys(al.lines).forEach(k => { ids[k] = 1; })));
+         const rows = verify.shadowRows({ trucks: trucks, ifInfo: ns.ifInfo(), ifsByTo: ns.ifsByTo(), receipts: ns.receiptsByIf(), sku: skuNames(Object.keys(ids)) });
+         // Plan-only corrections on trucks still at the dock (the write mode left them to the office), while the diff is still open.
+         const mode = writeMode(c), pend = [], every = allTrucks();
+         every.forEach(x => orphanCreates(x).forEach(o => rows.push({ truck: truckLabel(x), seal: (x.data.depart || {}).seal || '', ifNum: 'IF ' + o.id,
+diff --git a/move_portal/test/portal.test.js b/move_portal/test/portal.test.js
+index ca85d98..db8c1aa 100644
+--- a/move_portal/test/portal.test.js
++++ b/move_portal/test/portal.test.js
+@@ -160,43 +160,57 @@ function matchIf(ctx, ifId, qty) {
+ }
+ function readyTruck(ctx, n, ifId) {
+     const r = truckWith(ctx, n, ifId);
+     const f = ctx.ns.plannedIfs().find(x => x.ifId === (ifId || '9001'));
+     if (f && f.lines[0].qty !== n * 12) matchIf(ctx, ifId || '9001', n * 12);
+     const v = ctx.run('truck_verify', { truckId: r.t.id }, false);
+     assert.equal(v.view.truck.status, 'ready', 'readyTruck: ' + JSON.stringify(v.diffs));
+     return r;
+ }
+ 
+-test('dashboard counts moved, remaining, days, in-transit, never-loaded and trucks', () => {
++test('dashboard: trucks per day, waiting queues (non-zero only), one Active loads row per IF with stage and last step', () => {
+     const ctx = setup();
+-    ctx.data.db.stock['35']['975'] = { onHand: 1000, avail: 1000 };
+-    const { t } = readyTruck(ctx, 42);
+-    ship(ctx, { truckId: t.id, seal: '5249330' });
+-    ctx.data.db.stock['35']['975'].onHand = 496;           // NetSuite drops on-hand when the IF ships
+-    printLabels(ctx, 1, 'Jlater');
+-    ctx.data.db.pallets[Object.keys(ctx.data.db.pallets).pop()].printedDay = '2026-10-01';   // stale label
+-    const stray = printLabels(ctx, 1, 'Jstray', [L975]);
+-    ctx.run('unload_scan', { truckId: t.id, raw: stray[0].code }, false);   // labeled, never loaded
++    const a = departed(ctx, 42, '5260020');                                           // Truck 1 today, departed
++    const b = readyTruck(ctx, 2, '9002');                                             // ready at the dock
++    ctx.run('ship_mark', { truckId: b.t.id, seal: '5260021' }, false);                // waiting for manager
++    strayOn(ctx, a.t);
+     const r = ctx.run('dashboard');
+-    assert.deepEqual([r.m.moved, r.m.remaining, r.m.total, r.m.movedToday], [42, 62, 104, 42]);
+-    assert.deepEqual([r.inTransit, r.labeled, r.received], [42, 2, 0]);
+-    assert.deepEqual(r.days[r.days.length - 1], { day: '2026-10-14', n: 42 });
++    assert.deepEqual(r.waiting.map(w => [w.queue, w.count]), [['ship', 1], ['flagged', 1], ['receipts', 1]]);
++    assert.equal(r.waiting[0].first.indexOf('Trailer'), 0);
++    assert.deepEqual([r.tiles.today, r.tiles.plan, r.tiles.total, r.tiles.received, r.tiles.inTransitTrucks, r.tiles.inTransitPallets], [1, 8, 1, 0, 1, 42]);
++    assert.deepEqual(r.days[r.days.length - 1], { day: '2026-10-14', n: 1 });
+     assert.equal(r.days[0].day, '2026-10-01');
+-    assert.deepEqual([r.exc.missing, r.exc.stale, r.exc.noConfig, r.exc.neverLoaded], [0, 1, 0, 1]);
+-    assert.equal(r.bySku[0].sku, 'YSN100');
+-    assert.equal(r.trucks.length, 1);
+-    assert.equal(r.trucks[0].status, 'departed');
+-    assert.equal(r.loads, undefined);
++    const rows = [r.rows[1], r.rows[0]];                                              // server order = STAGE_ORDER: Waiting for manager comes before In transit
++    assert.deepEqual(r.rows.map(x => [x.ifNum, x.stage]), [['IF9002', 'Waiting for manager'], ['IF9001', 'In transit']]);
++    assert.deepEqual([rows[0].truck, rows[0].seal, rows[0].pallets, rows[0].pcs, rows[0].flagged, rows[0].lastKind], ['Truck 1 · 10/14', '5260020', 42, 504, 1, 'confirmed']);
++    assert.deepEqual([rows[1].pallets, rows[1].pcs, rows[1].received, rows[1].lastKind, rows[1].lastBy], [2, 24, null, 'marked_shipped', 'Miguel']);
++    assert.deepEqual([r.exc.neverLoaded, r.exc.missing], [1, 0]);
++    assert.equal(r.m, undefined, 'pallet tracker maths gone');
++    ctx.data.db.settings.trucksPerDay = 6;
++    assert.equal(ctx.run('dashboard').tiles.plan, 6);
+     assert.throws(() => ctx.run('dashboard', {}, false), /Managers only/);
+ });
+ 
++test('dashboard: a received truck stays on Active loads for its receipt day, with stage Received', () => {
++    const ctx = setup();
++    const { t, ps } = departed(ctx, 42, '5260022');
++    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
++    ctx.run('unload_done', { truckId: t.id }, false);
++    ctx.run('receipt_approve', { truckId: t.id });
++    let r = ctx.run('dashboard');
++    assert.deepEqual([r.rows.length, r.rows[0].stage, r.rows[0].received, r.tiles.received], [1, 'Received', 504, 1]);
++    const x = ctx.data.getLoad(t.id);
++    ctx.data.updateLoad(x, { data: { recvApprovedAt: '10/13/2026 4:00:00 pm' } });
++    r = ctx.run('dashboard');
++    assert.equal(r.rows.length, 0);
++});
++
+ // ── v3 trucks ──
+ 
+ test('truck_planned lists A/B IFs not on a truck; truck_start takes one', () => {
+     const ctx = setup();
+     const r = ctx.run('truck_planned');
+     assert.deepEqual(r.planned.map(f => [f.ifNum, f.pcs, f.estPallets]), [['IF9001', 504, 42], ['IF9002', 504, 42]]);
+     const v1 = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'P1' }).view;
+     assert.deepEqual([v1.truck.status, v1.truck.label, v1.lines[0].expected, v1.lines[0].scanned], ['loading', 'Trailer P1', 504, 0]);
+     assert.deepEqual(ctx.run('truck_planned').planned.map(f => f.ifNum), ['IF9002']);
+     assert.throws(() => ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }), /already on a truck/);
+@@ -716,22 +730,27 @@ test('fix2: unload_list and approvals do not search pallets per truck for fully
+     const byLoad = countCalls(ctx, 'palletsByLoad'), grouped = countCalls(ctx, 'palletStatusCounts');
+     const ul = ctx.run('unload_list', {}, false);
+     assert.deepEqual(ul.trucks.map(x => x.id), [open.t.id]);
+     assert.deepEqual([byLoad.n, grouped.n], [0, 1]);
+     const ap = ctx.run('approvals');
+     assert.deepEqual(ap.receipts.map(x => [x.truck.id, x.truck.pallets, x.truck.received]), [[open.t.id, 1, 1]]);
+     assert.ok(byLoad.n <= 1, 'palletsByLoad calls: ' + byLoad.ids.join(','));
+     assert.ok(byLoad.ids.every(id => id === open.t.id));
+     assert.equal(grouped.n, 2);
+     assert.equal(done.length, 5);
+-    ['truck_planned', 'dashboard', 'report'].forEach(a => { const b = byLoad.n; ctx.run(a); assert.equal(byLoad.n, b, a + ' searched pallets per truck'); });
+-    assert.equal(grouped.n, 5);
++    ['truck_planned', 'report'].forEach(a => { const b = byLoad.n; ctx.run(a); assert.equal(byLoad.n, b, a + ' searched pallets per truck'); });
++    const b0 = byLoad.n, g0 = grouped.n;
++    ctx.run('dashboard');                                      // reuses approvals (its one receipt card for the open truck), then one grouped read of its own
++    assert.ok(byLoad.n - b0 <= 1, 'dashboard searched pallets per truck: ' + byLoad.ids.join(','));
++    assert.ok(byLoad.ids.every(id => id === open.t.id));
++    assert.equal(grouped.n - g0, 2);
++    assert.equal(grouped.n, 6);
+ });
+ 
+ test('fix3: a truck scan re-checks the truck right before loading the pallet', () => {
+     const ctx = setup();
+     const ps = printLabels(ctx, 2, 'Jrc', [L975]);
+     const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: tr() }).view.truck;
+     const orig = ctx.ns.openToLines;
+     ctx.ns.openToLines = () => { ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'X' } }); return orig(); };
+     assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code }), /Scanning is closed/);
+     assert.equal(ctx.data.getPallet(ps[0].id).status, 'labeled');

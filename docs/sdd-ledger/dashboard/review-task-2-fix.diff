@@ -1,0 +1,381 @@
+# Review package: c24e9d4..HEAD
+
+## Commits
+0ada686 fix(flagged): settle never puts two trucks on one office IF, pending accepts reserve their TO room, matcher sees shipped add-ons and shows the memo token, retry skips an IF another truck holds
+
+## Files changed
+ move_portal/sl_move_portal.js   |  53 +++++++++++------
+ move_portal/test/portal.test.js | 126 ++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 156 insertions(+), 23 deletions(-)
+
+## Diff
+diff --git a/move_portal/sl_move_portal.js b/move_portal/sl_move_portal.js
+index e9443ac..67ccf0d 100644
+--- a/move_portal/sl_move_portal.js
++++ b/move_portal/sl_move_portal.js
+@@ -206,23 +206,35 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+     }
+     function pushStack(id, entry, c) {
+         touched(id, cur => ({ stack: (cur.data.stack || []).concat([entry]).slice(-STACK_MAX), lastStep: stepOf('scanned', c) }));
+     }
+     // Load scans: a pallet on another open truck (any open stage) can be moved here, so it reads as a loading truck.
+     function scanTruckMap(list) {
+         const o = truckMap(list);
+         Object.keys(o).forEach(k => { if (OPEN.indexOf(o[k].status) !== -1) o[k].status = T.LOADING; });
+         return o;
+     }
+-    // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons).
++    // The room accepted-but-pending pallets will need once the office acts. Their ops live on the pallets (decision.op), not on a truck plan,
++    // and every truck counts, the one being decided on included (its other pending accepts are still pending).
++    function pendingReservations(trucks) {
++        const res = {}, add = (toId, item, q) => { if (q > 0) { const k = String(toId) + '|' + String(item); res[k] = (res[k] || 0) + q; } };
++        (trucks || []).filter(x => UNLOADABLE.indexOf(x.status) !== -1 || x.status === T.APPROVING).forEach(x => pendingAccepts(x).forEach(p => {
++            const op = (p.data.decision || {}).op;
++            if (!op) return;
++            if (op.op === 'if_qty') add(op.toId, op.item, Number(op.to) - Number(op.from));
++            if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => add(op.toId, k, Number(op.lines[k]) || 0));
++        }));
++        return res;
++    }
++    // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons, pending accepts).
+     function reservedToLines(exceptId, trucks, loadedAll, c, openTo) {
+-        const byTruck = {}, toLines = openTo || ns.openToLines();
++        const byTruck = {}, toLines = verify.reserveToLines(openTo || ns.openToLines(), pendingReservations(trucks));
+         (loadedAll || data.palletsByStatus([VP.LOADED])).forEach(p => { (byTruck[p.loadId] = byTruck[p.loadId] || []).push(p); });
+         Object.keys(byTruck).forEach(k => { byTruck[k] = verify.sumLines(byTruck[k]); });
+         return verify.reserveToLines(toLines, verify.reservationsFromTrucks({ trucks: trucks, loadedByTruck: byTruck, toLines: toLines, mode: writeMode(c), exceptId: exceptId }));
+     }
+     function scanCtx(x, c) {
+         const trucks = allTrucks(), loadedAll = data.palletsByStatus([VP.LOADED]);
+         return { truckId: x.id, trucks: scanTruckMap(trucks), ifs: verify.liveIfs(x.data.ifs), toLines: reservedToLines(x.id, trucks, loadedAll, c),
+             loadedByItem: verify.sumLines(loadedAll.filter(p => p.loadId === String(x.id))) };
+     }
+     // Called at the start and again right before a pallet changes, so a scan never lands on a truck that is departing.
+@@ -1100,66 +1112,72 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         data.updatePallet(p, { status: VP.RECEIVED, load: x.id, data: { flag: '', receivedAt: c.now.stamp, receivedBy: c.actor, decision: Object.assign({}, dec, { kind: 'accepted' }) } });
+         const cur = mustTruck(id), d = cur.data, text = dec.text;
+         const corr = (d.corrections || []).filter(k => !(k.kind === 'pallet_accept' && String(k.palletId) === String(p.id)));
+         const patch = { data: { alloc: alloc, ifs: ifs, flagged: (d.flagged || []).filter(k => String(k) !== String(p.id)), lastStep: stepOf('pallet_accepted', c),
+             unposted: typeof d.unposted === 'number' ? d.unposted + 1 : unpostedOf(cur),
+             corrections: corr.concat([corrEntry('pallet_accept', p, { ifNum: dec.ifNum, toNum: dec.toNum, text: text }, c)]) } };
+         if (cur.status === T.DEPARTED) patch.status = T.RECEIVING;
+         data.updateLoad(cur, patch);
+     }
+     // What a pending accept waits for: the IF line at the target qty (if_qty), or the add-on IF existing (if_create).
+-    function pendingDone(dec, info, planned, trucks) {
++    // taken: IF ids an earlier settle in the same pass already attached (the trucks list is read once, so it cannot know).
++    function pendingDone(dec, info, trucks, taken) {
+         if (dec.op && dec.op.op === 'if_qty') {
+             const f = info[String(dec.op.ifId)];
+             return f && (f.lines || []).filter(l => String(l.item) === String(dec.op.item)).reduce((s, l) => s + Number(l.qty || 0), 0) >= Number(dec.op.to) ? { ifId: String(dec.op.ifId), ifNum: dec.op.ifNum } : null;
+         }
+         if (dec.op && dec.op.op === 'if_create') {
+-            const own = {};                                          // an IF this truck already took for another pending accept is not taken twice
+-            ((data.getLoad(dec.truckId) || { data: {} }).data.alloc || []).forEach(a => { own[String(a.ifId)] = true; });
+-            const f = findAddOnIf(dec.op.toId, dec.op.lines, (planned || []).filter(q => !own[String(q.ifId)]), trucks, dec.truckId);
++            const skip = Object.assign({}, taken);                   // an IF this truck already took for another pending accept is not taken twice
++            ((data.getLoad(dec.truckId) || { data: {} }).data.alloc || []).forEach(a => { skip[String(a.ifId)] = true; });
++            const f = findAddOnIf(dec.op.toId, dec.op.lines, info, trucks, dec.truckId, skip);
+             return f ? { ifId: String(f.ifId), ifNum: f.ifNum } : null;
+         }
+         return null;
+     }
+     // Settle pending accepts whose NetSuite side is done (the office acted). Called by approvals for every truck it lists.
+     function settlePending(x, c, shared) {
+         const pend = pendingAccepts(x);
+         if (!pend.length) return x;
+-        const info = shared.info || (shared.info = ns.ifInfo()), planned = shared.planned || (shared.planned = ns.plannedIfs()), trucks = shared.trucks || (shared.trucks = allTrucks());
++        const info = shared.info || (shared.info = ns.ifInfo()), trucks = shared.trucks || (shared.trucks = allTrucks()), taken = shared.taken || (shared.taken = {});
+         pend.forEach(p => {
+-            const dec = p.data.decision, got = pendingDone(Object.assign({}, dec, { truckId: x.id }), info, planned, trucks);
++            const dec = p.data.decision, got = pendingDone(Object.assign({}, dec, { truckId: x.id }), info, trucks, taken);
+             if (!got) return;
+             const cur = mustTruck(x.id);
+             if (inFlight(cur)) return;
+             completeAccept(x.id, data.getPallet(p.id), Object.assign({}, dec, got, { text: acceptText(Object.assign({}, dec, got)) }), c);
++            taken[got.ifId] = true;                                  // the cached trucks list does not show this attach: the next truck must not take the same IF
+         });
+         return mustTruck(x.id);
+     }
+     function acceptText(dec) {
+         if (dec.op && dec.op.op === 'if_create') return '✅ Accepted · ' + dec.ifNum + ' · new IF on ' + dec.toNum;
+         return dec.op && dec.op.op === 'if_qty' ? '✅ Accepted · ' + dec.ifNum + ' ' + verify._fmt(dec.op.from) + ' → ' + verify._fmt(dec.op.to) : '✅ Accepted · ' + dec.ifNum;
+     }
+     // The IF on this truck that carries the pallet's SKU (lowest IF number), read fresh from NetSuite for the from-qty.
+     function ifForItem(x, item, info) {
+         const cands = (x.data.alloc || []).filter(a => String(a.ifId).indexOf('new:') !== 0 && Number(a.lines[item]) > 0).sort((p, q) => Number(p.ifId) - Number(q.ifId));
+         for (let i = 0; i < cands.length; i++) {
+             const f = info[String(cands[i].ifId)];
+             if (f) return { ifId: String(cands[i].ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: cands[i].toNum, alloc: Number(cands[i].lines[item]) || 0, from: (f.lines || []).filter(l => String(l.item) === item).reduce((s, l) => s + Number(l.qty || 0), 0) };
+         }
+         return null;
+     }
+-    // A Packed IF on this TO, on no truck, with exactly these lines: how a pending add-on is recognised once the office created it.
+-    // (Stage 2: match by the memo token once move_ns exposes memos.)
++    // An IF on this TO (Picked, Packed or already Shipped), on no truck, with exactly these lines: how a pending add-on is recognised once the office created it.
++    // Shipped wins over Packed over Picked, then the lowest id. The office can tag the IF with the memo token shown on the pending line.
++    // (Stage 2: match by that token once move_ns exposes memos. An office-planned IF with identical lines can be taken over by mistake; accepted.)
+     function linesSig(lines) { const m = {}; (lines || []).forEach(l => { const k = String(l.item); m[k] = (m[k] || 0) + (Number(l.qty) || 0); }); return JSON.stringify(Object.keys(m).sort().map(k => [k, m[k]])); }
+-    function findAddOnIf(toId, lines, planned, trucks, exceptId) {
+-        const want = JSON.stringify(Object.keys(lines).sort().map(k => [k, Number(lines[k])])), taken = takenByOthers(trucks, exceptId);
+-        return (planned || []).filter(f => String(f.toId) === String(toId) && !taken[String(f.ifId)] && linesSig(f.lines) === want).sort((p, q) => Number(p.ifId) - Number(q.ifId))[0] || null;
++    const ADDON_RANK = { C: 0, B: 1, A: 2 };
++    function findAddOnIf(toId, lines, info, trucks, exceptId, taken) {
++        const want = JSON.stringify(Object.keys(lines).sort().map(k => [k, Number(lines[k])])), held = takenByOthers(trucks, exceptId);
++        return Object.keys(info || {}).map(id => Object.assign({ ifId: id }, info[id]))
++            .filter(f => String(f.toId) === String(toId) && ADDON_RANK[f.status] !== undefined && !held[f.ifId] && !(taken || {})[f.ifId] && linesSig(f.lines) === want)
++            .sort((p, q) => (ADDON_RANK[p.status] - ADDON_RANK[q.status]) || (Number(p.ifId) - Number(q.ifId)))[0] || null;
+     }
+     // The open TO line (oldest first) that has room for this pallet, after what the other trucks will need.
+     function coveringTo(x, item, pcs, c) {
+         return reservedToLines(x.id, allTrucks(), null, c).filter(r => String(r.item) === item && Number(r.remaining) >= pcs).sort(verify._oldestFirst)[0] || null;
+     }
+     function noCoverText(sk) { return '⛔ Can\'t accept · no open TO covers ' + sk + ' · Reject or office adds a TO line'; }
+     // A pallet whose SKU is on none of the truck's IFs: it goes on a new add-on IF on an open TO (on), or waits for the office to make one (off / qty).
+     function acceptOffIf(x0, p0, item, sk, pcs, c) {
+         if (!coveringTo(x0, item, pcs, c)) return { outcome: 'refused', text: noCoverText(sk), view: unloadView(x0, c) };   // fail-fast: nothing claimed
+         const cl = claimLoad(x0, null, 'accept', decideGuard, {});
+@@ -1170,25 +1188,26 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+             mustFlaggedOn(cl.Ld, p0.id);                            // another decision may have landed between the first check and the claim
+             if (ns.resetCache) ns.resetCache();
+             to = coveringTo(cl.Ld, item, pcs, c);                   // the real TO: from the claimed truck and NetSuite as they are now
+         } catch (e) { dropClaim(id, claim); throw e; }
+         if (!to) { dropClaim(id, claim); return { outcome: 'refused', text: noCoverText(sk), view: unloadView(mustTruck(id), c) }; }
+         const dep = cl.Ld.data.depart || {}, st = { trailer: dep.trailer, seal: dep.seal, memo: verify.memoFor(dep.truckNo, dep.day) };
+         const create = Object.assign({ op: 'if_create', toId: String(to.toId), toNum: to.toNum, lines: { [item]: pcs }, ship: false }, st);
+         create.token = createToken(id, create);
+         const stamp = Object.assign({ op: 'if_stamp', ifId: 'new:' + String(to.toId), ifNum: '(new)', toId: String(to.toId) }, st, { lines: { [item]: pcs } });
+         const dec = { kind: 'accepted_pending', toId: String(to.toId), toNum: to.toNum, item: item, sku: sk, pcs: pcs, op: create, by: c.user, at: c.now.stamp };
+-        // A retry: an earlier attempt created the IF (and maybe stamped it) but died before the pallet was received. An IF already on the truck was completed, so it is never reused.
++        // A retry: an earlier attempt created the IF (and maybe stamped it) but died before the pallet was received. An IF already on this truck was completed,
++        // and one another truck holds is not ours any more, so neither is reused (a new IF is created).
+         const cw = cl.Ld.data.correctionWrites || {}, onTruck = {}, writes = {}, done = {};
+         (cl.Ld.data.alloc || []).forEach(a => { onTruck[String(a.ifId)] = true; });
+-        const prior = cw[verify.opKey(create) + '|' + corrSig(create)];
+-        if (prior && !onTruck[String(prior.id)]) {
++        const prior = cw[verify.opKey(create) + '|' + corrSig(create)], heldElsewhere = takenByOthers(allTrucks(), id);
++        if (prior && !onTruck[String(prior.id)] && !heldElsewhere[String(prior.id)]) {
+             writes[verify.opKey(create)] = done[verify.opKey(create)] = String(prior.id);
+             if (cw['if_stamp:' + prior.id + '|' + corrSig(stamp)]) done[verify.opKey(stamp)] = String(prior.id);
+         }
+         let res, err = null;
+         try {
+             res = verify.runOps([create, stamp], writeMode(c), o => {
+                 assertClaim(id, claim, label, 'accept');
+                 const r = verify.resolveNew(o, writes);
+                 return tx.apply(r.ifNum === '(new)' ? Object.assign({}, r, { ifNum: 'IF ' + r.ifId }) : r);
+             }, done, (k, newId) => {
+@@ -1202,21 +1221,21 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+             if (e.user) throw e;
+             log.error({ title: 'move pallet_accept ' + id, details: (e && e.stack) || String(e) });
+             err = e.message || String(e);
+         }
+         if (err) { release({}); throw userErr('Accept refused: ' + err + ' — fix it in NetSuite'); }
+         try {
+             const p = data.getPallet(p0.id);
+             unloadFromOther(p, c);
+             const newId = writes[verify.opKey(create)];
+             if (res.planOnly.length || !newId) {                  // plan-only: the office creates the IF; settlePending attaches it when it appears
+-                dec.text = '⏳ Accepted · office creates IF for ' + verify._fmt(pcs) + ' ' + sk + ' on ' + to.toNum + ' · receipt waits';
++                dec.text = '⏳ Accepted · office creates IF for ' + verify._fmt(pcs) + ' ' + sk + ' on ' + to.toNum + ' (memo ' + create.token + ') · receipt waits';
+                 data.updatePallet(data.getPallet(p.id), { data: { decision: dec } });
+                 const cur = data.getLoad(id);
+                 release({ lastStep: stepOf('pallet_accepted', c), corrections: (cur.data.corrections || []).concat([corrEntry('pallet_accept', p, { toNum: to.toNum, pending: true, text: dec.text }, c)]) });
+                 if (ns.resetCache) ns.resetCache();
+                 return { outcome: 'pending', text: dec.text, view: unloadView(mustTruck(id), c) };
+             }
+             const fin = Object.assign({}, dec, { ifId: String(newId), ifNum: 'IF ' + newId });
+             fin.text = acceptText(fin);
+             completeAccept(id, data.getPallet(p.id), fin, c);
+             release({});
+diff --git a/move_portal/test/portal.test.js b/move_portal/test/portal.test.js
+index ba55293..26897e0 100644
+--- a/move_portal/test/portal.test.js
++++ b/move_portal/test/portal.test.js
+@@ -2201,20 +2201,28 @@ test('fix wave 2: NetSuite already above the target (the office pre-raised the I
+     const { t } = departed(ctx, 42, '5260019');
+     const stray = strayOn(ctx, t);
+     const realInfo = ctx.ns.ifInfo;
+     ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 528 }]; return o; };
+     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+     assert.equal(r.outcome, 'accepted');
+     assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_qty').length, 0);
+     assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+ });
+ 
++function officeIf(id, status, lines) {                    // an IF the office created in NetSuite on TO700
++    return { ifId: id, ifNum: 'IF' + id, status: status, trandate: '2026-10-14', toId: '700', toNum: 'TO700', lines: lines || [{ item: '11', sku: 'YSN201', qty: 120 }] };
++}
++function officeIfs(ctx, list) {                           // makes them visible to plannedIfs (A/B only) and ifInfo (any status); calls stack
++    const rp = ctx.ns.plannedIfs, ri = ctx.ns.ifInfo;
++    ctx.ns.plannedIfs = () => rp().concat(list.filter(f => f.status === 'A' || f.status === 'B'));
++    ctx.ns.ifInfo = () => { const o = ri(); list.forEach(f => { o[f.ifId] = { ifNum: f.ifNum, status: f.status, toId: f.toId, lines: f.lines.map(l => Object.assign({}, l)) }; }); return o; };
++}
+ // ── Task 2: accept a SKU on no truck IF (add-on IF), pending completion, loaded-elsewhere ──
+ test('pallet_accept off-IF (on mode): add-on IF created on the covering TO, stamped, pallet received, alloc has the new IF', () => {
+     const ctx = setup();
+     ctx.data.db.settings.writeMode = 'on';
+     const { t, ps } = departed(ctx, 42, '5260010');
+     const stray = strayOn(ctx, t, LINE201);                              // YSN201: no IF on this truck; TO700 (open) covers it
+     ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+     assert.equal(r.outcome, 'accepted');
+     assert.match(r.text, /^✅ Accepted · IF 90\d · new IF on TO700$/);
+@@ -2228,25 +2236,24 @@ test('pallet_accept off-IF (on mode): add-on IF created on the covering TO, stam
+     assert.equal(ctx.run('receipt_preview', { truckId: t.id }).perIf.length, 2);
+ });
+ 
+ test('pallet_accept off-IF (qty mode): pending; approvals settles it once a Packed IF with those lines appears on the TO', () => {
+     const ctx = setup();
+     ctx.data.db.settings.writeMode = 'qty';
+     const { t, ps } = departed(ctx, 42, '5260011');
+     const stray = strayOn(ctx, t, LINE201);
+     ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+-    assert.deepEqual([r.outcome, r.text], ['pending', '⏳ Accepted · office creates IF for 120 YSN201 on TO700 · receipt waits']);
++    assert.deepEqual([r.outcome, r.text], ['pending', '⏳ Accepted · office creates IF for 120 YSN201 on TO700 (memo ' + ctx.data.getPallet(stray.id).data.decision.op.token + ') · receipt waits']);
+     ctx.run('unload_done', { truckId: t.id }, false);
+     assert.equal(ctx.run('approvals').receipts[0].canApprove, false);
+-    const real = ctx.ns.plannedIfs;                                       // the office creates the IF in NetSuite
+-    ctx.ns.plannedIfs = () => real().concat([{ ifId: '9100', ifNum: 'IF9100', status: 'B', trandate: '2026-10-14', toId: '700', toNum: 'TO700', lines: [{ item: '11', sku: 'YSN201', qty: 120 }] }]);
++    officeIfs(ctx, [officeIf('9100', 'B')]);                              // the office creates the IF in NetSuite
+     const ap = ctx.run('approvals');
+     assert.equal(ap.receipts[0].canApprove, true);
+     const x = ctx.data.getLoad(t.id);
+     assert.deepEqual([x.data.alloc.find(a => a.addOn).ifId, ctx.data.getPallet(stray.id).status], ['9100', 'received']);
+     assert.equal(ctx.run('receipt_approve', { truckId: t.id }).perIf.find(f => f.ifId === '9100').received, 120);
+ });
+ 
+ test('pallet_accept with no covering TO is refused without a claim and leaves the pallet undecided', () => {
+     const ctx = setup();
+     ctx.data.db.settings.writeMode = 'on';
+@@ -2327,19 +2334,126 @@ test('Task 2: an add-on that was created and completed is not reused by a second
+     assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['901', '902']);
+ });
+ 
+ test('Task 2: two pending add-ons with the same lines settle onto two different IFs, never the same one twice', () => {
+     const ctx = setup();
+     ctx.data.db.settings.writeMode = 'qty';
+     const { t } = departed(ctx, 42, '5260020');
+     const s1 = strayOn(ctx, t, LINE201), s2 = strayOn(ctx, t, LINE201);
+     ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id });
+     ctx.run('pallet_accept', { truckId: t.id, palletId: s2.id });
+-    const real = ctx.ns.plannedIfs, mk = id => ({ ifId: id, ifNum: 'IF' + id, status: 'B', trandate: '2026-10-14', toId: '700', toNum: 'TO700', lines: [{ item: '11', sku: 'YSN201', qty: 120 }] });
+-    ctx.ns.plannedIfs = () => real().concat([mk('9100')]);
++    officeIfs(ctx, [officeIf('9100', 'B')]);
+     ctx.run('approvals');
+     assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9100']);
+     assert.equal(ctx.data.getPallet(s2.id).status, 'labeled');                  // still waiting for its own IF
+-    ctx.ns.plannedIfs = () => real().concat([mk('9100'), mk('9101')]);
++    officeIfs(ctx, [officeIf('9101', 'B')]);
+     ctx.run('approvals');
+     assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9100', '9101']);
+ });
++
++test('fix wave 1: two trucks with the same pending accept settle onto two different office IFs, never the same one in one approvals call', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const a = departed(ctx, 42, '5260030', '9001'), b = departed(ctx, 2, '5260031', '9002');
++    const sa = strayOn(ctx, a.t, LINE201), sb = strayOn(ctx, b.t, LINE201);
++    assert.equal(ctx.run('pallet_accept', { truckId: a.t.id, palletId: sa.id }).outcome, 'pending');
++    assert.equal(ctx.run('pallet_accept', { truckId: b.t.id, palletId: sb.id }).outcome, 'pending');
++    officeIfs(ctx, [officeIf('9100', 'B')]);
++    ctx.run('approvals');
++    const held = id => ctx.data.getLoad(id).data.alloc.filter(x => x.addOn).map(x => x.ifId);
++    assert.deepEqual(held(a.t.id).concat(held(b.t.id)), ['9100']);          // exactly one truck took it
++    assert.deepEqual([ctx.data.getPallet(sa.id).status, ctx.data.getPallet(sb.id).status].sort(), ['labeled', 'received']);
++    officeIfs(ctx, [officeIf('9101', 'B')]);
++    ctx.run('approvals');
++    assert.deepEqual([held(a.t.id), held(b.t.id)].map(l => l.length), [1, 1]);
++    assert.deepEqual(held(a.t.id).concat(held(b.t.id)).sort(), ['9100', '9101']);
++    assert.deepEqual([ctx.data.getPallet(sa.id).status, ctx.data.getPallet(sb.id).status], ['received', 'received']);
++});
++
++test('fix wave 1: a pending accept reserves its TO room, so a Riverside truck cannot take it', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260032', '9001');
++    const stray = strayOn(ctx, t, LINE201);                                  // pending: 120 of TO700's 1200
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');
++    const lt = truckWith(ctx, 2, '9002').t;                                  // a Riverside truck with no YSN201: it would need an add-on from TO700
++    const big = printLabels(ctx, 1, 'Jbig1', [{ item: '11', sku: 'YSN201', cfg: '', pcs: 1100 }])[0];
++    const r1 = ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false);
++    assert.equal(r1.result, 'no_to');                                        // 1,100 + the pending 120 is over TO700's 1,200
++    assert.equal(ctx.data.getPallet(big.id).status, 'labeled');
++    const ok = printLabels(ctx, 1, 'Jbig2', [{ item: '11', sku: 'YSN201', cfg: '', pcs: 1000 }])[0];
++    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: ok.code }, false).result, 'addon');
++});
++
++test('fix wave 1: a pending create reserves its room too (a second accept cannot take what the office needs)', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260033', '9001');
++    const s1 = strayOn(ctx, t, LINE201);
++    ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id });
++    const big = strayOn(ctx, t, { item: '11', sku: 'YSN201', cfg: '', pcs: 1100 });
++    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: big.id });
++    assert.equal(r.outcome, 'refused');
++});
++
++test('fix wave 1: the settle matcher sees an add-on IF the office already shipped, preferring shipped over Packed over Picked, then the lowest id', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260034', '9001');
++    const stray = strayOn(ctx, t, LINE201);
++    ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
++    officeIfs(ctx, [officeIf('9100', 'A'), officeIf('9101', 'B'), officeIf('9103', 'C'), officeIf('9102', 'C')]);
++    ctx.run('approvals');
++    assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9102']);
++    const t2 = departed(ctx, 2, '5260035', '9002'), s2 = strayOn(ctx, t2.t, LINE201);
++    ctx.run('pallet_accept', { truckId: t2.t.id, palletId: s2.id });
++    ctx.run('approvals');
++    assert.deepEqual(ctx.data.getLoad(t2.t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9103']);
++});
++
++test('fix wave 1: a shipped IF with other lines, or on another TO, is not taken as the add-on', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260036', '9001');
++    const stray = strayOn(ctx, t, LINE201);
++    ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
++    officeIfs(ctx, [officeIf('9100', 'C', [{ item: '11', sku: 'YSN201', qty: 121 }]), Object.assign(officeIf('9101', 'C'), { toId: '800', toNum: 'TO800' }), officeIf('9102', 'D')]);
++    ctx.run('approvals');
++    assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).length, 0);
++});
++
++test('fix wave 1: a retry does not reuse an IF that another truck holds, it creates a new one', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'on';
++    const a = departed(ctx, 42, '5260037', '9001'), b = departed(ctx, 2, '5260038', '9002');
++    const stray = strayOn(ctx, a.t, LINE201);
++    const realUpdate = ctx.data.updatePallet;
++    ctx.data.updatePallet = (cur, patch) => {
++        if (patch.status === 'received') { ctx.data.updatePallet = realUpdate; throw new Error('boom: record write failed'); }
++        return realUpdate(cur, patch);
++    };
++    assert.throws(() => ctx.run('pallet_accept', { truckId: a.t.id, palletId: stray.id }), /boom/);
++    ctx.data.updatePallet = realUpdate;
++    const xb = ctx.data.getLoad(b.t.id);                                     // meanwhile a manager put IF 901 on the other truck
++    ctx.data.updateLoad(xb, { data: { ifs: (xb.data.ifs || []).concat([{ ifId: '901', ifNum: 'IF 901', toId: '700', toNum: 'TO700', lines: [{ item: '11', sku: 'YSN201', qty: 120 }] }]) } });
++    const r = ctx.run('pallet_accept', { truckId: a.t.id, palletId: stray.id });
++    assert.equal(r.outcome, 'accepted');
++    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_create').length, 2);
++    assert.deepEqual(ctx.data.getLoad(a.t.id).data.alloc.filter(x => x.addOn).map(x => x.ifId), ['902']);
++});
++
++test('fix wave 1: the stamp fails after the create landed; the retry stamps the recorded IF and never creates a second one', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'on';
++    const { t } = departed(ctx, 42, '5260039', '9001');
++    const stray = strayOn(ctx, t, LINE201);
++    ctx.tx._t.failOn = 'if_stamp:901';
++    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /Accept refused/);
++    const p1 = ctx.data.getPallet(stray.id), x1 = ctx.data.getLoad(t.id);
++    assert.deepEqual([p1.status, p1.data.flag, x1.data.claim, ctx.tx._t.ops.filter(o => o.op === 'if_create').length, ctx.tx._t.ops.filter(o => o.op === 'if_stamp' && o.ifId === '901').length], ['labeled', 'never_loaded', '', 1, 0]);
++    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
++    assert.equal(r.outcome, 'accepted');
++    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_create').length, 1);
++    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_stamp' && o.ifId === '901').length, 1);
++    assert.equal(ctx.data.getPallet(stray.id).status, 'received');
++    assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['901']);
++});

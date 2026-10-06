@@ -11,7 +11,8 @@ function makeFakeTx() {
             const key = verify.opKey(op);
             if (t.failOn === key) { t.failOn = null; throw new Error('IF changed in NetSuite (fake failure on ' + key + ')'); }
             t.ops.push(JSON.parse(JSON.stringify(op)));
-            if (t.onApply) t.onApply(op);
+            const hooked = t.onApply ? t.onApply(op) : undefined;
+            if (hooked != null && hooked !== '') return String(hooked);
             return op.op === 'if_qty' || op.op === 'if_stamp' ? String(op.ifId) : String(++t.seq);
         }
     };

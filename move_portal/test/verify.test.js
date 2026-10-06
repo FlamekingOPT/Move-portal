@@ -412,3 +412,16 @@ test('buildReads.onHand and SQL.onHand', () => {
     assert.deepEqual(v.buildReads(raw).onHand(), {});
     assert.match(v.SQL('35', '46').onHand, /aggregateItemLocation ail WHERE ail.location = 35/);
 });
+
+test('local snapshot_ns.applyOp: if_qty rewrites the line, if_create adds a Packed IF and returns its id, if_stamp ships it', () => {
+    const { makeSnapshotNs } = require('../local/snapshot_ns');
+    const ns = makeSnapshotNs(v, JSON.parse(JSON.stringify(require('./fixtures/snapshot_sample.json'))));
+    ns.applyOp({ op: 'if_qty', ifId: '9001', item: '975', from: 504, to: 516 });
+    assert.equal(ns.ifInfo()['9001'].lines[0].qty, 516);
+    const id = ns.applyOp({ op: 'if_create', toId: '700', toNum: 'TO700', lines: { '11': 120 }, memo: 'Truck 1 · 10/14' });
+    const f = ns.plannedIfs().find(x => x.ifId === String(id));
+    assert.deepEqual([f.status, f.toId, f.lines[0].item, f.lines[0].qty, f.ifNum], ['B', '700', '11', 120, 'IF' + id]);
+    ns.applyOp({ op: 'if_stamp', ifId: String(id), lines: { '11': 120 } });
+    assert.equal(ns.ifInfo()[String(id)].status, 'C');
+    assert.equal(ns.plannedIfs().some(x => x.ifId === String(id)), false);
+});

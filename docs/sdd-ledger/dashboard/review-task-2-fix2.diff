@@ -1,0 +1,111 @@
+# Review package: 0ada686..HEAD
+
+## Commits
+efbb904 fix(flagged): stacked pending accepts on one IF line reserve their TO room once (highest target minus NetSuite's qty); a pending create stops reserving once the office IF exists
+
+## Files changed
+ move_portal/sl_move_portal.js   | 22 ++++++++++++++++++++--
+ move_portal/test/portal.test.js | 32 ++++++++++++++++++++++++++++++++
+ 2 files changed, 52 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/move_portal/sl_move_portal.js b/move_portal/sl_move_portal.js
+index 67ccf0d..7a44c9a 100644
+--- a/move_portal/sl_move_portal.js
++++ b/move_portal/sl_move_portal.js
+@@ -208,28 +208,46 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         touched(id, cur => ({ stack: (cur.data.stack || []).concat([entry]).slice(-STACK_MAX), lastStep: stepOf('scanned', c) }));
+     }
+     // Load scans: a pallet on another open truck (any open stage) can be moved here, so it reads as a loading truck.
+     function scanTruckMap(list) {
+         const o = truckMap(list);
+         Object.keys(o).forEach(k => { if (OPEN.indexOf(o[k].status) !== -1) o[k].status = T.LOADING; });
+         return o;
+     }
+     // The room accepted-but-pending pallets will need once the office acts. Their ops live on the pallets (decision.op), not on a truck plan,
+     // and every truck counts, the one being decided on included (its other pending accepts are still pending).
++    // Stacked accepts on one IF line each target the line on top of the earlier ones (while `from` stays NetSuite's qty), so they reserve once per
++    // (TO, IF, SKU): the highest target minus what NetSuite reads now, not the sum of each op's own to - from.
+     function pendingReservations(trucks) {
+         const res = {}, add = (toId, item, q) => { if (q > 0) { const k = String(toId) + '|' + String(item); res[k] = (res[k] || 0) + q; } };
++        const qtys = {}, creates = [];
+         (trucks || []).filter(x => UNLOADABLE.indexOf(x.status) !== -1 || x.status === T.APPROVING).forEach(x => pendingAccepts(x).forEach(p => {
+             const op = (p.data.decision || {}).op;
+             if (!op) return;
+-            if (op.op === 'if_qty') add(op.toId, op.item, Number(op.to) - Number(op.from));
+-            if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => add(op.toId, k, Number(op.lines[k]) || 0));
++            if (op.op === 'if_qty') {
++                const k = String(op.toId) + '|' + String(op.ifId) + '|' + String(op.item), g = qtys[k] || (qtys[k] = { op: op, to: 0 });
++                g.to = Math.max(g.to, Number(op.to) || 0);
++            }
++            if (op.op === 'if_create') creates.push(op);
+         }));
++        const groups = Object.keys(qtys);
++        if (!groups.length && !creates.length) return res;
++        const info = ns.ifInfo();                           // read once, and only when something is pending
++        groups.forEach(k => {
++            const g = qtys[k], f = (info || {})[String(g.op.ifId)];
++            const cur = f ? (f.lines || []).filter(l => String(l.item) === String(g.op.item)).reduce((n, l) => n + Number(l.qty || 0), 0) : Number(g.op.from) || 0;
++            add(g.op.toId, g.op.item, g.to - cur);
++        });
++        creates.forEach(op => {
++            if (findAddOnIf(op.toId, op.lines || {}, info, trucks || [], null, {})) return;   // the office IF exists: NetSuite's TO remaining already counts it
++            Object.keys(op.lines || {}).forEach(k => add(op.toId, k, Number(op.lines[k]) || 0));
++        });
+         return res;
+     }
+     // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons, pending accepts).
+     function reservedToLines(exceptId, trucks, loadedAll, c, openTo) {
+         const byTruck = {}, toLines = verify.reserveToLines(openTo || ns.openToLines(), pendingReservations(trucks));
+         (loadedAll || data.palletsByStatus([VP.LOADED])).forEach(p => { (byTruck[p.loadId] = byTruck[p.loadId] || []).push(p); });
+         Object.keys(byTruck).forEach(k => { byTruck[k] = verify.sumLines(byTruck[k]); });
+         return verify.reserveToLines(toLines, verify.reservationsFromTrucks({ trucks: trucks, loadedByTruck: byTruck, toLines: toLines, mode: writeMode(c), exceptId: exceptId }));
+     }
+     function scanCtx(x, c) {
+diff --git a/move_portal/test/portal.test.js b/move_portal/test/portal.test.js
+index 26897e0..ca85d98 100644
+--- a/move_portal/test/portal.test.js
++++ b/move_portal/test/portal.test.js
+@@ -2450,10 +2450,42 @@ test('fix wave 1: the stamp fails after the create landed; the retry stamps the
+     assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /Accept refused/);
+     const p1 = ctx.data.getPallet(stray.id), x1 = ctx.data.getLoad(t.id);
+     assert.deepEqual([p1.status, p1.data.flag, x1.data.claim, ctx.tx._t.ops.filter(o => o.op === 'if_create').length, ctx.tx._t.ops.filter(o => o.op === 'if_stamp' && o.ifId === '901').length], ['labeled', 'never_loaded', '', 1, 0]);
+     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+     assert.equal(r.outcome, 'accepted');
+     assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_create').length, 1);
+     assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_stamp' && o.ifId === '901').length, 1);
+     assert.equal(ctx.data.getPallet(stray.id).status, 'received');
+     assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['901']);
+ });
++
++test('fix wave 3: stacked pending accepts on one IF line reserve their room once (24 pcs for two 12-pc strays, not 36)', () => {
++    const ctx = setup();
++    const orig = ctx.ns.openToLines;
++    ctx.ns.openToLines = () => orig().filter(r => r.toId === '500');                 // TO500: 48 left, no other TO for YSN100
++    const { t } = departed(ctx, 42, '5260040', '9001');                              // IF9001 = 504
++    const s1 = strayOn(ctx, t), s2 = strayOn(ctx, t);
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id }).outcome, 'pending');
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s2.id }).outcome, 'pending');
++    assert.deepEqual(ctx.data.getPallet(s2.id).data.decision.op, { op: 'if_qty', ifId: '9001', ifNum: 'IF9001', toId: '500', item: '975', from: 504, to: 528 });
++    const lt = truckWith(ctx, 42, '9002').t;                                        // IF9002 is full: any more YSN100 needs TO500 room
++    const big = (n, job) => printLabels(ctx, 1, job, [{ item: '975', sku: 'YSN100', cfg: '', pcs: n }])[0];
++    const over = big(25, 'Jres25'), fits = big(24, 'Jres24');
++    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: over.code }, false).result, 'no_to');   // 48 - 24 reserved = 24 left (36 reserved would leave 12)
++    assert.equal(ctx.data.getPallet(over.id).status, 'labeled');
++    const rf = ctx.run('truck_scan', { truckId: lt.id, raw: fits.code }, false);
++    assert.equal(rf.result, 'over');                                              // loads as a raise on IF9002 against TO500's remaining 24
++    assert.equal(ctx.data.getPallet(fits.id).status, 'loaded');
++});
++
++test('fix wave 3: a pending create stops reserving once the office IF exists (NetSuite then counts it)', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260041', '9001');
++    const stray = strayOn(ctx, t, LINE201);
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');   // pending create: 120 of TO700
++    const lt = truckWith(ctx, 2, '9002').t;
++    const big = (n, job) => printLabels(ctx, 1, job, [{ item: '11', sku: 'YSN201', cfg: '', pcs: n }])[0];
++    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big(1100, 'Jc1').code }, false).result, 'no_to');
++    officeIfs(ctx, [officeIf('9100', 'B')]);                                                          // the office made it (not settled yet: no approvals call)
++    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big(1100, 'Jc2').code }, false).result, 'addon');
++});

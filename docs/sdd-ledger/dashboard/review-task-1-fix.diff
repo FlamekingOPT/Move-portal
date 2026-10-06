@@ -1,0 +1,452 @@
+# Review package: 2127139..HEAD
+
+## Commits
+2ffc854 fix(flagged): re-check pallet after claim, target qty from pending accepts, retry-safe accept, settle isolation, pending pallet stays put
+
+## Files changed
+ docs/sdd-ledger/dashboard/task-1-report.md |  50 ++++++++++++++
+ move_portal/sl_move_portal.js              | 103 ++++++++++++++++++-----------
+ move_portal/test/portal.test.js            |  88 ++++++++++++++++++++++++
+ 3 files changed, 202 insertions(+), 39 deletions(-)
+
+## Diff
+diff --git a/docs/sdd-ledger/dashboard/task-1-report.md b/docs/sdd-ledger/dashboard/task-1-report.md
+new file mode 100644
+index 0000000..fc1e8a4
+--- /dev/null
++++ b/docs/sdd-ledger/dashboard/task-1-report.md
+@@ -0,0 +1,50 @@
++# Task 1 report: lastStep, accept / reject (on-IF), receipt gate, approvals flagged
++
++Status: DONE_WITH_CONCERNS (small, deliberate deviations listed below)
++Commit (subject; SHA is in git log): `feat(flagged): manager Accept/Reject on never-loaded pallets (on-IF path), receipt gate, approvals flagged rows, lastStep on truck writes`
++
++## Implemented
++- `stepOf(kind, c)` and `lastStep` on: truck_start, pushStack (now takes `c`; both callers pass it), takeOff, verifyTruck (only when `changed`, kind `opt.stepKind || 'verified'`; truck_add_if / truck_drop_if pass `stepKind` `if_added` / `if_dropped`), truck_correct release (`corrected`), ship_mark, departData (`confirmed`), ship_sendback, receiveOn (`unload_scanned`), unload_done, receipt_approve final write.
++- Flagged-pallet helpers (`flaggedRows`, `pendingAccepts`, `pendingRows`, `decidedRows`, `blockReasonOf`, `decideGuard`, `mustFlaggedOn`, `unloadFromOther`, `corrEntry`, `completeAccept`, `pendingDone`, `settlePending`, `acceptText`, `ifForItem`) and actions `pallet_accept` (on-IF path) and `pallet_reject`, as in the brief. `acceptOffIf` is a stub that throws a user error (Task 2).
++- `verify._fmt` exported from `move_verify.js`.
++- Receipt gate in `receipt_approve` (`blockReasonOf`), `canApprove` refuses an in-flight decision, `unloadView.decided`.
++- `approvals`: `flagged` rows, `settlePending` per truck at the tip, receipts iterate the settled trucks and carry `flagged`, `pending`, `decided`, `canApprove`, `blockReason`.
++
++## TDD evidence
++- RED: `node --test "move_portal/test/portal.test.js"` after adding the 5 new tests: `pass 131 / fail 5` (`Unknown action: pallet_accept`, `Unknown action: pallet_reject`, `lastStep` undefined, `approvals.flagged` undefined).
++- GREEN: `node --test "move_portal/test/*.test.js"`: `tests 244, pass 244, fail 0`; no warnings or stderr output.
++
++## Files changed
++- `move_portal/sl_move_portal.js`
++- `move_portal/move_verify.js` (`_fmt: fmt` in the return object)
++- `move_portal/test/portal.test.js` (5 new tests, 3 existing tests adjusted, see below)
++
++## Deviations from the brief (all needed to get green; please review)
++1. **`inFlight(cur)` helper** (`claim && !stale && !error`) used by `decideGuard`, `settlePending` and `canApprove`, instead of the brief's `cur.data.claim && !stale(cur)`. Reason: a failed receipt write restores `prevStatus` and sets `data.error` but leaves its claim behind; with the brief's check, "re-approve after a failed write" (two existing tests) was refused until the claim went stale. An in-flight approve or decision has `error: ''` (claimLoad clears it), so it still blocks.
++2. **`flaggedRows.sku`** is the pallet's SKU text (`YSN100`, unique line SKUs joined with ` + `), not `core.headline(p.lines)` (which gives `YSN100 · Config A`); the brief's test asserts `'YSN100'`.
++3. **`approvals.flagged` is sorted** by truck id, then pallet id (oldest truck first); the brief's test expects that order but `allTrucks()` returns newest first.
++4. **`receipts` iterates `settled.filter(UNLOADABLE || (APPROVING && stuck))`**, not bare `settled`, so a healthy in-flight `approving` truck does not show as a stuck card.
++5. **Existing tests adjusted** (the new gate is intended behaviour): `unload: ok, dup, never loaded...` and `unload_other and unload_damaged...` now reject their flagged stray before `receipt_approve` (the first also asserts the gate message); the `approvals` top-level keys test now expects `flagged`.
++
++## Self-review
++- Brief steps 3-5 all applied; `stillFlagged` untouched (fix9 passes).
++- `pendingDone` has unused params `planned, trucks` (kept: Task 2 uses them).
++- `unloadFromOther` writes `lastStep: taken_off` on the other open truck only when it is open (via `touched`).
++
++## Concerns
++- `departData` receives the mark-time context (`markCtx`), so `lastStep` `confirmed` carries the floor's mark time as `at` (and the confirming manager's name as `by`). Matches the brief; the Dashboard (later task) may want the real confirm time.
++- `truck_remove` / `truck_undo` still call `touched` without `lastStep` (the brief does not list them).
++- The new `approvals` write (`settlePending`) runs inside a read action; it only fires when the office has already edited the IF, and skips trucks with a live claim.
++
++## Fix wave 1
++
++- **Important 1 (re-check after claim):** `pallet_accept` and `pallet_reject` run `mustFlaggedOn(cl.Ld, a.palletId)` right after `claimLoad` succeeds; on a throw the claim is given back (new `dropClaim(id, claim)`, never throws) and the error is rethrown. Tests: accept then accept/reject of the same pallet are refused (`not flagged`) with `alloc` unchanged; a race test (another manager's decision lands right after the claim, for both actions) is refused, leaves no claim/phase, writes no `if_qty`.
++- **Important 2 + 3 (target qty, retry safety):** `ifForItem` now also returns the truck's `alloc` qty. `base` = alloc qty for that IF and item plus the `pcs` of every other `accepted_pending` pallet on the truck with the same `decision.ifId` and `decision.item`; `to = base + pcs`; `from` stays the fresh NetSuite qty. If `from === to` the write is skipped and the accept completes with `op.from = base`, `op.to = to`. Pending text uses `to`. `pendingDone` settles when the NetSuite qty is `>=` `op.to`. Everything after the write (and `completeAccept`) is wrapped so a throw calls `dropClaim` and rethrows, so a retry is not locked out for the stale window (this was a real gap: a `completeAccept` failure left the claim). Tests: two strays in `off` mode read `to 516` then `to 528`, one `approvals` call after the office sets 528 settles both and alloc reads 528; in `qty` mode a failing first `updatePallet(status received)` leaves the pallet flagged with no decision and no claim, the second accept writes no second `if_qty` (count stays 1), the pallet ends `received`, alloc 516.
++- **Minor 1:** `completeAccept` uses `typeof d.unposted === 'number' ? d.unposted + 1 : unpostedOf(cur)`. Test: with the counter cleared, accept plus one scan gives `unposted` 2 (each pallet once).
++- **Minor 2:** `approvals` wraps `settlePending` per truck in try/catch (`log.error` title `move settle <id>`), falling back to the unsettled truck.
++- **Minor 4:** `unload_scan` skips the flag/`flaggedTruck`/`flagged` writes when the pallet is `accepted_pending`; it still returns `never_loaded` and logs the scan. Assertion added to the off-mode pending test: scanned at a second departed truck, `flaggedTruck` stays on the first and the second truck's `flagged` is empty.
++- **Minor 5:** `decidedRows` excludes `pending: true` corrections (test: a pending accept shows no `decided` row until it settles).
++
++Test command: `node --test "move_portal/test/*.test.js"` -> `tests 249, pass 249, fail 0`, no warnings or stderr output (portal.test.js alone: 141/141).
++
++Commit (subject; SHA is in git log): `fix(flagged): re-check pallet after claim, target qty from pending accepts, retry-safe accept, settle isolation, pending pallet stays put`
+diff --git a/move_portal/sl_move_portal.js b/move_portal/sl_move_portal.js
+index 0095e76..81a820f 100644
+--- a/move_portal/sl_move_portal.js
++++ b/move_portal/sl_move_portal.js
+@@ -1044,32 +1044,39 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+                 truckId: x.id, truckLabel: label, truckStatus: x.status, by: whoName(p.data.flaggedBy), at: p.data.flaggedAt || '' }));
+     }
+     // Accepted, but the IF op was plan-only (write mode) and the office has not done it yet in NetSuite.
+     function pendingAccepts(x) {
+         return stillFlagged(x.data.flagged).filter(p => p.data.flaggedTruck === x.id && p.data.decision && p.data.decision.kind === 'accepted_pending');
+     }
+     function pendingRows(x) {
+         return pendingAccepts(x).map(p => Object.assign(flaggedRows(x, [p])[0], { text: p.data.decision.text || '' }));
+     }
+     function decidedRows(x) {
+-        return (x.data.corrections || []).filter(k => k.kind === 'pallet_accept' || k.kind === 'pallet_reject').map(k => ({ code: k.code, text: k.text || '', at: k.at, by: whoName(k.by) }));
++        return (x.data.corrections || []).filter(k => (k.kind === 'pallet_accept' || k.kind === 'pallet_reject') && !k.pending).map(k => ({ code: k.code, text: k.text || '', at: k.at, by: whoName(k.by) }));
+     }
+     function blockReasonOf(x) {
+         const n = flaggedRows(x).length + pendingAccepts(x).length;
+         return n ? 'Decide ' + n + ' flagged pallet' + (n === 1 ? '' : 's') + ' first' : '';
+     }
+     // A decision runs only on a truck at Tippecanoe that nobody is processing (an approve or another decision in flight holds the claim).
+     function inFlight(cur) { return !!(cur.data.claim && !stale(cur) && !cur.data.error); }
+     function decideGuard(cur) {
+         if (UNLOADABLE.indexOf(cur.status) === -1) throw userErr('This truck is ' + cur.status + ', its pallets cannot be decided yet');
+         if (inFlight(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+     }
++    // Gives the claim back after a failure (never throws): the truck must not stay locked for the stale window.
++    function dropClaim(id, claim) {
++        try {
++            const cur = data.getLoad(id);
++            if (cur && cur.data.claim === claim) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '' } });
++        } catch (e) { log.error({ title: 'move dropClaim ' + id, details: (e && e.stack) || String(e) }); }
++    }
+     function mustFlaggedOn(x, palletId) {
+         const p = data.getPallet(palletId);
+         if (!p || p.data.flag !== 'never_loaded' || String(p.data.flaggedTruck) !== String(x.id) || (x.data.flagged || []).indexOf(String(p.id)) === -1) throw userErr('That pallet is not flagged on this truck');
+         if (p.data.decision && p.data.decision.kind === 'accepted_pending') throw userErr('That pallet is already accepted: the office finishes it in NetSuite');
+         if (p.status !== VP.LABELED && p.status !== VP.LOADED) throw userErr('That pallet is ' + p.status + ', nothing to decide');
+         return p;
+     }
+     // The pallet physically arrived here, so it leaves the open truck it was scanned onto at Riverside (that truck's ready reverts).
+     function unloadFromOther(p, c) {
+         if (p.status !== VP.LOADED || !p.loadId) return;
+@@ -1086,30 +1093,30 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         let alloc = (x.data.alloc || []).map(a => Object.assign({}, a, { lines: Object.assign({}, a.lines) }));
+         let a = alloc.find(y => String(y.ifId) === String(dec.ifId));
+         if (!a) { a = { ifId: String(dec.ifId), ifNum: dec.ifNum, toId: String(dec.toId), toNum: dec.toNum, lines: {}, addOn: true }; alloc.push(a); }
+         a.lines[item] = (Number(a.lines[item]) || 0) + pcs;
+         const ifs = (x.data.ifs || []).some(f => String(f.ifId) === String(dec.ifId)) ? x.data.ifs
+             : (x.data.ifs || []).concat([{ ifId: String(dec.ifId), ifNum: dec.ifNum, toId: String(dec.toId), toNum: dec.toNum, status: 'B', lines: [{ item: item, sku: dec.sku, qty: pcs }] }]);
+         data.updatePallet(p, { status: VP.RECEIVED, load: x.id, data: { flag: '', receivedAt: c.now.stamp, receivedBy: c.actor, decision: Object.assign({}, dec, { kind: 'accepted' }) } });
+         const cur = mustTruck(id), d = cur.data, text = dec.text;
+         const corr = (d.corrections || []).filter(k => !(k.kind === 'pallet_accept' && String(k.palletId) === String(p.id)));
+         const patch = { data: { alloc: alloc, ifs: ifs, flagged: (d.flagged || []).filter(k => String(k) !== String(p.id)), lastStep: stepOf('pallet_accepted', c),
+-            unposted: (typeof d.unposted === 'number' ? d.unposted : unpostedOf(cur)) + 1,
++            unposted: typeof d.unposted === 'number' ? d.unposted + 1 : unpostedOf(cur),
+             corrections: corr.concat([corrEntry('pallet_accept', p, { ifNum: dec.ifNum, toNum: dec.toNum, text: text }, c)]) } };
+         if (cur.status === T.DEPARTED) patch.status = T.RECEIVING;
+         data.updateLoad(cur, patch);
+     }
+     // What a pending accept waits for: the IF line at the target qty (if_qty), or the add-on IF existing (if_create, Task 2).
+     function pendingDone(dec, info, planned, trucks) {
+         if (dec.op && dec.op.op === 'if_qty') {
+             const f = info[String(dec.op.ifId)];
+-            return f && (f.lines || []).filter(l => String(l.item) === String(dec.op.item)).reduce((s, l) => s + Number(l.qty || 0), 0) === Number(dec.op.to) ? { ifId: String(dec.op.ifId), ifNum: dec.op.ifNum } : null;
++            return f && (f.lines || []).filter(l => String(l.item) === String(dec.op.item)).reduce((s, l) => s + Number(l.qty || 0), 0) >= Number(dec.op.to) ? { ifId: String(dec.op.ifId), ifNum: dec.op.ifNum } : null;
+         }
+         return null;
+     }
+     // Settle pending accepts whose NetSuite side is done (the office acted). Called by approvals for every truck it lists.
+     function settlePending(x, c, shared) {
+         const pend = pendingAccepts(x);
+         if (!pend.length) return x;
+         const info = shared.info || (shared.info = ns.ifInfo()), planned = shared.planned || (shared.planned = ns.plannedIfs()), trucks = shared.trucks || (shared.trucks = allTrucks());
+         pend.forEach(p => {
+             const dec = p.data.decision, got = pendingDone(dec, info, planned, trucks);
+@@ -1121,83 +1128,96 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+         return mustTruck(x.id);
+     }
+     function acceptText(dec) {
+         return dec.op && dec.op.op === 'if_qty' ? '✅ Accepted · ' + dec.ifNum + ' ' + verify._fmt(dec.op.from) + ' → ' + verify._fmt(dec.op.to) : '✅ Accepted · ' + dec.ifNum;
+     }
+     // The IF on this truck that carries the pallet's SKU (lowest IF number), read fresh from NetSuite for the from-qty.
+     function ifForItem(x, item, info) {
+         const cands = (x.data.alloc || []).filter(a => String(a.ifId).indexOf('new:') !== 0 && Number(a.lines[item]) > 0).sort((p, q) => Number(p.ifId) - Number(q.ifId));
+         for (let i = 0; i < cands.length; i++) {
+             const f = info[String(cands[i].ifId)];
+-            if (f) return { ifId: String(cands[i].ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: cands[i].toNum, from: (f.lines || []).filter(l => String(l.item) === item).reduce((s, l) => s + Number(l.qty || 0), 0) };
++            if (f) return { ifId: String(cands[i].ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: cands[i].toNum, alloc: Number(cands[i].lines[item]) || 0, from: (f.lines || []).filter(l => String(l.item) === item).reduce((s, l) => s + Number(l.qty || 0), 0) };
+         }
+         return null;
+     }
+     // Task 2 replaces this: a pallet whose SKU is on none of the truck's IFs.
+     function acceptOffIf() { throw userErr('Accept for a SKU on no truck IF comes in Task 2'); }
+     act('pallet_accept', true, (a, c) => {
+         const x0 = mustTruck(a.truckId);
+         decideGuard(x0);
+         const p0 = mustFlaggedOn(x0, a.palletId), item = String((p0.lines[0] || {}).item || ''), pcs = Number(p0.pieces) || 0;
+         if (!item || !pcs || (p0.lines || []).length !== 1) throw userErr('Only a single-SKU pallet can be accepted here: reject it and call the office');
+         const info = ns.ifInfo(), sk = skuNames([item])[item] || item;
+         const target = ifForItem(x0, item, info);
+-        let op, dec;
+-        if (target) {
+-            op = { op: 'if_qty', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, item: item, from: target.from, to: target.from + pcs };
+-            dec = { kind: 'accepted_pending', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, toNum: target.toNum, item: item, sku: sk, pcs: pcs, op: op, by: c.user, at: c.now.stamp };
+-        } else {
+-            return acceptOffIf(x0, p0, item, sk, pcs, c);           // Task 2
+-        }
++        if (!target) return acceptOffIf(x0, p0, item, sk, pcs, c);           // Task 2
++        // The target is what the IF must read once every accepted pallet of this SKU on it is in: the truck's alloc plus the other pending accepts, plus this pallet.
++        const base = target.alloc + pendingAccepts(x0).filter(q => String(q.id) !== String(p0.id) && q.data.decision.ifId === target.ifId && String(q.data.decision.item) === item)
++            .reduce((n, q) => n + (Number(q.data.decision.pcs) || Number(q.pieces) || 0), 0), to = base + pcs;
++        const op = { op: 'if_qty', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, item: item, from: target.from, to: to };
++        const dec = { kind: 'accepted_pending', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, toNum: target.toNum, item: item, sku: sk, pcs: pcs, op: op, by: c.user, at: c.now.stamp };
+         const cl = claimLoad(x0, x0.status, 'accept', decideGuard, {});
+         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
+         const release = patch => { assertClaim(id, claim, label, 'accept'); data.updateLoad(data.getLoad(id), { data: Object.assign({ claim: '', workingAt: 0, phase: '' }, patch) }); };
+-        let res, err = null;
++        try { mustFlaggedOn(cl.Ld, a.palletId); } catch (e) { dropClaim(id, claim); throw e; }   // another decision may have landed between the first check and the claim
++        const done = target.from === to;                            // NetSuite already reads the target (a retry after a write that landed, or the office did it)
++        let res = { planOnly: [] }, err = null;
++        if (!done) {
++            try {
++                res = verify.runOps([op], writeMode(c), o => { assertClaim(id, claim, label, 'accept'); return tx.apply(o); }, {}, (k, newId) => {
++                    const cur = data.getLoad(id);
++                    data.updateLoad(cur, { data: { correctionWrites: Object.assign({}, cur.data.correctionWrites, { [k + '|' + corrSig(op)]: { key: k, op: op.op, id: String(newId), sig: corrSig(op), at: c.now.stamp, by: c.user } }) } });
++                });
++            } catch (e) {
++                if (e.user) throw e;
++                log.error({ title: 'move pallet_accept ' + id, details: (e && e.stack) || String(e) });
++                err = e.message || String(e);
++            }
++            if (err) { release({}); throw userErr('Accept refused: ' + err + ' — fix it in NetSuite'); }
++        }
+         try {
+-            res = verify.runOps([op], writeMode(c), o => { assertClaim(id, claim, label, 'accept'); return tx.apply(o); }, {}, (k, newId) => {
++            const p = data.getPallet(p0.id);
++            unloadFromOther(p, c);
++            if (res.planOnly.length) {                              // plan-only: the office edits the IF; the receipt waits (settlePending finishes it)
++                dec.text = '⏳ Accepted · office sets ' + target.ifNum + ' ' + sk + ' to ' + verify._fmt(to) + ' · receipt waits';
++                data.updatePallet(data.getPallet(p.id), { data: { decision: dec } });
+                 const cur = data.getLoad(id);
+-                data.updateLoad(cur, { data: { correctionWrites: Object.assign({}, cur.data.correctionWrites, { [k + '|' + corrSig(op)]: { key: k, op: op.op, id: String(newId), sig: corrSig(op), at: c.now.stamp, by: c.user } }) } });
+-            });
+-        } catch (e) {
+-            if (e.user) throw e;
+-            log.error({ title: 'move pallet_accept ' + id, details: (e && e.stack) || String(e) });
+-            err = e.message || String(e);
+-        }
+-        if (err) { release({}); throw userErr('Accept refused: ' + err + ' — fix it in NetSuite'); }
+-        const p = data.getPallet(p0.id);
+-        unloadFromOther(p, c);
+-        if (res.planOnly.length) {                                  // plan-only: the office edits the IF; the receipt waits (settlePending finishes it)
+-            dec.text = '⏳ Accepted · office sets ' + target.ifNum + ' ' + sk + ' to ' + verify._fmt(op.to) + ' · receipt waits';
+-            data.updatePallet(data.getPallet(p.id), { data: { decision: dec } });
+-            const cur = data.getLoad(id);
+-            release({ lastStep: stepOf('pallet_accepted', c), corrections: (cur.data.corrections || []).concat([corrEntry('pallet_accept', p, { ifNum: target.ifNum, pending: true, text: dec.text }, c)]) });
++                release({ lastStep: stepOf('pallet_accepted', c), corrections: (cur.data.corrections || []).concat([corrEntry('pallet_accept', p, { ifNum: target.ifNum, pending: true, text: dec.text }, c)]) });
++                if (ns.resetCache) ns.resetCache();
++                return { outcome: 'pending', text: dec.text, view: unloadView(mustTruck(id), c) };
++            }
++            if (done) op.from = base;
++            dec.text = acceptText(dec);
++            completeAccept(id, data.getPallet(p.id), dec, c);
++            release({});
+             if (ns.resetCache) ns.resetCache();
+-            return { outcome: 'pending', text: dec.text, view: unloadView(mustTruck(id), c) };
++            return { outcome: 'accepted', text: dec.text, view: unloadView(mustTruck(id), c) };
++        } catch (e) {
++            dropClaim(id, claim);                                   // a retry must not be locked out (and finds the IF already at the target)
++            throw e;
+         }
+-        dec.text = acceptText(dec);
+-        completeAccept(id, data.getPallet(p.id), dec, c);
+-        release({});
+-        if (ns.resetCache) ns.resetCache();
+-        return { outcome: 'accepted', text: dec.text, view: unloadView(mustTruck(id), c) };
+     });
+     act('pallet_reject', true, (a, c) => {
+         const note = String(a.note || '').trim().slice(0, 300);
+         if (!note) throw userErr('Enter a note: why is this pallet rejected?');
+         const x0 = mustTruck(a.truckId);
+         decideGuard(x0);
+         const p0 = mustFlaggedOn(x0, a.palletId);
+         const cl = claimLoad(x0, x0.status, 'reject', decideGuard, {});
+         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
+-        const p = data.getPallet(p0.id);
+-        unloadFromOther(p, c);
+         const text = '↩ Rejected · "' + note + '" · back to labeled';
+-        data.updatePallet(data.getPallet(p.id), { status: VP.LABELED, load: '', data: { flag: '', decision: { kind: 'rejected', note: note, by: c.user, at: c.now.stamp, text: text } } });
++        let p;
++        try {
++            mustFlaggedOn(cl.Ld, a.palletId);                       // another decision may have landed between the first check and the claim
++            p = data.getPallet(p0.id);
++            unloadFromOther(p, c);
++            data.updatePallet(data.getPallet(p.id), { status: VP.LABELED, load: '', data: { flag: '', decision: { kind: 'rejected', note: note, by: c.user, at: c.now.stamp, text: text } } });
++        } catch (e) { dropClaim(id, claim); throw e; }
+         assertClaim(id, claim, label, 'reject');
+         const cur = data.getLoad(id);
+         data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', flagged: (cur.data.flagged || []).filter(k => String(k) !== String(p.id)), lastStep: stepOf('pallet_rejected', c),
+             corrections: (cur.data.corrections || []).concat([corrEntry('pallet_reject', p, { note: note, text: text }, c)]) } });
+         return { outcome: 'rejected', text: text, view: unloadView(mustTruck(id), c) };
+     });
+     function mustUnloadable(id) {
+         const x = mustTruck(id);
+         if (UNLOADABLE.indexOf(x.status) === -1) throw userErr('This truck is ' + x.status + ', not ready to unload');
+         return x;
+@@ -1227,21 +1247,21 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+     });
+ 
+     act('unload_get', false, (a, c) => ({ view: unloadView(mustViewable(a.truckId), c) }));
+ 
+     act('unload_scan', false, (a, c) => {
+         const x = mustUnloadable(a.truckId);
+         const s = core.parseScan(a.raw);
+         const p = s.palletId ? data.getPallet(s.palletId) : null;
+         const r = verify.classifyUnloadScan({ pallet: p, truckId: x.id, trucks: truckMap(allTrucks()) });
+         if (r.set) receiveOn(x, p, p.status, c);
+-        if (r.result === 'never_loaded') {
++        if (r.result === 'never_loaded' && !(p.data.decision && p.data.decision.kind === 'accepted_pending')) {   // a pending accept stays on the truck that holds it
+             data.updatePallet(p, { data: { flag: 'never_loaded', flaggedAt: c.now.stamp, flaggedBy: c.actor, flaggedTruck: x.id } });
+             const cur = mustTruck(x.id), fl = cur.data.flagged || [];
+             if (fl.indexOf(String(p.id)) === -1) data.updateLoad(cur, { data: { flagged: fl.concat([String(p.id)]) } });
+         }
+         data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: 'unload', actor: c.actor, at: c.now.stamp } });
+         return Object.assign({}, r, { raw: s.raw, tone: verify.toneFor(r.result), pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: unloadView(mustTruck(x.id), c) });
+     });
+ 
+     act('unload_other', false, (a, c) => {
+         const p = mustPallet(a.palletId);
+@@ -1383,21 +1403,26 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
+                 const gone = flag('if_gone'), empty = flag('if_empty');
+                 fixTrucks.push({ truck: truckSummary(x, countsFromPallets(x.id, ps)), trailer: x.data.trailer || '',
+                     ifs: (x.data.ifs || []).map(f => ({ ifId: f.ifId, ifNum: f.ifNum, toNum: f.toNum, lines: f.lines, gone: !!(f.gone || gone[String(f.ifId)]), empty: !!empty[String(f.ifId)] })),
+                     suggestions: suggestionsFor(x, x.data.ifs, diffs, dp, trucks, planned), orphans: orphanCreates(x), stuck: stuckCorrect(x), correctError: x.data.correctError || '',
+                     shortNote: x.data.shortNote || null, verifiedBy: whoName((x.data.verify || {}).by), verifiedAt: (x.data.verify || {}).at || '',
+                     otherDiffs: pub.filter(d => FIX_KINDS.indexOf(d.kind) === -1 && IF_PILL_KINDS.indexOf(d.kind) === -1).map(d => d.text) });   // why it waits when no Correct card or IF pill explains it
+             });
+         }
+         const shared = {};
+         const atTip = trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || x.status === T.APPROVING);
+-        const settled = atTip.map(x => settlePending(x, c, shared));
++        const settled = atTip.map(x => {
++            try { return settlePending(x, c, shared); } catch (e) {            // one bad truck must not fail the whole Approvals response
++                log.error({ title: 'move settle ' + x.id, details: (e && e.stack) || String(e) });
++                return x;
++            }
++        });
+         const flagged = [].concat.apply([], settled.map(x => flaggedRows(x))).sort((p, q) => (Number(p.truckId) - Number(q.truckId)) || (Number(p.palletId) - Number(q.palletId)));   // oldest truck first
+         const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
+             const q = x.data.shipReq;
+             return { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
+                 ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
+                 otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) };
+         });
+         return {
+             shipPending: shipPending,
+             flagged: flagged,
+diff --git a/move_portal/test/portal.test.js b/move_portal/test/portal.test.js
+index 68cbe0b..f24bf0d 100644
+--- a/move_portal/test/portal.test.js
++++ b/move_portal/test/portal.test.js
+@@ -1991,20 +1991,23 @@ test('pallet_accept (qty mode, SKU on a truck IF): if_qty written, pallet receiv
+ test('pallet_accept in off mode is pending: receipt blocked until the IF reads as written, then settled by approvals', () => {
+     const ctx = setup();
+     const { t, ps } = departed(ctx, 42, '5260002');
+     const stray = strayOn(ctx, t);
+     ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+     assert.equal(r.outcome, 'pending');
+     assert.equal(r.text, '⏳ Accepted · office sets IF9001 YSN100 to 516 · receipt waits');
+     assert.equal(ctx.data.getPallet(stray.id).data.decision.kind, 'accepted_pending');
+     assert.equal(ctx.data.getPallet(stray.id).status, 'labeled');
++    const b2 = departed(ctx, 42, '5260009', '9002');                       // scanned at another departed truck: stays on the first, not re-flagged there
++    assert.equal(ctx.run('unload_scan', { truckId: b2.t.id, raw: stray.code }, false).result, 'never_loaded');
++    assert.deepEqual([ctx.data.getPallet(stray.id).data.flaggedTruck, ctx.data.getLoad(b2.t.id).data.flagged || []], [t.id, []]);
+     ctx.run('unload_done', { truckId: t.id }, false);
+     assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet/);
+     let ap = ctx.run('approvals');
+     assert.deepEqual([ap.flagged.length, ap.receipts[0].pending.length, ap.receipts[0].canApprove, ap.receipts[0].blockReason], [0, 1, false, 'Decide 1 flagged pallet first']);
+     const realInfo = ctx.ns.ifInfo;                                       // the office edits the IF in NetSuite
+     ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 516 }]; return o; };
+     ap = ctx.run('approvals');
+     assert.deepEqual([ap.receipts[0].pending.length, ap.receipts[0].canApprove, ap.receipts[0].decided.length], [0, true, 1]);
+     assert.equal(ctx.data.getPallet(stray.id).status, 'received');
+     assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+@@ -2057,10 +2060,95 @@ test('lastStep rides on the existing writes: start, scan, verify, mark, confirm,
+     assert.equal(step().kind, 'marked_shipped');
+     ctx.run('ship_confirm', { truckId: t.id });
+     assert.equal(step().kind, 'confirmed');
+     ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false);
+     assert.equal(step().kind, 'unload_scanned');
+     ctx.run('unload_done', { truckId: t.id }, false);
+     assert.equal(step().kind, 'unload_done');
+     ctx.run('receipt_approve', { truckId: t.id });
+     assert.equal(step().kind, 'receipt_approved');
+ });
++
++test('fix wave 1: a decided pallet cannot be decided again (accept then accept / reject), alloc unchanged', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260010');
++    const stray = strayOn(ctx, t);
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'accepted');
++    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /not flagged|nothing to decide|already accepted/);
++    assert.throws(() => ctx.run('pallet_reject', { truckId: t.id, palletId: stray.id, note: 'again' }), /not flagged|nothing to decide|already accepted/);
++    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
++    assert.equal(ctx.data.getPallet(stray.id).status, 'received');
++});
++
++test('fix wave 1: the pallet is re-checked after the claim; a decision that lands in between is refused and the claim is released', () => {
++    ['pallet_accept', 'pallet_reject'].forEach(action => {
++        const ctx = setup();
++        ctx.data.db.settings.writeMode = 'qty';
++        const { t } = departed(ctx, 42, action === 'pallet_accept' ? '5260011' : '5260012');
++        const stray = strayOn(ctx, t);
++        const realUpdate = ctx.data.updateLoad;
++        ctx.data.updateLoad = (cur, patch) => {                            // another manager's decision lands just after our claim
++            const r = realUpdate(cur, patch);
++            if (patch.data && patch.data.phase && patch.data.claim) { ctx.data.updateLoad = realUpdate; ctx.data.updatePallet(ctx.data.getPallet(stray.id), { data: { flag: '' } }); }
++            return r;
++        };
++        assert.throws(() => ctx.run(action, { truckId: t.id, palletId: stray.id, note: 'n' }), /not flagged/);
++        const x = ctx.data.getLoad(t.id);
++        assert.deepEqual([x.data.claim, x.data.phase, x.data.alloc[0].lines['975']], ['', '', 504]);
++        assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_qty').length, 0);
++    });
++});
++
++test('fix wave 1: two strays of one SKU accepted in off mode target 516 then 528; the office sets 528 and one approvals call settles both', () => {
++    const ctx = setup();
++    const { t } = departed(ctx, 42, '5260013');
++    const s1 = strayOn(ctx, t), s2 = strayOn(ctx, t);
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id }).text, '⏳ Accepted · office sets IF9001 YSN100 to 516 · receipt waits');
++    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s2.id }).text, '⏳ Accepted · office sets IF9001 YSN100 to 528 · receipt waits');
++    ctx.run('unload_done', { truckId: t.id }, false);
++    const realInfo = ctx.ns.ifInfo;
++    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 528 }]; return o; };
++    const ap = ctx.run('approvals');
++    assert.deepEqual([ap.receipts[0].pending.length, ap.receipts[0].decided.length, ap.receipts[0].canApprove], [0, 2, true]);
++    assert.deepEqual([ctx.data.getPallet(s1.id).status, ctx.data.getPallet(s2.id).status], ['received', 'received']);
++    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 528);
++});
++
++test('fix wave 1: a retry after completeAccept failed does not write the IF a second time', () => {
++    const ctx = setup();
++    ctx.data.db.settings.writeMode = 'qty';
++    const { t } = departed(ctx, 42, '5260014');
++    const stray = strayOn(ctx, t);
++    const realInfo = ctx.ns.ifInfo;
++    ctx.tx._t.onApply = op => { if (op.op === 'if_qty') ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: op.to }]; return o; }; };   // the write lands in NetSuite
++    const realUpdate = ctx.data.updatePallet;
++    ctx.data.updatePallet = (cur, patch) => {
++        if (patch.status === 'received') { ctx.data.updatePallet = realUpdate; throw new Error('boom: record write failed'); }
++        return realUpdate(cur, patch);
++    };
++    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /boom/);
++    ctx.data.updatePallet = realUpdate;
++    const p1 = ctx.data.getPallet(stray.id), x1 = ctx.data.getLoad(t.id);
++    assert.deepEqual([p1.status, p1.data.flag, p1.data.decision || null, x1.data.claim], ['labeled', 'never_loaded', null, '']);
++    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
++    assert.equal(r.outcome, 'accepted');
++    assert.equal(r.text, '✅ Accepted · IF9001 504 → 516');
++    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_qty').length, 1);
++    assert.equal(ctx.data.getPallet(stray.id).status, 'received');
++    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
++});
++
++test('fix wave 1: unposted counts a completed accept once; a settled pending entry is not also listed as decided while pending', () => {
++    const ctx = setup();
++    const { t, ps } = departed(ctx, 42, '5260015');
++    const stray = strayOn(ctx, t);
++    ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false);
++    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { unposted: null } });   // as if the counter was never kept: it is recomputed from the pallets
++    ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
++    assert.deepEqual(ctx.run('unload_get', { truckId: t.id }, false).view.decided, [], 'a pending accept is not decided yet');
++    const realInfo = ctx.ns.ifInfo;
++    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 516 }]; return o; };
++    ctx.run('approvals');
++    assert.equal(ctx.data.getLoad(t.id).data.unposted, 2);              // the scanned pallet plus the accepted one, each once
++    assert.equal(ctx.run('unload_get', { truckId: t.id }, false).view.decided.length, 1);
++});

@@ -48,3 +48,13 @@ Commit (subject; SHA is in git log): `feat(flagged): manager Accept/Reject on ne
 Test command: `node --test "move_portal/test/*.test.js"` -> `tests 249, pass 249, fail 0`, no warnings or stderr output (portal.test.js alone: 141/141).
 
 Commit (subject; SHA is in git log): `fix(flagged): re-check pallet after claim, target qty from pending accepts, retry-safe accept, settle isolation, pending pallet stays put`
+
+## Fix wave 2
+
+- **Important (accept target computed before the claim):** `pallet_accept` now builds the target in a local `planFor(Ld, info)` (IF for the SKU, `base` = that truck's alloc plus the other pending accepts of the same IF and item, `to`, `op`, `dec`). The pre-claim call is only a fail-fast (no IF for the SKU goes to `acceptOffIf` before anything is claimed). After `claimLoad` and the `mustFlaggedOn` re-check, `ns.resetCache()` (if present) and a fresh `ns.ifInfo()` are read and `planFor(cl.Ld, ...)` is recomputed from the claimed truck; `target`, `base`, `to`, `op`, `dec` for the write and the decision come from that. If the recomputation finds no IF for the SKU, `dropClaim` and `userErr('This truck changed while it was being checked. Try again.')` (also covers any throw in the recompute). Test: `palletsByIds` is hooked (`hookOnce`) so s1's accept runs to completion in `off` mode right after s2's pre-claim `pendingAccepts` read (s2 keeps the stale view); s1 text ends `to 516`, s2 ends `to 528` (`decision.op.to` 528), and one `approvals` call after the office sets 528 settles both, alloc 528. Hook is restored by `hookOnce` itself. Verified RED before the fix (s2 targeted 516).
+- **Minor (NetSuite already above the target):** `done = target.from >= to`; no write, completes with `op.from = base`, `op.to = to`. Test: `ifInfo` pre-set to 528 for IF9001, `qty` mode, one stray: outcome `accepted`, zero `if_qty` ops, alloc reads 516.
+- **Minor (claim wrote the pre-claim status):** `claimLoad(..., status === null)` keeps `Ld.status` of the guarded fresh read; `pallet_accept` and `pallet_reject` pass `null`; no other caller changed. Test (both actions, `off` mode so the accept stays pending and `completeAccept` cannot repair the status): a hooked read flips the truck `departed -> receiving` during the pre-claim phase; the truck ends `receiving`.
+
+Test command: `node --test "move_portal/test/*.test.js"` -> `tests 252, pass 252, fail 0`, no warnings or stderr output (portal.test.js alone: 144/144).
+
+Commit: `24830c0` `fix(flagged): recompute accept target after the claim, never lower a pre-raised IF, claim keeps the fresh truck status`

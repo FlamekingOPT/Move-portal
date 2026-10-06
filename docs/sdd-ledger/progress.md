@@ -143,3 +143,28 @@ RW final review: done. Fix wave a20d375..d30d700 (trailer edit + ship_mark trail
 OPEN: snapshot refresh needs onHand query + onHand item ids in items query — NetSuite connector in this session can't read aggregateItemLocation/location; Jack to reconnect.
 Minor (RW final): free-stuck with nothing to run shows "Nothing to correct" though it freed; truckView.trailers not filtered; ttrailer uses window.prompt.
 ```
+
+## Manager dashboard + flagged pallets (2026-10-06 pm)
+
+```
+# Plan docs/superpowers/plans/2026-10-06-move-portal-manager-dashboard-flagged-pallets.md, start a4c42d1. Briefs/reports in docs/sdd-ledger/dashboard/.
+DB Task 1: complete (commits a4c42d1..24830c0, review clean after 2 fix waves). Tests 252.
+Minor (DB1, for final review): half-done accept (pallet received, truck write failed) has no recovery/reconcile path; pre-raised IF above target leaves alloc < NetSuite (text shows base→to); corrected lastStep overwritten by the re-verify; confirmed lastStep.at = floor mark time; auto-recheck lastStep.by = polling device; receipt_approve message during an in-flight decision misleading; lastStep test misses taken_off-other/corrected/if_added/if_dropped/sent_back/pallet_rejected.
+DB Task 2: complete (commits 24830c0..efbb904, review clean after 2 fix waves). Tests 269.
+Minor (DB2, for final review / Stage 2): office-planned IF with identical lines on the TO can be taken by the pending-accept matcher (memo-token match needs move_ns memos; token now in the ⏳ text); pending if_create reservation stays while the matching IF is on this truck's ifs; pendingReservations adds an ns.ifInfo read per reservedToLines call when pendings exist (Task 15 lazy-read list); pending-reservation release only on approvals settle; createToken collides with Correct-the-IF creates on same truck/TO/lines; shipped add-on appended with status B; stamp-failure and on-mode loaded-elsewhere tests added; prod check: if_qty on a shipped (C) IF.
+DB Task 3: complete (commits efbb904..02d3459, review clean). Tests 270.
+Minor (DB3): dashboard runs approvalsView incl. settlePending (not a pure read); stockModel read per load; allTrucks read twice; grouped shipped-pallet read grows with history (Task 15 SQL filter); per-truck stillFlagged + flagged repeated per IF row (UI must not sum rows); test gaps: two-IF truck split, partial unload received, fix/trucks/retry waiting text, late≥30, avg7/avgAll/todayDone, trucksPerDay default.
+DB Task 4: complete (commits 02d3459..bd0e68f, review clean). Tests 271.
+Minor (DB4): markedAt fallback = confirm time for older trucks; corrText 'undefined' hardening for ops missing ifNum; corrText branches other than on-IF accept untested.
+DB Task 5: complete (commits bd0e68f..ca2d468, review clean). Tests 273.
+Minor (DB5): late-ship badge not primed until Approvals opens (Task 6: Dashboard calls setLate from waiting.late); error receipt card (!perIf) still ungated; flagRow nested div padding; S.scrollTo not cleared on approvals error; same pallet shows on both cards (by spec).
+DB Task 6: complete (commits ca2d468..20aa1c3, review clean after 1 fix wave). Tests 275.
+Minor (DB6): Sort select blank after clicking Fulfillment/TO/Truck/Pallets headers (keys not in SORTS); newest-sort || chain stops at an unparseable lastAt; tests string-level only.
+DB Task 7: complete (commits 20aa1c3..this commit). Local beta stand-in: snapshot_ns.applyOp applies if_qty / if_create (returns the new id) / if_stamp; fake_tx hook may return an id. Tests 276. Browser smoke done by the controller.
+ON-MODE GATE / Stage 2:
+(a) setIfItemQty on a Shipped (C) IF must be verified in prod before `qty` (spec 2.6).
+(b) Pending add-on IFs are matched by TO + exact lines + not on a truck (searching all statuses, preferring shipped) until move_ns exposes memos, then match by the createToken shown in the pending text; an office-planned IF with identical lines can be taken over by mistake until then.
+(c) pallet_accept claims the truck with phase `accept` while the floor may still scan; both sides re-read before writing; no lost update seen in tests; keep an eye on it in the beta.
+(d) The dashboard runs approvalsView incl. settlePending, so it is not a pure read.
+(e) Task 15 lazy-read list: pendingReservations adds an ns.ifInfo read per reservedToLines call when pendings exist; the dashboard's grouped shipped-pallet read grows with history.
+```

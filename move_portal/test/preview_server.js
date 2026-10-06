@@ -23,7 +23,7 @@ const tx = require('./fake_tx').makeFakeTx();
 const store = makeLocalStore(core, storeFile);
 const data = store.data;
 const ns = makeSnapshotNs(verify, snapFile);
-tx._t.onApply = op => ns.applyOp(op);   // qty mode locally: an if_qty correction lands in the in-memory snapshot
+tx._t.onApply = op => ns.applyOp(op);   // qty/on mode locally: if_qty / if_create / if_stamp land in the in-memory snapshot
 const snap = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
 
 // Seed settings the first time the store is created; merge items and trailers on every start.
