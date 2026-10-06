@@ -382,6 +382,8 @@ test('unload: ok, dup, never loaded flagged, undo, done → manager receipt with
     assert.equal(ctx.run('unload_undo', { truckId: t.id }, false).view.counts.in, 40);
     ctx.run('unload_done', { truckId: t.id }, false);
     assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }, false), /Managers only/);
+    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet first/);   // the flagged stray blocks the receipt
+    ctx.run('pallet_reject', { truckId: t.id, palletId: stray[0].id, note: 'not ours' });
     const pv = ctx.run('receipt_preview', { truckId: t.id });
     assert.deepEqual(pv.perIf, [{ ifId: '9001', ifNum: 'IF9001', shipped: 504, received: 480, short: 24 }]);
     const ap = ctx.run('receipt_approve', { truckId: t.id });
@@ -565,6 +567,7 @@ test('unload_other and unload_damaged log scans; flagged, undo-skips-posted, dam
     ctx.run('unload_scan', { truckId: A.t.id, raw: stray[0].code }, false);
     assert.deepEqual(ctx.run('unload_get', { truckId: A.t.id }, false).view.flagged.map(p => p.id), [stray[0].id]);
     ctx.run('unload_scan', { truckId: A.t.id, raw: A.ps[1].code }, false);
+    ctx.run('pallet_reject', { truckId: A.t.id, palletId: stray[0].id, note: 'not ours' });   // a flagged pallet must be decided before the receipt
     ctx.run('receipt_approve', { truckId: A.t.id });
     assert.equal(ctx.run('unload_undo', { truckId: A.t.id }, false).view.counts.in, 2);   // posted pallets are not undone
     assert.throws(() => ctx.run('unload_damaged', { palletId: stray[0].id }, false), /Scan the pallet in first/);
@@ -1806,7 +1809,7 @@ test('approvals: top-level keys; trucks flag empty/gone IFs; fixes skip diffs th
     ctx.ns.plannedIfs = () => real().filter(f => f.ifId !== '9002');
     ctx.run('truck_verify', { truckId: t.id });
     const a = ctx.run('approvals');
-    assert.deepEqual(Object.keys(a).sort(), ['fixes', 'freeIfs', 'receipts', 'retries', 'shipPending', 'trucks', 'writeMode']);
+    assert.deepEqual(Object.keys(a).sort(), ['fixes', 'flagged', 'freeIfs', 'receipts', 'retries', 'shipPending', 'trucks', 'writeMode']);
     assert.deepEqual(a.trucks[0].ifs.map(f => [f.ifNum, f.gone, f.empty]), [['IF9001', false, false], ['IF9002', true, false]]);
     assert.deepEqual(a.fixes, []);
     ctx.ns.plannedIfs = real;
@@ -1952,4 +1955,112 @@ test('a stalled correction on a truck with no Correct card: truck_correct with n
     const r = ctx.run('truck_correct', { truckId: t.id });
     const x = ctx.data.getLoad(t.id);
     assert.deepEqual([x.data.claim, r.verify.match, x.status, x.data.ifs.map(f => f.ifId)], ['', true, 'ready', ['9001']]);
+});
+
+// ── 2026-10-06 pm: flagged pallets (spec D1–D3) ──
+function strayOn(ctx, t, lines) {                       // a labeled pallet scanned at Tippecanoe that was never loaded
+    const s = printLabels(ctx, 1, 'Jstray' + Math.random().toString(36).slice(2, 6), [lines || L975])[0];
+    const r = ctx.run('unload_scan', { truckId: t.id, raw: s.code }, false);
+    assert.equal(r.result, 'never_loaded');
+    return ctx.data.getPallet(s.id);
+}
+
+test('pallet_accept (qty mode, SKU on a truck IF): if_qty written, pallet received, alloc grown, receipt includes it', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t, ps } = departed(ctx, 42, '5260001');                        // IF9001 = 504 = 42 × 12
+    const stray = strayOn(ctx, t);
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }, false), /Managers only/);
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    assert.equal(r.outcome, 'accepted');
+    assert.equal(r.text, '✅ Accepted · IF9001 504 → 516');
+    const op = ctx.tx._t.ops.find(o => o.op === 'if_qty' && o.ifId === '9001');
+    assert.deepEqual([op.item, op.from, op.to], ['975', 504, 516]);
+    const p = ctx.data.getPallet(stray.id), x = ctx.data.getLoad(t.id);
+    assert.deepEqual([p.status, p.loadId, p.data.flag, p.data.decision.kind, p.data.decision.ifNum], ['received', t.id, '', 'accepted', 'IF9001']);
+    assert.equal(x.data.alloc[0].lines['975'], 516);
+    assert.deepEqual(x.data.flagged, []);
+    assert.equal(x.data.corrections.filter(k => k.kind === 'pallet_accept').length, 1);
+    assert.ok(x.data.correctionWrites['if_qty:9001:975|504>516']);
+    assert.deepEqual(x.data.lastStep.kind, 'pallet_accepted');
+    assert.deepEqual(ctx.run('receipt_preview', { truckId: t.id }).perIf, [{ ifId: '9001', ifNum: 'IF9001', shipped: 516, received: 516, short: 0 }]);
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /not flagged/);
+});
+
+test('pallet_accept in off mode is pending: receipt blocked until the IF reads as written, then settled by approvals', () => {
+    const ctx = setup();
+    const { t, ps } = departed(ctx, 42, '5260002');
+    const stray = strayOn(ctx, t);
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    assert.equal(r.outcome, 'pending');
+    assert.equal(r.text, '⏳ Accepted · office sets IF9001 YSN100 to 516 · receipt waits');
+    assert.equal(ctx.data.getPallet(stray.id).data.decision.kind, 'accepted_pending');
+    assert.equal(ctx.data.getPallet(stray.id).status, 'labeled');
+    ctx.run('unload_done', { truckId: t.id }, false);
+    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet/);
+    let ap = ctx.run('approvals');
+    assert.deepEqual([ap.flagged.length, ap.receipts[0].pending.length, ap.receipts[0].canApprove, ap.receipts[0].blockReason], [0, 1, false, 'Decide 1 flagged pallet first']);
+    const realInfo = ctx.ns.ifInfo;                                       // the office edits the IF in NetSuite
+    ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 516 }]; return o; };
+    ap = ctx.run('approvals');
+    assert.deepEqual([ap.receipts[0].pending.length, ap.receipts[0].canApprove, ap.receipts[0].decided.length], [0, true, 1]);
+    assert.equal(ctx.data.getPallet(stray.id).status, 'received');
+    assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
+    assert.equal(ctx.run('receipt_approve', { truckId: t.id }).perIf[0].received, 516);
+});
+
+test('pallet_reject: note required; pallet back to labeled; scanning it again flags it again', () => {
+    const ctx = setup();
+    const { t } = departed(ctx, 42, '5260003');
+    const stray = strayOn(ctx, t);
+    assert.throws(() => ctx.run('pallet_reject', { truckId: t.id, palletId: stray.id, note: '  ' }), /note/i);
+    const r = ctx.run('pallet_reject', { truckId: t.id, palletId: stray.id, note: 'belongs to Trailer 537224' });
+    assert.equal(r.text, '↩ Rejected · "belongs to Trailer 537224" · back to labeled');
+    const p = ctx.data.getPallet(stray.id);
+    assert.deepEqual([p.status, p.loadId, p.data.flag, p.data.decision.kind, p.data.decision.note], ['labeled', '', '', 'rejected', 'belongs to Trailer 537224']);
+    assert.deepEqual(ctx.data.getLoad(t.id).data.flagged, []);
+    assert.equal(ctx.run('unload_get', { truckId: t.id }, false).view.decided[0].text, '↩ Rejected · "belongs to Trailer 537224" · back to labeled');
+    assert.equal(ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false).result, 'never_loaded');
+    assert.deepEqual(ctx.data.getLoad(t.id).data.flagged, [String(p.id)]);
+});
+
+test('approvals.flagged lists undecided pallets across trucks; the receipt card repeats its own and blocks approval', () => {
+    const ctx = setup();
+    const a = departed(ctx, 42, '5260004'), b = departed(ctx, 42, '5260005', '9002');
+    const s1 = strayOn(ctx, a.t), s2 = strayOn(ctx, b.t);
+    a.ps.forEach(p => ctx.run('unload_scan', { truckId: a.t.id, raw: p.code }, false));
+    ctx.run('unload_done', { truckId: a.t.id }, false);
+    const ap = ctx.run('approvals');
+    assert.deepEqual(ap.flagged.map(f => [f.palletId, f.truckId, f.sku, f.pcs, f.by]), [[s1.id, a.t.id, 'YSN100', 12, 'Miguel'], [s2.id, b.t.id, 'YSN100', 12, 'Miguel']]);
+    const rec = ap.receipts.find(x => x.truck.id === a.t.id);
+    assert.deepEqual([rec.flagged.map(f => f.palletId), rec.canApprove, rec.blockReason], [[s1.id], false, 'Decide 1 flagged pallet first']);
+    assert.throws(() => ctx.run('receipt_approve', { truckId: a.t.id }), /Decide 1 flagged pallet first/);
+    assert.equal(ctx.run('approvals').receipts.some(x => x.truck.id === b.t.id), true, 'a truck with only a flagged pallet still gets a receipt card');
+});
+
+test('lastStep rides on the existing writes: start, scan, verify, mark, confirm, unload scan, done, approve', () => {
+    const ctx = setup();
+    const ps = printLabels(ctx, 42, 'Jls', [L975]);
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: 'LS1' }, false).view.truck;
+    const step = () => ctx.data.getLoad(t.id).data.lastStep;
+    assert.deepEqual([step().kind, step().by], ['started', 'Miguel']);
+    ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code }, false);
+    assert.equal(step().kind, 'scanned');
+    ctx.run('truck_scan', { truckId: t.id, raw: ps[0].code, mode: 'off' }, false);
+    assert.equal(step().kind, 'taken_off');
+    ps.forEach(p => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.equal(step().kind, 'verified');
+    ctx.run('ship_mark', { truckId: t.id, seal: '5260006' }, false);
+    assert.equal(step().kind, 'marked_shipped');
+    ctx.run('ship_confirm', { truckId: t.id });
+    assert.equal(step().kind, 'confirmed');
+    ctx.run('unload_scan', { truckId: t.id, raw: ps[0].code }, false);
+    assert.equal(step().kind, 'unload_scanned');
+    ctx.run('unload_done', { truckId: t.id }, false);
+    assert.equal(step().kind, 'unload_done');
+    ctx.run('receipt_approve', { truckId: t.id });
+    assert.equal(step().kind, 'receipt_approved');
 });

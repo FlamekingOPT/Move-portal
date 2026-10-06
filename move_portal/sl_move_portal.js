@@ -55,6 +55,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             printedAt: p.data.printedAt || '', receipt: p.receipt }, extra || {});
     }
 
+    // The truck's last user step, for the Dashboard's Active loads. Rides on writes that already happen: never its own write.
+    function stepOf(kind, c) { return { kind: kind, by: c.actor, at: c.now.stamp }; }
+
     function mustPallet(id) { const p = data.getPallet(id); if (!p) throw userErr('Label not found'); return p; }
     function stale(Ld) { return Date.now() - (Number(Ld.data.workingAt) || 0) > STALE_MS; }
 
@@ -200,8 +203,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (!patch.status && !Object.keys(patch.data).length) return;
         data.updateLoad(cur, patch);
     }
-    function pushStack(id, entry) {
-        touched(id, cur => ({ stack: (cur.data.stack || []).concat([entry]).slice(-STACK_MAX) }));
+    function pushStack(id, entry, c) {
+        touched(id, cur => ({ stack: (cur.data.stack || []).concat([entry]).slice(-STACK_MAX), lastStep: stepOf('scanned', c) }));
     }
     // Load scans: a pallet on another open truck (any open stage) can be moved here, so it reads as a loading truck.
     function scanTruckMap(list) {
@@ -294,7 +297,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         // Unchanged: keep at/by, so a re-pressed Verify never raises a second ready alert. A poll-driven change is the auto re-check's.
         const old = x.data.verify || {}, by = !changed && old.at ? old.by : opt.auto ? AUTO_BY : c.actor;
         data.updateLoad(cur, { status: status, data: Object.assign({ ifs: r.keep, verify: { at: !changed && old.at ? old.at : c.now.stamp, by: by, diffs: r.diffs } },
-            status === T.READY ? { correctError: '' } : {}, opt.note ? { shortNote: { text: opt.note, by: c.actor, at: c.now.stamp } } : {}) });      // a ready truck has nothing left to correct
+            status === T.READY ? { correctError: '' } : {}, opt.note ? { shortNote: { text: opt.note, by: c.actor, at: c.now.stamp } } : {},
+            changed ? { lastStep: stepOf(opt.stepKind || 'verified', c) } : {}) });      // a ready truck has nothing left to correct
         out.x = mustTruck(id);
         return out;
     }
@@ -632,7 +636,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             return f;
         });
         const id = data.createLoad({ number: ifs.map(f => f.ifNum).join('+').slice(0, 290), status: T.LOADING,
-            data: { v3: true, ifs: ifs, trailer: trailer, startedBy: c.actor, startedAt: c.now.stamp, stack: [] } });
+            data: { v3: true, ifs: ifs, trailer: trailer, startedBy: c.actor, startedAt: c.now.stamp, stack: [], lastStep: stepOf('started', c) } });
         return { view: truckView(mustTruck(id), c) };
     });
 
@@ -653,7 +657,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (p && p.status === VP.LOADED && String(p.loadId) === String(x.id)) {
             mustOpenTruck(x.id);
             data.updatePallet(p, { status: VP.LABELED, load: '', data: { takenOffAt: c.now.stamp, takenOffBy: c.actor, takenOffTruck: x.id } });
-            touched(x.id);
+            touched(x.id, { lastStep: stepOf('taken_off', c) });
             result = 'taken_off';
         }
         data.logScan({ pallet: p ? p.id : '', load: x.id, result: result, data: { raw: s.raw, mode: 'off', actor: c.actor, at: c.now.stamp } });
@@ -675,7 +679,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (r.set) {
             mustOpenTruck(x.id);
             data.updatePallet(p, { status: r.set.status, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
-            pushStack(x.id, String(p.id));
+            pushStack(x.id, String(p.id), c);
         }
         data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: 'load', actor: c.actor, at: c.now.stamp } });
         return Object.assign({}, r, { raw: s.raw, tone: verify.toneFor(r.result), pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: truckView(mustTruck(x.id), c) });
@@ -689,7 +693,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (r.result === 'no_to') throw userErr('No open transfer order for ' + r.sku + ' on this truck. Set it aside and call the office.');
         mustOpenTruck(x.id);
         data.updatePallet(p, { load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } });
-        pushStack(x.id, String(p.id));
+        pushStack(x.id, String(p.id), c);
         touched(from.id);                             // the truck it came from lost a pallet too
         return { view: truckView(mustTruck(x.id), c) };
     });
@@ -762,7 +766,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // Floor: only an IF the verify suggests. Manager: any Picked/Packed IF no truck has.
     act('truck_add_if', false, (a, c) => {
         const ifId = String(a.ifId || '');
-        const v = verifyTruck(a.truckId, c, { newIfs: (x, planned, trucks) => {
+        const v = verifyTruck(a.truckId, c, { stepKind: 'if_added', newIfs: (x, planned, trucks) => {
             const f = planned.find(y => String(y.ifId) === ifId);
             if ((x.data.ifs || []).some(y => String(y.ifId) === ifId)) throw userErr((f ? f.ifNum : 'IF ' + ifId) + ' is already on this truck');
             if (takenByOthers(trucks, x.id)[ifId]) throw userErr((f ? f.ifNum : 'IF ' + ifId) + ' is already on another truck');
@@ -780,7 +784,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     act('truck_drop_if', true, (a, c) => {
         const ifId = String(a.ifId || '');
-        const v = verifyTruck(a.truckId, c, { newIfs: x => {
+        const v = verifyTruck(a.truckId, c, { stepKind: 'if_dropped', newIfs: x => {
             const ifs = x.data.ifs || [], f = ifs.find(y => String(y.ifId) === ifId);
             if (!f) throw userErr('That IF is not on this truck');
             if (ifs.length === 1 && !f.gone) throw userErr('A truck needs at least one IF (only one no longer Packed can be dropped)');
@@ -888,7 +892,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             log.error({ title: 'move correct ' + id, details: (e && e.stack) || String(e) });
             err = e.message || String(e);
         }
-        release({ correctError: err || '' });
+        release({ correctError: err || '', lastStep: stepOf('corrected', c) });
         if (wrote && ns.resetCache) ns.resetCache();   // the re-verify must read the IFs as written, not this request's cached copy
         let vv = null;
         try { vv = verifyTruck(id, c); } catch (e) { if (!e.user || !err) throw e; }
@@ -906,7 +910,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function departData(d, inp, c) {
         return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
             approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '', otherItems: d.otherItems || [] }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
-            bol: d.plan.bol, ifs: d.ifs, departPallets: d.palletKey, writes: {} };
+            bol: d.plan.bol, ifs: d.ifs, departPallets: d.palletKey, writes: {}, lastStep: stepOf('confirmed', c) };
     }
     // Re-verify and plan from a truck copy; a mismatch is thrown, so a claim is never taken (or is released) on a load that no longer matches.
     function planOrMismatch(x, inp, c) {
@@ -935,7 +939,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         mustReady(cur);
         if (ifSig(cur.data.ifs) !== ifSig(v.x.data.ifs) || palletKey(data.palletsByLoad(x.id, [VP.LOADED])) !== d.palletKey) throw userErr('This truck changed while it was being checked. Verify again.');
         if (String(cur.data.trailer || '').trim() !== own) throw userErr('This truck changed while it was being checked. Verify again.');
-        data.updateLoad(cur, { status: T.SHIP_PENDING, data: Object.assign({ shipReq: Object.assign(inp, { by: c.actor, at: c.now.stamp }), sentBack: null }, own ? {} : { trailer: inp.trailer }) });
+        data.updateLoad(cur, { status: T.SHIP_PENDING, data: Object.assign({ shipReq: Object.assign(inp, { by: c.actor, at: c.now.stamp }), sentBack: null, lastStep: stepOf('marked_shipped', c) }, own ? {} : { trailer: inp.trailer }) });
         return { view: truckView(mustTruck(x.id), c) };
     });
 
@@ -978,7 +982,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (!note) throw userErr('Enter a note for the floor');
         const cur = mustTruck(a.truckId);            // fresh read, guarded, then the write
         mustPending(cur);
-        data.updateLoad(cur, { status: T.LOADING, data: { sentBack: { note: note, by: c.user, at: c.now.stamp }, shipReq: null } });
+        data.updateLoad(cur, { status: T.LOADING, data: { sentBack: { note: note, by: c.user, at: c.now.stamp }, shipReq: null, lastStep: stepOf('sent_back', c) } });
         return { view: truckView(mustTruck(cur.id), c) };
     });
 
@@ -1024,13 +1028,175 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const tick = x.data.otherItemsIn || {};
         return { otherItems: ((x.data.depart || {}).otherItems || []).map(o => Object.assign({}, o, { in: !!tick[o.id] })),
             truck: truckSummary(x, countsFromPallets(x.id, ps)), perIf: rp.perIf, expected: ps.filter(p => p.status !== VP.RECEIVED).map(p => pubPallet(p)),
-            recent: got.slice(-5).reverse().map(p => pubPallet(p)), counts: { in: got.length, of: ps.length }, flagged: flagged.map(p => pubPallet(p)) };
+            recent: got.slice(-5).reverse().map(p => pubPallet(p)), counts: { in: got.length, of: ps.length }, flagged: flagged.map(p => pubPallet(p)), decided: decidedRows(x) };
     }
     // Never-loaded pallets are listed on the truck that flagged them (data.flagged) and read back by id.
     function stillFlagged(ids) {
         const u = [...new Set((ids || []).map(String))];
         return u.length ? data.palletsByIds(u).filter(p => p.data.flag === 'never_loaded' && (p.status === VP.LABELED || p.status === VP.LOADED)) : [];
     }
+    // ── Flagged pallets: manager Accept / Reject (spec 2026-10-06 pm §2) ──
+    // Undecided never-loaded pallets on this truck, as rows for Approvals and the receipt card.
+    function flaggedRows(x, ps) {
+        const label = truckLabel(x);
+        return (ps || stillFlagged(x.data.flagged).filter(p => p.data.flaggedTruck === x.id && !(p.data.decision && p.data.decision.kind === 'accepted_pending')))
+            .map(p => ({ palletId: p.id, code: p.code, summary: p.summary, sku: [...new Set((p.lines || []).map(l => String(l.sku || l.item)))].join(' + '), item: String((p.lines[0] || {}).item || ''), pcs: p.pieces,
+                truckId: x.id, truckLabel: label, truckStatus: x.status, by: whoName(p.data.flaggedBy), at: p.data.flaggedAt || '' }));
+    }
+    // Accepted, but the IF op was plan-only (write mode) and the office has not done it yet in NetSuite.
+    function pendingAccepts(x) {
+        return stillFlagged(x.data.flagged).filter(p => p.data.flaggedTruck === x.id && p.data.decision && p.data.decision.kind === 'accepted_pending');
+    }
+    function pendingRows(x) {
+        return pendingAccepts(x).map(p => Object.assign(flaggedRows(x, [p])[0], { text: p.data.decision.text || '' }));
+    }
+    function decidedRows(x) {
+        return (x.data.corrections || []).filter(k => k.kind === 'pallet_accept' || k.kind === 'pallet_reject').map(k => ({ code: k.code, text: k.text || '', at: k.at, by: whoName(k.by) }));
+    }
+    function blockReasonOf(x) {
+        const n = flaggedRows(x).length + pendingAccepts(x).length;
+        return n ? 'Decide ' + n + ' flagged pallet' + (n === 1 ? '' : 's') + ' first' : '';
+    }
+    // A decision runs only on a truck at Tippecanoe that nobody is processing (an approve or another decision in flight holds the claim).
+    function inFlight(cur) { return !!(cur.data.claim && !stale(cur) && !cur.data.error); }
+    function decideGuard(cur) {
+        if (UNLOADABLE.indexOf(cur.status) === -1) throw userErr('This truck is ' + cur.status + ', its pallets cannot be decided yet');
+        if (inFlight(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+    }
+    function mustFlaggedOn(x, palletId) {
+        const p = data.getPallet(palletId);
+        if (!p || p.data.flag !== 'never_loaded' || String(p.data.flaggedTruck) !== String(x.id) || (x.data.flagged || []).indexOf(String(p.id)) === -1) throw userErr('That pallet is not flagged on this truck');
+        if (p.data.decision && p.data.decision.kind === 'accepted_pending') throw userErr('That pallet is already accepted: the office finishes it in NetSuite');
+        if (p.status !== VP.LABELED && p.status !== VP.LOADED) throw userErr('That pallet is ' + p.status + ', nothing to decide');
+        return p;
+    }
+    // The pallet physically arrived here, so it leaves the open truck it was scanned onto at Riverside (that truck's ready reverts).
+    function unloadFromOther(p, c) {
+        if (p.status !== VP.LOADED || !p.loadId) return;
+        const o = data.getLoad(p.loadId);
+        data.updatePallet(p, { status: VP.LABELED, load: '', data: { takenOffAt: c.now.stamp, takenOffBy: c.actor, takenOffTruck: p.loadId, takenOffWhy: 'arrived_tippecanoe' } });
+        if (o && isOpen(o)) touched(o.id, { lastStep: stepOf('taken_off', c) });
+    }
+    function corrEntry(kind, p, extra, c) {
+        return Object.assign({ kind: kind, palletId: String(p.id), code: p.code, pcs: p.pieces, by: c.user, at: c.now.stamp }, extra || {});
+    }
+    // The pallet joins the truck: received on it, its pieces in the truck's alloc for the IF, the flag closed.
+    function completeAccept(id, p, dec, c) {
+        const x = mustTruck(id), item = String(dec.item), pcs = Number(dec.pcs);
+        let alloc = (x.data.alloc || []).map(a => Object.assign({}, a, { lines: Object.assign({}, a.lines) }));
+        let a = alloc.find(y => String(y.ifId) === String(dec.ifId));
+        if (!a) { a = { ifId: String(dec.ifId), ifNum: dec.ifNum, toId: String(dec.toId), toNum: dec.toNum, lines: {}, addOn: true }; alloc.push(a); }
+        a.lines[item] = (Number(a.lines[item]) || 0) + pcs;
+        const ifs = (x.data.ifs || []).some(f => String(f.ifId) === String(dec.ifId)) ? x.data.ifs
+            : (x.data.ifs || []).concat([{ ifId: String(dec.ifId), ifNum: dec.ifNum, toId: String(dec.toId), toNum: dec.toNum, status: 'B', lines: [{ item: item, sku: dec.sku, qty: pcs }] }]);
+        data.updatePallet(p, { status: VP.RECEIVED, load: x.id, data: { flag: '', receivedAt: c.now.stamp, receivedBy: c.actor, decision: Object.assign({}, dec, { kind: 'accepted' }) } });
+        const cur = mustTruck(id), d = cur.data, text = dec.text;
+        const corr = (d.corrections || []).filter(k => !(k.kind === 'pallet_accept' && String(k.palletId) === String(p.id)));
+        const patch = { data: { alloc: alloc, ifs: ifs, flagged: (d.flagged || []).filter(k => String(k) !== String(p.id)), lastStep: stepOf('pallet_accepted', c),
+            unposted: (typeof d.unposted === 'number' ? d.unposted : unpostedOf(cur)) + 1,
+            corrections: corr.concat([corrEntry('pallet_accept', p, { ifNum: dec.ifNum, toNum: dec.toNum, text: text }, c)]) } };
+        if (cur.status === T.DEPARTED) patch.status = T.RECEIVING;
+        data.updateLoad(cur, patch);
+    }
+    // What a pending accept waits for: the IF line at the target qty (if_qty), or the add-on IF existing (if_create, Task 2).
+    function pendingDone(dec, info, planned, trucks) {
+        if (dec.op && dec.op.op === 'if_qty') {
+            const f = info[String(dec.op.ifId)];
+            return f && (f.lines || []).filter(l => String(l.item) === String(dec.op.item)).reduce((s, l) => s + Number(l.qty || 0), 0) === Number(dec.op.to) ? { ifId: String(dec.op.ifId), ifNum: dec.op.ifNum } : null;
+        }
+        return null;
+    }
+    // Settle pending accepts whose NetSuite side is done (the office acted). Called by approvals for every truck it lists.
+    function settlePending(x, c, shared) {
+        const pend = pendingAccepts(x);
+        if (!pend.length) return x;
+        const info = shared.info || (shared.info = ns.ifInfo()), planned = shared.planned || (shared.planned = ns.plannedIfs()), trucks = shared.trucks || (shared.trucks = allTrucks());
+        pend.forEach(p => {
+            const dec = p.data.decision, got = pendingDone(dec, info, planned, trucks);
+            if (!got) return;
+            const cur = mustTruck(x.id);
+            if (inFlight(cur)) return;
+            completeAccept(x.id, data.getPallet(p.id), Object.assign({}, dec, got, { text: acceptText(Object.assign({}, dec, got)) }), c);
+        });
+        return mustTruck(x.id);
+    }
+    function acceptText(dec) {
+        return dec.op && dec.op.op === 'if_qty' ? '✅ Accepted · ' + dec.ifNum + ' ' + verify._fmt(dec.op.from) + ' → ' + verify._fmt(dec.op.to) : '✅ Accepted · ' + dec.ifNum;
+    }
+    // The IF on this truck that carries the pallet's SKU (lowest IF number), read fresh from NetSuite for the from-qty.
+    function ifForItem(x, item, info) {
+        const cands = (x.data.alloc || []).filter(a => String(a.ifId).indexOf('new:') !== 0 && Number(a.lines[item]) > 0).sort((p, q) => Number(p.ifId) - Number(q.ifId));
+        for (let i = 0; i < cands.length; i++) {
+            const f = info[String(cands[i].ifId)];
+            if (f) return { ifId: String(cands[i].ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: cands[i].toNum, from: (f.lines || []).filter(l => String(l.item) === item).reduce((s, l) => s + Number(l.qty || 0), 0) };
+        }
+        return null;
+    }
+    // Task 2 replaces this: a pallet whose SKU is on none of the truck's IFs.
+    function acceptOffIf() { throw userErr('Accept for a SKU on no truck IF comes in Task 2'); }
+    act('pallet_accept', true, (a, c) => {
+        const x0 = mustTruck(a.truckId);
+        decideGuard(x0);
+        const p0 = mustFlaggedOn(x0, a.palletId), item = String((p0.lines[0] || {}).item || ''), pcs = Number(p0.pieces) || 0;
+        if (!item || !pcs || (p0.lines || []).length !== 1) throw userErr('Only a single-SKU pallet can be accepted here: reject it and call the office');
+        const info = ns.ifInfo(), sk = skuNames([item])[item] || item;
+        const target = ifForItem(x0, item, info);
+        let op, dec;
+        if (target) {
+            op = { op: 'if_qty', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, item: item, from: target.from, to: target.from + pcs };
+            dec = { kind: 'accepted_pending', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, toNum: target.toNum, item: item, sku: sk, pcs: pcs, op: op, by: c.user, at: c.now.stamp };
+        } else {
+            return acceptOffIf(x0, p0, item, sk, pcs, c);           // Task 2
+        }
+        const cl = claimLoad(x0, x0.status, 'accept', decideGuard, {});
+        const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
+        const release = patch => { assertClaim(id, claim, label, 'accept'); data.updateLoad(data.getLoad(id), { data: Object.assign({ claim: '', workingAt: 0, phase: '' }, patch) }); };
+        let res, err = null;
+        try {
+            res = verify.runOps([op], writeMode(c), o => { assertClaim(id, claim, label, 'accept'); return tx.apply(o); }, {}, (k, newId) => {
+                const cur = data.getLoad(id);
+                data.updateLoad(cur, { data: { correctionWrites: Object.assign({}, cur.data.correctionWrites, { [k + '|' + corrSig(op)]: { key: k, op: op.op, id: String(newId), sig: corrSig(op), at: c.now.stamp, by: c.user } }) } });
+            });
+        } catch (e) {
+            if (e.user) throw e;
+            log.error({ title: 'move pallet_accept ' + id, details: (e && e.stack) || String(e) });
+            err = e.message || String(e);
+        }
+        if (err) { release({}); throw userErr('Accept refused: ' + err + ' — fix it in NetSuite'); }
+        const p = data.getPallet(p0.id);
+        unloadFromOther(p, c);
+        if (res.planOnly.length) {                                  // plan-only: the office edits the IF; the receipt waits (settlePending finishes it)
+            dec.text = '⏳ Accepted · office sets ' + target.ifNum + ' ' + sk + ' to ' + verify._fmt(op.to) + ' · receipt waits';
+            data.updatePallet(data.getPallet(p.id), { data: { decision: dec } });
+            const cur = data.getLoad(id);
+            release({ lastStep: stepOf('pallet_accepted', c), corrections: (cur.data.corrections || []).concat([corrEntry('pallet_accept', p, { ifNum: target.ifNum, pending: true, text: dec.text }, c)]) });
+            if (ns.resetCache) ns.resetCache();
+            return { outcome: 'pending', text: dec.text, view: unloadView(mustTruck(id), c) };
+        }
+        dec.text = acceptText(dec);
+        completeAccept(id, data.getPallet(p.id), dec, c);
+        release({});
+        if (ns.resetCache) ns.resetCache();
+        return { outcome: 'accepted', text: dec.text, view: unloadView(mustTruck(id), c) };
+    });
+    act('pallet_reject', true, (a, c) => {
+        const note = String(a.note || '').trim().slice(0, 300);
+        if (!note) throw userErr('Enter a note: why is this pallet rejected?');
+        const x0 = mustTruck(a.truckId);
+        decideGuard(x0);
+        const p0 = mustFlaggedOn(x0, a.palletId);
+        const cl = claimLoad(x0, x0.status, 'reject', decideGuard, {});
+        const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
+        const p = data.getPallet(p0.id);
+        unloadFromOther(p, c);
+        const text = '↩ Rejected · "' + note + '" · back to labeled';
+        data.updatePallet(data.getPallet(p.id), { status: VP.LABELED, load: '', data: { flag: '', decision: { kind: 'rejected', note: note, by: c.user, at: c.now.stamp, text: text } } });
+        assertClaim(id, claim, label, 'reject');
+        const cur = data.getLoad(id);
+        data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', flagged: (cur.data.flagged || []).filter(k => String(k) !== String(p.id)), lastStep: stepOf('pallet_rejected', c),
+            corrections: (cur.data.corrections || []).concat([corrEntry('pallet_reject', p, { note: note, text: text }, c)]) } });
+        return { outcome: 'rejected', text: text, view: unloadView(mustTruck(id), c) };
+    });
     function mustUnloadable(id) {
         const x = mustTruck(id);
         if (UNLOADABLE.indexOf(x.status) === -1) throw userErr('This truck is ' + x.status + ', not ready to unload');
@@ -1047,7 +1213,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         data.updatePallet(p, { status: VP.RECEIVED, data: { receivedAt: c.now.stamp, receivedBy: c.actor } });
         const cur = mustTruck(x.id), d = cur.data;          // fresh read: stack and counters merge over the current copy
         const patch = { data: { rstack: (d.rstack || []).concat([{ id: String(p.id), prev: prev }]).slice(-STACK_MAX),
-            unposted: typeof d.unposted === 'number' ? d.unposted + 1 : unpostedOf(cur) } };
+            unposted: typeof d.unposted === 'number' ? d.unposted + 1 : unpostedOf(cur), lastStep: stepOf('unload_scanned', c) } };
         if (prev === VP.MISSING) patch.data.missing = Math.max(0, (Number(d.missing) || 0) - 1);
         if (cur.status === T.DEPARTED) patch.status = T.RECEIVING;
         data.updateLoad(cur, patch);
@@ -1122,7 +1288,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     act('unload_done', false, (a, c) => {
         const x = mustUnloadable(a.truckId);
-        data.updateLoad(x, { data: { recvRequested: { by: c.actor, at: c.now.stamp } } });
+        data.updateLoad(x, { data: { recvRequested: { by: c.actor, at: c.now.stamp }, lastStep: stepOf('unload_done', c) } });
         return { view: unloadView(mustTruck(x.id), c) };
     });
 
@@ -1140,9 +1306,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     act('receipt_approve', true, (a, c) => {
-        const canApprove = cur => UNLOADABLE.indexOf(cur.status) !== -1 || (cur.status === T.APPROVING && (cur.data.error || stale(cur)));
+        const canApprove = cur => (UNLOADABLE.indexOf(cur.status) !== -1 && !inFlight(cur)) || (cur.status === T.APPROVING && (cur.data.error || stale(cur)));
         const x0 = mustTruck(a.truckId);
         if (!canApprove(x0)) throw userErr(x0.status === T.APPROVING ? 'This truck is already being approved. Wait a few minutes, then try again.' : 'This truck is ' + x0.status + ', not ready to unload');
+        const block = blockReasonOf(x0);
+        if (block) throw userErr(block);
         if (!receiptPlan(x0).ops.length) throw userErr('Nothing new scanned in on this truck');
         const prevStatus = x0.status === T.APPROVING ? (x0.data.prevStatus || T.RECEIVING) : x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
         const cl = claimLoad(x0, T.APPROVING, 'receive', cur => {
@@ -1176,7 +1344,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         assertClaim(x.id, claim, label, 'receive');   // right before the final write: never overwrite another request's state
         const fin = data.getLoad(x.id);
         data.updateLoad(fin, { status: T.RECEIVED, data: { rplan: (fin.data.rplan || []).concat(rp.ops), prevStatus: '', received: rp.cumulative, recvSeq: seq, recvRequested: null,
-            unposted: unposted, missing: missing, error: '', writes: writes, workingAt: 0, claim: '', phase: '' } });
+            unposted: unposted, missing: missing, error: '', writes: writes, workingAt: 0, claim: '', phase: '', lastStep: stepOf('receipt_approved', c) } });
         return { perIf: rp.perIf, missing: rp.missing, written: res.written, view: unloadView(mustTruck(x.id), c) };
     });
 
@@ -1220,6 +1388,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                     otherDiffs: pub.filter(d => FIX_KINDS.indexOf(d.kind) === -1 && IF_PILL_KINDS.indexOf(d.kind) === -1).map(d => d.text) });   // why it waits when no Correct card or IF pill explains it
             });
         }
+        const shared = {};
+        const atTip = trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || x.status === T.APPROVING);
+        const settled = atTip.map(x => settlePending(x, c, shared));
+        const flagged = [].concat.apply([], settled.map(x => flaggedRows(x))).sort((p, q) => (Number(p.truckId) - Number(q.truckId)) || (Number(p.palletId) - Number(q.palletId)));   // oldest truck first
         const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
             const q = x.data.shipReq;
             return { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
@@ -1228,18 +1400,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         });
         return {
             shipPending: shipPending,
+            flagged: flagged,
             fixes: fixes,
             trucks: fixTrucks,
             freeIfs: freeIfs,
             writeMode: writeMode(c),
             retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { canRelease: !stampWritten(x) })),
-            receipts: trucks.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
+            receipts: settled.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;
                 try {
                     const unposted = unpostedOf(x, counts);
-                    if (!isStuck && (!unposted || (x.status !== T.RECEIVED && !x.data.recvRequested))) return null;
-                    const rp = receiptPlan(x);
-                    const o = { truck: sum(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED };
+                    const fl = flaggedRows(x), pend = pendingRows(x);
+                    if (!isStuck && !fl.length && !pend.length && (!unposted || (x.status !== T.RECEIVED && !x.data.recvRequested))) return null;
+                    const rp = receiptPlan(x), block = blockReasonOf(x);
+                    const o = { truck: sum(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED, flagged: fl, pending: pend, decided: decidedRows(x), canApprove: !block, blockReason: block };
                     if (isStuck) o.stuck = true;
                     return o;
                 } catch (e) {

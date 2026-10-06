@@ -462,7 +462,7 @@ define([], function () {
         return ops;
     }
 
-    return { TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
+    return { _fmt: fmt, TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
