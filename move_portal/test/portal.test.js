@@ -2208,6 +2208,14 @@ test('fix wave 2: NetSuite already above the target (the office pre-raised the I
     assert.equal(ctx.data.getLoad(t.id).data.alloc[0].lines['975'], 516);
 });
 
+function officeIf(id, status, lines) {                    // an IF the office created in NetSuite on TO700
+    return { ifId: id, ifNum: 'IF' + id, status: status, trandate: '2026-10-14', toId: '700', toNum: 'TO700', lines: lines || [{ item: '11', sku: 'YSN201', qty: 120 }] };
+}
+function officeIfs(ctx, list) {                           // makes them visible to plannedIfs (A/B only) and ifInfo (any status); calls stack
+    const rp = ctx.ns.plannedIfs, ri = ctx.ns.ifInfo;
+    ctx.ns.plannedIfs = () => rp().concat(list.filter(f => f.status === 'A' || f.status === 'B'));
+    ctx.ns.ifInfo = () => { const o = ri(); list.forEach(f => { o[f.ifId] = { ifNum: f.ifNum, status: f.status, toId: f.toId, lines: f.lines.map(l => Object.assign({}, l)) }; }); return o; };
+}
 // ── Task 2: accept a SKU on no truck IF (add-on IF), pending completion, loaded-elsewhere ──
 test('pallet_accept off-IF (on mode): add-on IF created on the covering TO, stamped, pallet received, alloc has the new IF', () => {
     const ctx = setup();
@@ -2235,11 +2243,10 @@ test('pallet_accept off-IF (qty mode): pending; approvals settles it once a Pack
     const stray = strayOn(ctx, t, LINE201);
     ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
-    assert.deepEqual([r.outcome, r.text], ['pending', '⏳ Accepted · office creates IF for 120 YSN201 on TO700 · receipt waits']);
+    assert.deepEqual([r.outcome, r.text], ['pending', '⏳ Accepted · office creates IF for 120 YSN201 on TO700 (memo ' + ctx.data.getPallet(stray.id).data.decision.op.token + ') · receipt waits']);
     ctx.run('unload_done', { truckId: t.id }, false);
     assert.equal(ctx.run('approvals').receipts[0].canApprove, false);
-    const real = ctx.ns.plannedIfs;                                       // the office creates the IF in NetSuite
-    ctx.ns.plannedIfs = () => real().concat([{ ifId: '9100', ifNum: 'IF9100', status: 'B', trandate: '2026-10-14', toId: '700', toNum: 'TO700', lines: [{ item: '11', sku: 'YSN201', qty: 120 }] }]);
+    officeIfs(ctx, [officeIf('9100', 'B')]);                              // the office creates the IF in NetSuite
     const ap = ctx.run('approvals');
     assert.equal(ap.receipts[0].canApprove, true);
     const x = ctx.data.getLoad(t.id);
@@ -2334,12 +2341,119 @@ test('Task 2: two pending add-ons with the same lines settle onto two different 
     const s1 = strayOn(ctx, t, LINE201), s2 = strayOn(ctx, t, LINE201);
     ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id });
     ctx.run('pallet_accept', { truckId: t.id, palletId: s2.id });
-    const real = ctx.ns.plannedIfs, mk = id => ({ ifId: id, ifNum: 'IF' + id, status: 'B', trandate: '2026-10-14', toId: '700', toNum: 'TO700', lines: [{ item: '11', sku: 'YSN201', qty: 120 }] });
-    ctx.ns.plannedIfs = () => real().concat([mk('9100')]);
+    officeIfs(ctx, [officeIf('9100', 'B')]);
     ctx.run('approvals');
     assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9100']);
     assert.equal(ctx.data.getPallet(s2.id).status, 'labeled');                  // still waiting for its own IF
-    ctx.ns.plannedIfs = () => real().concat([mk('9100'), mk('9101')]);
+    officeIfs(ctx, [officeIf('9101', 'B')]);
     ctx.run('approvals');
     assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9100', '9101']);
+});
+
+test('fix wave 1: two trucks with the same pending accept settle onto two different office IFs, never the same one in one approvals call', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const a = departed(ctx, 42, '5260030', '9001'), b = departed(ctx, 2, '5260031', '9002');
+    const sa = strayOn(ctx, a.t, LINE201), sb = strayOn(ctx, b.t, LINE201);
+    assert.equal(ctx.run('pallet_accept', { truckId: a.t.id, palletId: sa.id }).outcome, 'pending');
+    assert.equal(ctx.run('pallet_accept', { truckId: b.t.id, palletId: sb.id }).outcome, 'pending');
+    officeIfs(ctx, [officeIf('9100', 'B')]);
+    ctx.run('approvals');
+    const held = id => ctx.data.getLoad(id).data.alloc.filter(x => x.addOn).map(x => x.ifId);
+    assert.deepEqual(held(a.t.id).concat(held(b.t.id)), ['9100']);          // exactly one truck took it
+    assert.deepEqual([ctx.data.getPallet(sa.id).status, ctx.data.getPallet(sb.id).status].sort(), ['labeled', 'received']);
+    officeIfs(ctx, [officeIf('9101', 'B')]);
+    ctx.run('approvals');
+    assert.deepEqual([held(a.t.id), held(b.t.id)].map(l => l.length), [1, 1]);
+    assert.deepEqual(held(a.t.id).concat(held(b.t.id)).sort(), ['9100', '9101']);
+    assert.deepEqual([ctx.data.getPallet(sa.id).status, ctx.data.getPallet(sb.id).status], ['received', 'received']);
+});
+
+test('fix wave 1: a pending accept reserves its TO room, so a Riverside truck cannot take it', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260032', '9001');
+    const stray = strayOn(ctx, t, LINE201);                                  // pending: 120 of TO700's 1200
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');
+    const lt = truckWith(ctx, 2, '9002').t;                                  // a Riverside truck with no YSN201: it would need an add-on from TO700
+    const big = printLabels(ctx, 1, 'Jbig1', [{ item: '11', sku: 'YSN201', cfg: '', pcs: 1100 }])[0];
+    const r1 = ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false);
+    assert.equal(r1.result, 'no_to');                                        // 1,100 + the pending 120 is over TO700's 1,200
+    assert.equal(ctx.data.getPallet(big.id).status, 'labeled');
+    const ok = printLabels(ctx, 1, 'Jbig2', [{ item: '11', sku: 'YSN201', cfg: '', pcs: 1000 }])[0];
+    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: ok.code }, false).result, 'addon');
+});
+
+test('fix wave 1: a pending create reserves its room too (a second accept cannot take what the office needs)', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260033', '9001');
+    const s1 = strayOn(ctx, t, LINE201);
+    ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id });
+    const big = strayOn(ctx, t, { item: '11', sku: 'YSN201', cfg: '', pcs: 1100 });
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: big.id });
+    assert.equal(r.outcome, 'refused');
+});
+
+test('fix wave 1: the settle matcher sees an add-on IF the office already shipped, preferring shipped over Packed over Picked, then the lowest id', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260034', '9001');
+    const stray = strayOn(ctx, t, LINE201);
+    ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    officeIfs(ctx, [officeIf('9100', 'A'), officeIf('9101', 'B'), officeIf('9103', 'C'), officeIf('9102', 'C')]);
+    ctx.run('approvals');
+    assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9102']);
+    const t2 = departed(ctx, 2, '5260035', '9002'), s2 = strayOn(ctx, t2.t, LINE201);
+    ctx.run('pallet_accept', { truckId: t2.t.id, palletId: s2.id });
+    ctx.run('approvals');
+    assert.deepEqual(ctx.data.getLoad(t2.t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['9103']);
+});
+
+test('fix wave 1: a shipped IF with other lines, or on another TO, is not taken as the add-on', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260036', '9001');
+    const stray = strayOn(ctx, t, LINE201);
+    ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    officeIfs(ctx, [officeIf('9100', 'C', [{ item: '11', sku: 'YSN201', qty: 121 }]), Object.assign(officeIf('9101', 'C'), { toId: '800', toNum: 'TO800' }), officeIf('9102', 'D')]);
+    ctx.run('approvals');
+    assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).length, 0);
+});
+
+test('fix wave 1: a retry does not reuse an IF that another truck holds, it creates a new one', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const a = departed(ctx, 42, '5260037', '9001'), b = departed(ctx, 2, '5260038', '9002');
+    const stray = strayOn(ctx, a.t, LINE201);
+    const realUpdate = ctx.data.updatePallet;
+    ctx.data.updatePallet = (cur, patch) => {
+        if (patch.status === 'received') { ctx.data.updatePallet = realUpdate; throw new Error('boom: record write failed'); }
+        return realUpdate(cur, patch);
+    };
+    assert.throws(() => ctx.run('pallet_accept', { truckId: a.t.id, palletId: stray.id }), /boom/);
+    ctx.data.updatePallet = realUpdate;
+    const xb = ctx.data.getLoad(b.t.id);                                     // meanwhile a manager put IF 901 on the other truck
+    ctx.data.updateLoad(xb, { data: { ifs: (xb.data.ifs || []).concat([{ ifId: '901', ifNum: 'IF 901', toId: '700', toNum: 'TO700', lines: [{ item: '11', sku: 'YSN201', qty: 120 }] }]) } });
+    const r = ctx.run('pallet_accept', { truckId: a.t.id, palletId: stray.id });
+    assert.equal(r.outcome, 'accepted');
+    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_create').length, 2);
+    assert.deepEqual(ctx.data.getLoad(a.t.id).data.alloc.filter(x => x.addOn).map(x => x.ifId), ['902']);
+});
+
+test('fix wave 1: the stamp fails after the create landed; the retry stamps the recorded IF and never creates a second one', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t } = departed(ctx, 42, '5260039', '9001');
+    const stray = strayOn(ctx, t, LINE201);
+    ctx.tx._t.failOn = 'if_stamp:901';
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }), /Accept refused/);
+    const p1 = ctx.data.getPallet(stray.id), x1 = ctx.data.getLoad(t.id);
+    assert.deepEqual([p1.status, p1.data.flag, x1.data.claim, ctx.tx._t.ops.filter(o => o.op === 'if_create').length, ctx.tx._t.ops.filter(o => o.op === 'if_stamp' && o.ifId === '901').length], ['labeled', 'never_loaded', '', 1, 0]);
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    assert.equal(r.outcome, 'accepted');
+    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_create').length, 1);
+    assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_stamp' && o.ifId === '901').length, 1);
+    assert.equal(ctx.data.getPallet(stray.id).status, 'received');
+    assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['901']);
 });

@@ -213,9 +213,21 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         Object.keys(o).forEach(k => { if (OPEN.indexOf(o[k].status) !== -1) o[k].status = T.LOADING; });
         return o;
     }
-    // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons).
+    // The room accepted-but-pending pallets will need once the office acts. Their ops live on the pallets (decision.op), not on a truck plan,
+    // and every truck counts, the one being decided on included (its other pending accepts are still pending).
+    function pendingReservations(trucks) {
+        const res = {}, add = (toId, item, q) => { if (q > 0) { const k = String(toId) + '|' + String(item); res[k] = (res[k] || 0) + q; } };
+        (trucks || []).filter(x => UNLOADABLE.indexOf(x.status) !== -1 || x.status === T.APPROVING).forEach(x => pendingAccepts(x).forEach(p => {
+            const op = (p.data.decision || {}).op;
+            if (!op) return;
+            if (op.op === 'if_qty') add(op.toId, op.item, Number(op.to) - Number(op.from));
+            if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => add(op.toId, k, Number(op.lines[k]) || 0));
+        }));
+        return res;
+    }
+    // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons, pending accepts).
     function reservedToLines(exceptId, trucks, loadedAll, c, openTo) {
-        const byTruck = {}, toLines = openTo || ns.openToLines();
+        const byTruck = {}, toLines = verify.reserveToLines(openTo || ns.openToLines(), pendingReservations(trucks));
         (loadedAll || data.palletsByStatus([VP.LOADED])).forEach(p => { (byTruck[p.loadId] = byTruck[p.loadId] || []).push(p); });
         Object.keys(byTruck).forEach(k => { byTruck[k] = verify.sumLines(byTruck[k]); });
         return verify.reserveToLines(toLines, verify.reservationsFromTrucks({ trucks: trucks, loadedByTruck: byTruck, toLines: toLines, mode: writeMode(c), exceptId: exceptId }));
@@ -1107,15 +1119,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         data.updateLoad(cur, patch);
     }
     // What a pending accept waits for: the IF line at the target qty (if_qty), or the add-on IF existing (if_create).
-    function pendingDone(dec, info, planned, trucks) {
+    // taken: IF ids an earlier settle in the same pass already attached (the trucks list is read once, so it cannot know).
+    function pendingDone(dec, info, trucks, taken) {
         if (dec.op && dec.op.op === 'if_qty') {
             const f = info[String(dec.op.ifId)];
             return f && (f.lines || []).filter(l => String(l.item) === String(dec.op.item)).reduce((s, l) => s + Number(l.qty || 0), 0) >= Number(dec.op.to) ? { ifId: String(dec.op.ifId), ifNum: dec.op.ifNum } : null;
         }
         if (dec.op && dec.op.op === 'if_create') {
-            const own = {};                                          // an IF this truck already took for another pending accept is not taken twice
-            ((data.getLoad(dec.truckId) || { data: {} }).data.alloc || []).forEach(a => { own[String(a.ifId)] = true; });
-            const f = findAddOnIf(dec.op.toId, dec.op.lines, (planned || []).filter(q => !own[String(q.ifId)]), trucks, dec.truckId);
+            const skip = Object.assign({}, taken);                   // an IF this truck already took for another pending accept is not taken twice
+            ((data.getLoad(dec.truckId) || { data: {} }).data.alloc || []).forEach(a => { skip[String(a.ifId)] = true; });
+            const f = findAddOnIf(dec.op.toId, dec.op.lines, info, trucks, dec.truckId, skip);
             return f ? { ifId: String(f.ifId), ifNum: f.ifNum } : null;
         }
         return null;
@@ -1124,13 +1137,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function settlePending(x, c, shared) {
         const pend = pendingAccepts(x);
         if (!pend.length) return x;
-        const info = shared.info || (shared.info = ns.ifInfo()), planned = shared.planned || (shared.planned = ns.plannedIfs()), trucks = shared.trucks || (shared.trucks = allTrucks());
+        const info = shared.info || (shared.info = ns.ifInfo()), trucks = shared.trucks || (shared.trucks = allTrucks()), taken = shared.taken || (shared.taken = {});
         pend.forEach(p => {
-            const dec = p.data.decision, got = pendingDone(Object.assign({}, dec, { truckId: x.id }), info, planned, trucks);
+            const dec = p.data.decision, got = pendingDone(Object.assign({}, dec, { truckId: x.id }), info, trucks, taken);
             if (!got) return;
             const cur = mustTruck(x.id);
             if (inFlight(cur)) return;
             completeAccept(x.id, data.getPallet(p.id), Object.assign({}, dec, got, { text: acceptText(Object.assign({}, dec, got)) }), c);
+            taken[got.ifId] = true;                                  // the cached trucks list does not show this attach: the next truck must not take the same IF
         });
         return mustTruck(x.id);
     }
@@ -1147,12 +1161,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         }
         return null;
     }
-    // A Packed IF on this TO, on no truck, with exactly these lines: how a pending add-on is recognised once the office created it.
-    // (Stage 2: match by the memo token once move_ns exposes memos.)
+    // An IF on this TO (Picked, Packed or already Shipped), on no truck, with exactly these lines: how a pending add-on is recognised once the office created it.
+    // Shipped wins over Packed over Picked, then the lowest id. The office can tag the IF with the memo token shown on the pending line.
+    // (Stage 2: match by that token once move_ns exposes memos. An office-planned IF with identical lines can be taken over by mistake; accepted.)
     function linesSig(lines) { const m = {}; (lines || []).forEach(l => { const k = String(l.item); m[k] = (m[k] || 0) + (Number(l.qty) || 0); }); return JSON.stringify(Object.keys(m).sort().map(k => [k, m[k]])); }
-    function findAddOnIf(toId, lines, planned, trucks, exceptId) {
-        const want = JSON.stringify(Object.keys(lines).sort().map(k => [k, Number(lines[k])])), taken = takenByOthers(trucks, exceptId);
-        return (planned || []).filter(f => String(f.toId) === String(toId) && !taken[String(f.ifId)] && linesSig(f.lines) === want).sort((p, q) => Number(p.ifId) - Number(q.ifId))[0] || null;
+    const ADDON_RANK = { C: 0, B: 1, A: 2 };
+    function findAddOnIf(toId, lines, info, trucks, exceptId, taken) {
+        const want = JSON.stringify(Object.keys(lines).sort().map(k => [k, Number(lines[k])])), held = takenByOthers(trucks, exceptId);
+        return Object.keys(info || {}).map(id => Object.assign({ ifId: id }, info[id]))
+            .filter(f => String(f.toId) === String(toId) && ADDON_RANK[f.status] !== undefined && !held[f.ifId] && !(taken || {})[f.ifId] && linesSig(f.lines) === want)
+            .sort((p, q) => (ADDON_RANK[p.status] - ADDON_RANK[q.status]) || (Number(p.ifId) - Number(q.ifId)))[0] || null;
     }
     // The open TO line (oldest first) that has room for this pallet, after what the other trucks will need.
     function coveringTo(x, item, pcs, c) {
@@ -1177,11 +1195,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         create.token = createToken(id, create);
         const stamp = Object.assign({ op: 'if_stamp', ifId: 'new:' + String(to.toId), ifNum: '(new)', toId: String(to.toId) }, st, { lines: { [item]: pcs } });
         const dec = { kind: 'accepted_pending', toId: String(to.toId), toNum: to.toNum, item: item, sku: sk, pcs: pcs, op: create, by: c.user, at: c.now.stamp };
-        // A retry: an earlier attempt created the IF (and maybe stamped it) but died before the pallet was received. An IF already on the truck was completed, so it is never reused.
+        // A retry: an earlier attempt created the IF (and maybe stamped it) but died before the pallet was received. An IF already on this truck was completed,
+        // and one another truck holds is not ours any more, so neither is reused (a new IF is created).
         const cw = cl.Ld.data.correctionWrites || {}, onTruck = {}, writes = {}, done = {};
         (cl.Ld.data.alloc || []).forEach(a => { onTruck[String(a.ifId)] = true; });
-        const prior = cw[verify.opKey(create) + '|' + corrSig(create)];
-        if (prior && !onTruck[String(prior.id)]) {
+        const prior = cw[verify.opKey(create) + '|' + corrSig(create)], heldElsewhere = takenByOthers(allTrucks(), id);
+        if (prior && !onTruck[String(prior.id)] && !heldElsewhere[String(prior.id)]) {
             writes[verify.opKey(create)] = done[verify.opKey(create)] = String(prior.id);
             if (cw['if_stamp:' + prior.id + '|' + corrSig(stamp)]) done[verify.opKey(stamp)] = String(prior.id);
         }
@@ -1209,7 +1228,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             unloadFromOther(p, c);
             const newId = writes[verify.opKey(create)];
             if (res.planOnly.length || !newId) {                  // plan-only: the office creates the IF; settlePending attaches it when it appears
-                dec.text = '⏳ Accepted · office creates IF for ' + verify._fmt(pcs) + ' ' + sk + ' on ' + to.toNum + ' · receipt waits';
+                dec.text = '⏳ Accepted · office creates IF for ' + verify._fmt(pcs) + ' ' + sk + ' on ' + to.toNum + ' (memo ' + create.token + ') · receipt waits';
                 data.updatePallet(data.getPallet(p.id), { data: { decision: dec } });
                 const cur = data.getLoad(id);
                 release({ lastStep: stepOf('pallet_accepted', c), corrections: (cur.data.corrections || []).concat([corrEntry('pallet_accept', p, { toNum: to.toNum, pending: true, text: dec.text }, c)]) });
