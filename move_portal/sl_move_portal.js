@@ -608,12 +608,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // A trailer is on one truck at a time until it leaves.
     const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.DEPARTING];
     const normTrailer = t => String(t || '').trim().toUpperCase();
-    act('truck_start', false, (a, c) => {
-        const ids = (a.ifIds || []).map(String), trailer = String(a.trailer || '').trim();
+    // A trailer # entered on the floor: trimmed, 1-20 chars, not on another open truck (exceptId = the truck it goes on).
+    function checkTrailer(raw, exceptId) {
+        const trailer = String(raw || '').trim();
         if (!trailer) throw userErr('Enter the trailer #');
         if (trailer.length > 20) throw userErr('The trailer # is too long (20 characters max)');
+        if (data.loadsByStatus(TRAILER_BUSY).some(x => x.data && x.data.v3 && String(x.id) !== String(exceptId) && normTrailer(x.data.trailer) === normTrailer(trailer)))
+            throw userErr('Trailer ' + trailer + ' is already on an open truck');
+        return trailer;
+    }
+    act('truck_start', false, (a, c) => {
+        const ids = (a.ifIds || []).map(String);
+        if (!String(a.trailer || '').trim()) throw userErr('Enter the trailer #');
         if (!ids.length) throw userErr('Pick at least one IF');
-        if (data.loadsByStatus(TRAILER_BUSY).some(x => x.data && x.data.v3 && normTrailer(x.data.trailer) === normTrailer(trailer))) throw userErr('Trailer ' + trailer + ' is already on an open truck');
+        const trailer = checkTrailer(a.trailer, null);
         const planned = ns.plannedIfs(), taken = {};
         allTrucks().forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
         const ifs = ids.map(id => {
@@ -625,6 +633,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const id = data.createLoad({ number: ifs.map(f => f.ifNum).join('+').slice(0, 290), status: T.LOADING,
             data: { v3: true, ifs: ifs, trailer: trailer, startedBy: c.actor, startedAt: c.now.stamp, stack: [] } });
         return { view: truckView(mustTruck(id), c) };
+    });
+
+    // Fix the trailer # on an open truck. Not a load change, so the status stays (a ready truck stays ready).
+    act('truck_set_trailer', false, (a, c) => {
+        const x = mustOpenTruck(a.truckId);
+        const trailer = checkTrailer(a.trailer, x.id);
+        const cur = mustOpenTruck(x.id);              // fresh read right before the write
+        if (cur.data.trailer !== trailer) data.updateLoad(cur, { data: { trailer: trailer, trailerBy: c.actor, trailerAt: c.now.stamp } });
+        return { view: truckView(mustTruck(x.id), c) };
     });
 
     act('truck_get', false, (a, c) => ({ view: truckView(mustTruck(a.truckId), c) }));
@@ -902,8 +919,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('ship_mark', false, (a, c) => {
         const x = mustTruck(a.truckId);
         mustReady(x);
-        const inp = { trailer: String(x.data.trailer || '').trim(), seal: String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
-        if (!inp.trailer) throw userErr('Enter the trailer # (start the truck again with its trailer)');
+        const own = String(x.data.trailer || '').trim();
+        // A truck with no trailer (started before the rework) takes the one entered at the mark.
+        const inp = { trailer: own || checkTrailer(a.trailer, x.id), seal: String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
         if (!inp.seal) throw userErr('Enter the seal #');
         sealTaken(inp.seal, x.id);
         const v = verifyTruck(x.id, c, { truck: x, poll: true });    // an unchanged load keeps verify at/by
@@ -913,7 +931,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const cur = data.getLoad(x.id);               // right before the write: never merge over a stale copy
         mustReady(cur);
         if (ifSig(cur.data.ifs) !== ifSig(v.x.data.ifs) || palletKey(data.palletsByLoad(x.id, [VP.LOADED])) !== d.palletKey) throw userErr('This truck changed while it was being checked. Verify again.');
-        data.updateLoad(cur, { status: T.SHIP_PENDING, data: { shipReq: Object.assign(inp, { by: c.actor, at: c.now.stamp }), sentBack: null } });
+        if (String(cur.data.trailer || '').trim() !== own) throw userErr('This truck changed while it was being checked. Verify again.');
+        data.updateLoad(cur, { status: T.SHIP_PENDING, data: Object.assign({ shipReq: Object.assign(inp, { by: c.actor, at: c.now.stamp }), sentBack: null }, own ? {} : { trailer: inp.trailer }) });
         return { view: truckView(mustTruck(x.id), c) };
     });
 

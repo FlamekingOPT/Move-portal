@@ -53,7 +53,7 @@ test('departing state, confirm prompts, null-screen guards', () => {
     assert.ok(src.indexOf('Departing… a NetSuite write is pending') !== -1);
     ['apretry', 'aprecv', 'dmark'].forEach(n => {
         const i = src.indexOf('ACT.' + n + ' =');
-        assert.ok(i !== -1 && src.slice(i, i + 400).indexOf('confirm(') !== -1, 'no confirm in ' + n);
+        assert.ok(i !== -1 && src.slice(i, i + 700).indexOf('confirm(') !== -1, 'no confirm in ' + n);
     });
     assert.ok(src.indexOf("if (!$('scanres')) return;") !== -1);
 });
@@ -183,4 +183,9 @@ test('manager rework: default Approvals, late badge, otherDiffs, Drop calls drop
     const page = ui.buildPage({ url: '/x?a=1', mode: 'manager', me: 'X', roster: [], fromName: 'R', toName: 'T', maxPrint: 1 });
     assert.match(page, /\.btn-correct\{[^}]*font-size:19px/);
     assert.match(page, /\.dbtn\.btn-addif\{background:#fff;border:1px solid/);
+});
+
+test('final fixes: trailer edit on the truck header; ship_mark sends a trailer when the truck has none', () => {
+    const src = ui._clientMain.toString();
+    ['data-act="ttrailer"', '✎ trailer', "api('truck_set_trailer'", 's_tr_', 'trl ? { trailer: tv } : {}'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
 });

@@ -612,7 +612,7 @@ h3{font-size:15px;margin:16px 0 8px}
         function paintTruck(v, first) {
             S.tv = v;
             const t = v.truck, open = ['loading', 'needs_fix', 'ready'].indexOf(t.status) !== -1;
-            $('thead').innerHTML = esc(t.label) + ' ' + statusPill(t.status);
+            $('thead').innerHTML = esc(t.label) + ' ' + statusPill(t.status) + (open ? ' <button class="dbtn gh sm" data-act="ttrailer" aria-label="Edit trailer">✎ trailer</button>' : '');
             $('tsub').textContent = t.depart ? [t.depart.carrier, 'Trailer ' + t.depart.trailer, 'Seal ' + t.depart.seal].join(' · ') : v.totals.pallets + ' pallets · ' + num(v.totals.pieces) + ' pcs';
             const sb = t.sentBack;
             $('tsent').innerHTML = sb && open ? '<div class="card amberc"><h4>↩ Sent back by ' + esc(whoName(sb.by)) + ': ' + esc(sb.note) + '</h4><div class="muted">' + esc(sb.at) +
@@ -632,6 +632,15 @@ h3{font-size:15px;margin:16px 0 8px}
             if ($('o_desc') && keep.d != null) { $('o_desc').value = keep.d; $('o_qty').value = keep.q; }
             $('tfoot').innerHTML = stageHtml(v);
         }
+        // Fix the trailer # on an open truck (a typo, or a truck started before trailers were asked).
+        ACT.ttrailer = async () => {
+            if (needWho() || !S.tv) return;
+            const val = window.prompt('Trailer #', S.tv.trailer || '');
+            if (val == null) return;
+            const r = await api('truck_set_trailer', { truckId: S.truckId, trailer: val.trim() });
+            if (!$('scanres')) return;
+            if (r.ok) { paintTruck(r.view, false); $('scanres').innerHTML = flash('green', '✅ Trailer ' + esc(r.view.trailer)); } else $('scanres').innerHTML = errBox(r.error);
+        };
         ACT.otheropen = () => { S.otherOpen = true; paintTruck(S.tv, false); const d = $('o_desc'); if (d) d.focus(); };
         ACT.otherclose = () => { S.otherOpen = false; paintTruck(S.tv, false); };
         ACT.otheradd = async el => {
@@ -774,6 +783,7 @@ h3{font-size:15px;margin:16px 0 8px}
             return '<div class="card greenc"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4>' +
                 '<div class="muted">' + esc('Trailer ' + (v.trailer || '')) + ' · IFs ' + esc(ifs.join(', ')) + '</div>' +
                 '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
+                (v.trailer ? '' : '<label class="f" for="s_tr_' + id + '">Trailer #</label><input class="inp" id="s_tr_' + id + '" data-keep="1" maxlength="20" placeholder="Trailer #" autocomplete="off">') +
                 '<label class="f" for="s_seal_' + id + '">Seal #</label><input class="inp" id="s_seal_' + id + '" data-keep="1" placeholder="Seal (tag) #" autocomplete="off">' +
                 '<label class="f" for="s_car_' + id + '">Carrier</label><input class="inp" id="s_car_' + id + '" data-keep="1" value="' + esc(v.carrier || carrier) + '">' +
                 '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">🚚 Mark shipped</button></div>';
@@ -798,12 +808,13 @@ h3{font-size:15px;margin:16px 0 8px}
             shipList(errBox(r.error) + (moved ? flash('amber', 'The truck changed on another device: verify again') : ''));
         }
         ACT.dmark = async el => {
-            const id = el.dataset.id, seal = $('s_seal_' + id), car = $('s_car_' + id), sv = seal ? seal.value.trim() : '';
+            const id = el.dataset.id, seal = $('s_seal_' + id), car = $('s_car_' + id), sv = seal ? seal.value.trim() : '', trl = $('s_tr_' + id), tv = trl ? trl.value.trim() : '';
             if (needWho() || !seal) return;
+            if (trl && !tv) { tone('bad'); $('s_msg_' + id).innerHTML = errBox('Enter the trailer #'); trl.focus(); return; }
             if (!sv) { tone('bad'); $('s_msg_' + id).innerHTML = errBox('Enter the seal #'); seal.focus(); return; }
             if (!confirm('Mark this truck shipped? A manager confirms it in Approvals.')) return;
             busy(el, true);
-            const r = await api('ship_mark', { truckId: id, seal: sv, carrier: car.value });
+            const r = await api('ship_mark', Object.assign({ truckId: id, seal: sv, carrier: car.value }, trl ? { trailer: tv } : {}));
             busy(el, false);
             if (S.tab !== 'ship' || !$('shipbox')) return;
             if (!r.ok) { await departRefused(r, id); return; }

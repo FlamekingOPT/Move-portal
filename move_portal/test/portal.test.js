@@ -1867,3 +1867,39 @@ test('approvals: a needs_fix truck with no correctable diff still says why (othe
     assert.deepEqual(a.trucks[0].otherDiffs, v.diffs.map(d => d.text));
     assert.ok(a.trucks[0].otherDiffs[0].length > 0);
 });
+
+// ── final-review fixes ──
+test('truck_set_trailer: floor edits the trailer on an open truck; trimmed, 1-20 chars, unique; status kept', () => {
+    const ctx = setup();
+    const { t } = readyTruck(ctx, 42);
+    const b = ctx.run('truck_start', { ifIds: ['9002'], trailer: 'BUSY1' }, false).view.truck;
+    assert.throws(() => ctx.run('truck_set_trailer', { truckId: t.id, trailer: '  ' }, false), /Enter the trailer/);
+    assert.throws(() => ctx.run('truck_set_trailer', { truckId: t.id, trailer: '1'.repeat(21) }, false), /20 characters/);
+    assert.throws(() => ctx.run('truck_set_trailer', { truckId: t.id, trailer: ' busy1 ' }, false), /already on an open truck/);
+    const v = ctx.run('truck_set_trailer', { truckId: t.id, trailer: ' 543804 ' }, false).view;
+    assert.deepEqual([v.trailer, v.truck.status, v.truck.label], ['543804', 'ready', 'Trailer 543804']);
+    assert.equal(ctx.run('truck_set_trailer', { truckId: t.id, trailer: '543804' }, false).view.trailer, '543804');   // its own trailer is fine
+    ctx.run('ship_mark', { truckId: t.id, seal: 'STT1' }, false);
+    assert.throws(() => ctx.run('truck_set_trailer', { truckId: t.id, trailer: 'X9' }, false), /waiting for a manager|closed/);
+    assert.equal(ctx.data.getLoad(b.id).data.trailer, 'BUSY1');
+});
+
+test('ship_mark: a truck with no trailer takes one from the mark (validated, unique)', () => {
+    const ctx = setup();
+    const { t } = readyTruck(ctx, 42);
+    noTrailer(ctx, t.id);
+    ctx.run('truck_start', { ifIds: ['9002'], trailer: 'TK1' }, false);
+    assert.throws(() => ctx.run('ship_mark', { truckId: t.id, seal: 'SM1' }, false), /Enter the trailer/);
+    assert.throws(() => ctx.run('ship_mark', { truckId: t.id, seal: 'SM1', trailer: 'x'.repeat(21) }, false), /20 characters/);
+    assert.throws(() => ctx.run('ship_mark', { truckId: t.id, seal: 'SM1', trailer: 'tk1' }, false), /already on an open truck/);
+    const v = ctx.run('ship_mark', { truckId: t.id, seal: 'SM1', trailer: ' 487491 ' }, false).view;
+    assert.deepEqual([v.truck.status, v.truck.shipReq.trailer, ctx.data.getLoad(t.id).data.trailer], ['ship_pending', '487491', '487491']);
+});
+
+test('ship_mark: the truck trailer wins over a passed one', () => {
+    const ctx = setup();
+    const { t } = readyTruck(ctx, 42);
+    const own = ctx.data.getLoad(t.id).data.trailer;
+    const v = ctx.run('ship_mark', { truckId: t.id, seal: 'SM2', trailer: 'OTHER' }, false).view;
+    assert.equal(v.truck.shipReq.trailer, own);
+});
