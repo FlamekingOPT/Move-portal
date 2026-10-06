@@ -845,9 +845,13 @@ test('fix6: on the floor deployment an administrator is a floor user', () => {
     ctx.sl.onRequest({ request: { parameters: { action: 'approvals' }, body: '{}' }, response: { setHeader() {}, write: x => { out.body = x; } } });
     assert.deepEqual(JSON.parse(out.body), { ok: false, error: 'Managers only' });
     const seen = {};
-    const pg = setup({ deploymentId: FLOOR, ui: { buildPage: o => { seen.page = o; return 'html'; } }, url: { resolveScript: o => { seen.url = o; return 'https://ext/x'; } } });
+    const pg = setup({ deploymentId: FLOOR, userId: -4, ui: { buildPage: o => { seen.page = o; return 'html'; } }, url: { resolveScript: o => { seen.url = o; return 'https://ext/x'; } } });
     pg.sl.onRequest({ request: { parameters: {} }, response: { write() {} } });
     assert.deepEqual([seen.page.mode, seen.page.url, seen.url.returnExternalUrl, seen.url.deploymentId], ['floor', 'https://ext/x', true, FLOOR]);
+    // A logged-in user on the floor deployment (the login-required sandbox test) keeps the internal URL.
+    const li = setup({ deploymentId: FLOOR, ui: { buildPage: o => { seen.page = o; return 'html'; } }, url: { resolveScript: o => { seen.url = o; return '/int'; } } });
+    li.sl.onRequest({ request: { parameters: {} }, response: { write() {} } });
+    assert.deepEqual([seen.page.mode, seen.page.url, !!seen.url.returnExternalUrl], ['floor', '/int', false]);
     const mg = setup({ ui: { buildPage: o => { seen.page = o; return 'html'; } }, url: { resolveScript: o => { seen.url = o; return '/int'; } } });
     mg.sl.onRequest({ request: { parameters: {} }, response: { write() {} } });
     assert.deepEqual([seen.page.mode, !!seen.url.returnExternalUrl], ['manager', false]);

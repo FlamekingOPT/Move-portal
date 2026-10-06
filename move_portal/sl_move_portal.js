@@ -1763,7 +1763,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     function page(ctx) {
         const S = data.getSettings();
-        const script = runtime.getCurrentScript(), floor = onFloorDeploy(), external = script.deploymentId === FLOOR_DEPLOY_ID;
+        const script = runtime.getCurrentScript(), floor = onFloorDeploy();
+        // The external (no-login) URL only when the request itself is anonymous (user id -4): a logged-in user on the floor deployment stays on the internal URL.
+        const external = script.deploymentId === FLOOR_DEPLOY_ID && !(Number(runtime.getCurrentUser().id) > 0);
         ctx.response.write(ui.buildPage({   // the no-login floor deployment: API calls go to its external URL
             url: url.resolveScript(Object.assign({ scriptId: script.id, deploymentId: script.deploymentId }, external ? { returnExternalUrl: true } : {})),
             mode: !floor && isManager() ? 'manager' : 'floor', me: runtime.getCurrentUser().name, roster: S.roster || [],
