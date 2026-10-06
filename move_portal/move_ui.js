@@ -1324,8 +1324,8 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = S.report;
             if (!r || !$('hist')) return;
             const rows = sortRows(filterRows(r.history || [], S.histSt), S.histSt);
-            $('hist').innerHTML = tableTools('hs', S.histSt, rows.length, (r.history || []).length, SORTS) + histTable(rows);
-            wireTools('hs', S.histSt, paintHist);
+            $('hist').innerHTML = histTable(rows);
+            setCount('hsn', rows.length, (r.history || []).length);
         }
         SCREENS.report = async () => {
             main('<div class="muted">Loading…</div>');
@@ -1339,7 +1339,9 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="card"><div style="overflow-x:auto"><table class="tbl"><tr><th></th><th>Truck</th><th>IF</th><th>Check</th><th>Portal</th><th>NetSuite</th></tr>' +
                 r.rows.map(x => '<tr class="' + (x.ok === false ? 'warnrow' : '') + '"><td>' + mark(x.ok) + '</td><td>' + esc(x.truck) + '</td><td>' + esc(x.ifNum) + '</td><td>' + esc(x.check) +
                     '</td><td>' + esc(x.portal) + '</td><td>' + esc(x.netsuite) + '</td></tr>').join('') + '</table></div></div>' +
-                '<div class="card"><h4>Truck history</h4><div id="hist"></div></div>');
+                '<div class="card"><h4>Truck history</h4><div id="histtools"></div><div id="hist"></div></div>');
+            $('histtools').innerHTML = tableTools('hs', S.histSt, HISTSORTS, 'hsn');
+            wireTools('hs', S.histSt, paintHist);
             paintHist();
         };
 
@@ -1363,15 +1365,17 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         // ── Dashboard (spec 2026-10-06 pm §3) ───────────────────────────
         const STAGES = ['Receipt pending', 'Waiting for manager', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
+        const HISTSORTS = [['stage', 'Sort: furthest along'], ['newest', 'Sort: newest step'], ['if', 'Sort: IF'], ['trailer', 'Sort: trailer']];
         const SORTS = [['stage', 'Sort: furthest along'], ['newest', 'Sort: newest step'], ['oldest', 'Sort: oldest step (stuck first)'], ['if', 'Sort: IF'], ['trailer', 'Sort: trailer']];
         const COLS = [['ifNum', 'Fulfillment'], ['toNum', 'TO'], ['truck', 'Truck'], ['', 'SKUs on truck'], ['pcs', 'Pallets · pcs'], ['', 'Received'], ['stage', 'Status'], ['newest', 'Last step']];
         // Search box · status select · sort select · "n of m": shared by Active loads and the Report's truck history. Client-side only.
-        function tableTools(prefix, st, n, m, sorts) {
+        function tableTools(prefix, st, sorts, counterId) {
             return '<div class="tools"><input class="inp" id="' + prefix + 'q" value="' + esc(st.q) + '" placeholder="Search IF, TO, trailer, seal, Truck # or SKU…">' +
                 '<select class="inp" id="' + prefix + 'st"><option value="">All statuses</option>' + STAGES.map(s => '<option' + (st.st === s ? ' selected' : '') + '>' + s + '</option>').join('') + '</select>' +
                 '<select class="inp" id="' + prefix + 'sort">' + sorts.map(s => '<option value="' + s[0] + '"' + (st.sort === s[0] ? ' selected' : '') + '>' + esc(s[1]) + '</option>').join('') + '</select>' +
-                '<span class="muted">' + n + ' of ' + m + '</span></div>';
+                '<span class="muted" id="' + counterId + '"></span></div>';
         }
+        function setCount(id, n, m) { const c = $(id); if (c) c.textContent = n + ' of ' + m; }
         function wireTools(prefix, st, repaint) {
             const q = $(prefix + 'q'), s = $(prefix + 'st'), o = $(prefix + 'sort');
             if (q) q.oninput = () => { st.q = q.value; repaint(); };
@@ -1383,9 +1387,11 @@ h3{font-size:15px;margin:16px 0 8px}
             const q = (st.q || '').trim().toLowerCase();
             return rows.filter(x => (!st.st || x.stage === st.st) && (!q || rowText(x).indexOf(q) !== -1));
         }
+        function stamp(v) { const t = Date.parse(v || ''); return isNaN(t) ? null : t; }
         function sortRows(rows, st) {
             const dir = st.dir || 1, k = st.sort || 'stage';
-            const key = x => k === 'stage' ? STAGES.indexOf(x.stage) : k === 'newest' ? -(Date.parse(x.lastAt || x.confirmedAt || x.startedAt || 0) || 0) : k === 'oldest' ? (Date.parse(x.lastAt || 0) || 0)
+            const key = x => k === 'stage' ? STAGES.indexOf(x.stage) : k === 'newest' ? (stamp(x.lastAt || x.receivedAt || x.confirmedAt || x.markedAt || x.startedAt) === null ? Number.MAX_SAFE_INTEGER : -stamp(x.lastAt || x.receivedAt || x.confirmedAt || x.markedAt || x.startedAt))
+                : k === 'oldest' ? (stamp(x.lastAt) === null ? Number.MAX_SAFE_INTEGER : stamp(x.lastAt))
                 : k === 'if' || k === 'ifNum' ? Number(String(x.ifNum || (x.ifs || [])[0] || '').replace(/\D/g, '')) : k === 'trailer' ? String(x.trailer || '') : k === 'pcs' ? -Number(x.pcs || 0) : String(x[k] || '');
             return rows.slice().sort((p, q) => { const a = key(p), b = key(q); return (a < b ? -1 : a > b ? 1 : 0) * dir || Number(q.truckId) - Number(p.truckId); });
         }
@@ -1405,11 +1411,11 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = S.dash;
             if (!r || !$('dashloads')) return;
             const rows = sortRows(filterRows(r.rows, S.dashSt), S.dashSt);
-            $('dashloads').innerHTML = tableTools('dl', S.dashSt, rows.length, r.rows.length, SORTS) + loadsTable(rows) +
+            $('dashloads').innerHTML = loadsTable(rows) +
                 '<div class="muted">Default sort is furthest along first; click a column header or use the Sort menu. Received trucks drop off at the end of their day; the Report keeps the full history.</div>';
-            wireTools('dl', S.dashSt, paintLoads);
+            setCount('dln', rows.length, r.rows.length);
         }
-        ACT.dashsort = el => { const k = el.dataset.k; if (S.dashSt.sort === k) S.dashSt.dir = -S.dashSt.dir; else { S.dashSt.sort = k; S.dashSt.dir = 1; } paintLoads(); };
+        ACT.dashsort = el => { const k = el.dataset.k; if (S.dashSt.sort === k) S.dashSt.dir = -S.dashSt.dir; else { S.dashSt.sort = k; S.dashSt.dir = 1; } const so = $('dlsort'); if (so) so.value = S.dashSt.sort; paintLoads(); };
         ACT.dashrow = el => ACT.opentruck(el);
         SCREENS.dash = async () => {
             main('<div class="muted">Loading…</div>');
@@ -1432,10 +1438,12 @@ h3{font-size:15px;margin:16px 0 8px}
                 k('Trucks shipped · total', num(t.total), num(t.received) + ' received at ' + esc(B.toName)) +
                 k('In transit', num(t.inTransitTrucks) + ' truck' + (t.inTransitTrucks === 1 ? '' : 's'), num(t.inTransitPallets) + ' pallets · ' + t.missing + ' missing') +
                 k('Finish date', '<span class="muted" style="font-size:14px">see Move Tracker</span>', 'truckloads to move live there') + '</div>' +
-                '<div class="card"><h4>Active loads <span class="pill p-gray">' + new Set(r.rows.map(x => x.truckId)).size + ' trucks</span></h4><div class="muted">one row per IF, like the Move Tracker · not yet received · tap a row to open</div><div id="dashloads"></div></div>' +
+                '<div class="card"><h4>Active loads <span class="pill p-gray">' + new Set(r.rows.map(x => x.truckId)).size + ' trucks</span></h4><div class="muted">one row per IF, like the Move Tracker · not yet received · tap a row to open</div><div id="dashtools"></div><div id="dashloads"></div></div>' +
                 '<div class="grid3"><div class="card"><h4>Trucks shipped per day</h4>' + barChart(r.days, r.tiles.plan) + '</div>' +
                 '<div class="card"><h4>Exceptions</h4>' + [['Missing pallets (in transit)', r.exc.missing], ['Flagged, waiting on manager', r.exc.neverLoaded], ['Damaged', r.exc.damaged], ['Edited at dock', r.exc.edited],
                     ['Labeled, never loaded (stale)', r.exc.stale], ['SKUs with stock but no config', r.exc.noConfig]].map(x => '<div class="warnrow"><span>' + esc(x[0]) + '</span><b>' + x[1] + '</b></div>').join('') + '</div></div>');
+            $('dashtools').innerHTML = tableTools('dl', S.dashSt, SORTS, 'dln');
+            wireTools('dl', S.dashSt, paintLoads);
             paintLoads();
         };
 

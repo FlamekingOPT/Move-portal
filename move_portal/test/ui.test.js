@@ -233,3 +233,20 @@ test('2026-10-06 pm: Dashboard shows waiting queues, truck tiles, Active loads w
     assert.ok(src.indexOf("barChart(r.days, r.tiles.plan") !== -1, 'chart counts trucks against the plan line');
     assert.equal(src.indexOf('Pallets moved per day'), -1);
 });
+
+test('2026-10-06 pm fix: the table toolbars are rendered once, so typing in the search box keeps focus', () => {
+    const src = ui._clientMain.toString();
+    ['paintLoads', 'paintHist'].forEach(n => {
+        const i = src.indexOf('function ' + n);
+        assert.ok(i !== -1, 'no ' + n);
+        const ends = ['function ', 'ACT.', 'SCREENS.'].map(t => src.indexOf(t, i + 10)).filter(x => x !== -1);
+        const body = src.slice(i, Math.min(...ends));
+        assert.equal(body.indexOf('tableTools('), -1, n + ' must not rebuild the toolbar');
+    });
+    const di = src.indexOf('SCREENS.dash ='), dj = src.indexOf('SCREENS.', di + 10);
+    const dash = src.slice(di, dj === -1 ? undefined : dj);
+    assert.equal(dash.split('id="dashtools"').length - 1, 1, 'dash renders id="dashtools" once');
+    const ri = src.indexOf('SCREENS.report ='), rj = src.indexOf('SCREENS.', ri + 10);
+    assert.equal(src.slice(ri, rj === -1 ? undefined : rj).split('id="histtools"').length - 1, 1, 'report renders id="histtools" once');
+    assert.ok(src.indexOf('HISTSORTS') !== -1 && src.indexOf("receivedAt || x.confirmedAt || x.markedAt || x.startedAt") !== -1, 'history sort fallbacks');
+});
