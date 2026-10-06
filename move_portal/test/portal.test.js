@@ -2457,3 +2457,35 @@ test('fix wave 1: the stamp fails after the create landed; the retry stamps the 
     assert.equal(ctx.data.getPallet(stray.id).status, 'received');
     assert.deepEqual(ctx.data.getLoad(t.id).data.alloc.filter(a => a.addOn).map(a => a.ifId), ['901']);
 });
+
+test('fix wave 3: stacked pending accepts on one IF line reserve their room once (24 pcs for two 12-pc strays, not 36)', () => {
+    const ctx = setup();
+    const orig = ctx.ns.openToLines;
+    ctx.ns.openToLines = () => orig().filter(r => r.toId === '500');                 // TO500: 48 left, no other TO for YSN100
+    const { t } = departed(ctx, 42, '5260040', '9001');                              // IF9001 = 504
+    const s1 = strayOn(ctx, t), s2 = strayOn(ctx, t);
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s1.id }).outcome, 'pending');
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: s2.id }).outcome, 'pending');
+    assert.deepEqual(ctx.data.getPallet(s2.id).data.decision.op, { op: 'if_qty', ifId: '9001', ifNum: 'IF9001', toId: '500', item: '975', from: 504, to: 528 });
+    const lt = truckWith(ctx, 42, '9002').t;                                        // IF9002 is full: any more YSN100 needs TO500 room
+    const big = (n, job) => printLabels(ctx, 1, job, [{ item: '975', sku: 'YSN100', cfg: '', pcs: n }])[0];
+    const over = big(25, 'Jres25'), fits = big(24, 'Jres24');
+    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: over.code }, false).result, 'no_to');   // 48 - 24 reserved = 24 left (36 reserved would leave 12)
+    assert.equal(ctx.data.getPallet(over.id).status, 'labeled');
+    const rf = ctx.run('truck_scan', { truckId: lt.id, raw: fits.code }, false);
+    assert.equal(rf.result, 'over');                                              // loads as a raise on IF9002 against TO500's remaining 24
+    assert.equal(ctx.data.getPallet(fits.id).status, 'loaded');
+});
+
+test('fix wave 3: a pending create stops reserving once the office IF exists (NetSuite then counts it)', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t } = departed(ctx, 42, '5260041', '9001');
+    const stray = strayOn(ctx, t, LINE201);
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');   // pending create: 120 of TO700
+    const lt = truckWith(ctx, 2, '9002').t;
+    const big = (n, job) => printLabels(ctx, 1, job, [{ item: '11', sku: 'YSN201', cfg: '', pcs: n }])[0];
+    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big(1100, 'Jc1').code }, false).result, 'no_to');
+    officeIfs(ctx, [officeIf('9100', 'B')]);                                                          // the office made it (not settled yet: no approvals call)
+    assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big(1100, 'Jc2').code }, false).result, 'addon');
+});

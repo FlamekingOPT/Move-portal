@@ -215,14 +215,32 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     // The room accepted-but-pending pallets will need once the office acts. Their ops live on the pallets (decision.op), not on a truck plan,
     // and every truck counts, the one being decided on included (its other pending accepts are still pending).
+    // Stacked accepts on one IF line each target the line on top of the earlier ones (while `from` stays NetSuite's qty), so they reserve once per
+    // (TO, IF, SKU): the highest target minus what NetSuite reads now, not the sum of each op's own to - from.
     function pendingReservations(trucks) {
         const res = {}, add = (toId, item, q) => { if (q > 0) { const k = String(toId) + '|' + String(item); res[k] = (res[k] || 0) + q; } };
+        const qtys = {}, creates = [];
         (trucks || []).filter(x => UNLOADABLE.indexOf(x.status) !== -1 || x.status === T.APPROVING).forEach(x => pendingAccepts(x).forEach(p => {
             const op = (p.data.decision || {}).op;
             if (!op) return;
-            if (op.op === 'if_qty') add(op.toId, op.item, Number(op.to) - Number(op.from));
-            if (op.op === 'if_create') Object.keys(op.lines || {}).forEach(k => add(op.toId, k, Number(op.lines[k]) || 0));
+            if (op.op === 'if_qty') {
+                const k = String(op.toId) + '|' + String(op.ifId) + '|' + String(op.item), g = qtys[k] || (qtys[k] = { op: op, to: 0 });
+                g.to = Math.max(g.to, Number(op.to) || 0);
+            }
+            if (op.op === 'if_create') creates.push(op);
         }));
+        const groups = Object.keys(qtys);
+        if (!groups.length && !creates.length) return res;
+        const info = ns.ifInfo();                           // read once, and only when something is pending
+        groups.forEach(k => {
+            const g = qtys[k], f = (info || {})[String(g.op.ifId)];
+            const cur = f ? (f.lines || []).filter(l => String(l.item) === String(g.op.item)).reduce((n, l) => n + Number(l.qty || 0), 0) : Number(g.op.from) || 0;
+            add(g.op.toId, g.op.item, g.to - cur);
+        });
+        creates.forEach(op => {
+            if (findAddOnIf(op.toId, op.lines || {}, info, trucks || [], null, {})) return;   // the office IF exists: NetSuite's TO remaining already counts it
+            Object.keys(op.lines || {}).forEach(k => add(op.toId, k, Number(op.lines[k]) || 0));
+        });
         return res;
     }
     // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons, pending accepts).
