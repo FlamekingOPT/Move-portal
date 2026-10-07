@@ -3,8 +3,9 @@ const assert = require('node:assert/strict');
 const { loadAmd } = require('./amd');
 
 // In-memory record: lines = [{item, quantity, quantityfulfilled, itemreceive}]
-function makeRec(values, lines) {
+function makeRec(values, lines, missing) {
     const r = { values: Object.assign({}, values), lines: lines.map(l => Object.assign({ itemreceive: true }, l)), cur: -1, saved: 0 };
+    if (missing) r.getField = o => (missing.indexOf(o.fieldId) !== -1 ? null : { id: o.fieldId });   // N/record: null for a field the account lacks
     r.getValue = o => r.values[o.fieldId];
     r.setValue = o => { r.values[o.fieldId] = o.value; };
     r.getLineCount = () => r.lines.length;
@@ -24,11 +25,11 @@ function setup(spec) {
         load: o => { const r = recs[o.type + ':' + o.id]; if (!r) throw new Error('no rec ' + o.type + o.id); return r; },
         transform: o => {
             log.transforms.push(o);
-            const r = makeRec({}, spec.toLines || [{ item: '975', quantity: 24 }, { item: '111', quantity: 5 }]);
+            const r = makeRec({}, spec.toLines || [{ item: '975', quantity: 24 }, { item: '111', quantity: 5 }], spec.missing);
             r.id = '888'; log.last = r; return r;
         }
     };
-    recs['itemfulfillment:9'] = makeRec({ shipstatus: spec.status || 'B' }, spec.ifLines);
+    recs['itemfulfillment:9'] = makeRec({ shipstatus: spec.status || 'B' }, spec.ifLines, spec.missing);
     recs['transferorder:600'] = makeRec({}, spec.to || [{ item: '975', quantity: 600, quantityfulfilled: 0 }]);
     log.searches = [];
     const fakeSearch = {
@@ -149,6 +150,26 @@ test('if_stamp idempotence compares seal digits: SEAL:5249330 on the IF is the s
     Object.assign(s.f.values, { custbody7: 'SEAL:5249330', custbody_rsm_container_no: '537224' });
     assert.equal(s.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: '537224', seal: '5249330', memo: 'm', lines: { 975: 504 } }), '9');
     assert.equal(s.f.saved, 0);
+});
+
+test('an account without the seal/trailer body fields (sandbox) still stamps, creates and receives; those fields are skipped', () => {
+    const missing = ['custbody7', 'custbody_rsm_container_no'];
+    const s = setup({ ifLines: split(), missing });
+    s.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'Truck 1 · 10/06', lines: { 975: 504 } });
+    assert.deepEqual([s.f.values.shipstatus, s.f.values.memo, s.f.saved], ['C', 'Truck 1 · 10/06', 1]);
+    assert.equal('custbody7' in s.f.values, false);
+    assert.equal('custbody_rsm_container_no' in s.f.values, false);
+    // idempotent: already Shipped counts as stamped when the account has no seal/trailer to compare
+    const c = setup({ status: 'C', ifLines: split(), missing });
+    assert.equal(c.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'm', lines: { 975: 504 } }), '9');
+    assert.equal(c.f.saved, 0);
+    const r = setup({ ifLines: split(), missing });
+    assert.equal(r.tx.apply({ op: 'receipt', toId: '600', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', lines: { 975: 24 } }), '888');
+    assert.deepEqual([r.log.last.values.memo, 'custbody7' in r.log.last.values], ['Move receipt · IF1', false]);
+    // only the seal missing: the trailer is still written and still compared
+    const t = setup({ status: 'C', ifLines: split(), missing: ['custbody7'] });
+    Object.assign(t.f.values, { custbody_rsm_container_no: 'T9' });
+    assert.throws(() => t.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'm' }), /no longer Picked\/Packed/);
 });
 
 test('if_create with ship:false creates the IF Packed (B) with no trailer, seal or memo stamp', () => {

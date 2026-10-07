@@ -24,9 +24,15 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     }
 
     function changed(msg) { return new Error('IF changed in NetSuite, review: ' + msg); }
+    // The seal and trailer body fields are prod customizations; an account without them (the sandbox) stamps status and memo only.
+    function hasField(rec, id) {
+        if (typeof rec.getField !== 'function') return true;
+        try { return rec.getField({ fieldId: id }) != null; } catch (e) { return false; }
+    }
+    const TRAILER_FLD = 'custbody_rsm_container_no', SEAL_FLD = 'custbody7';
     function stampOn(rec, op) {
-        rec.setValue({ fieldId: 'custbody_rsm_container_no', value: op.trailer });
-        rec.setValue({ fieldId: 'custbody7', value: 'SEAL: ' + op.seal });
+        if (hasField(rec, TRAILER_FLD)) rec.setValue({ fieldId: TRAILER_FLD, value: op.trailer });
+        if (hasField(rec, SEAL_FLD)) rec.setValue({ fieldId: SEAL_FLD, value: 'SEAL: ' + op.seal });
         rec.setValue({ fieldId: 'memo', value: op.memo });
     }
     function itemLines(rec, item) {
@@ -85,8 +91,10 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         const f = record.load({ type: record.Type.ITEM_FULFILLMENT, id: op.ifId, isDynamic: true });
         const st = String(f.getValue({ fieldId: 'shipstatus' }));
         // Already shipped with this trailer and seal: an earlier write landed but the request died before it was recorded.
-        if (st === 'C' && verify.sealKey(f.getValue({ fieldId: 'custbody7' })) === verify.sealKey(op.seal) &&   // seals compare by digits
-            String(f.getValue({ fieldId: 'custbody_rsm_container_no' }) || '') === String(op.trailer)) return String(op.ifId);
+        // (A field the account lacks cannot disagree.)
+        const sealOk = !hasField(f, SEAL_FLD) || verify.sealKey(f.getValue({ fieldId: SEAL_FLD })) === verify.sealKey(op.seal);   // seals compare by digits
+        const trailerOk = !hasField(f, TRAILER_FLD) || String(f.getValue({ fieldId: TRAILER_FLD }) || '') === String(op.trailer);
+        if (st === 'C' && sealOk && trailerOk) return String(op.ifId);
         if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
         if (op.lines) {                               // the qty the portal verified; an office edit since then must not ship unseen
             const want = {}, have = tickedQty(f);
