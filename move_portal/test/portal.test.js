@@ -396,7 +396,7 @@ test('unload: ok, dup, never loaded flagged, undo, done → manager receipt with
     assert.equal(ctx.run('unload_undo', { truckId: t.id }, false).view.counts.in, 40);
     ctx.run('unload_done', { truckId: t.id }, false);
     assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }, false), /Managers only/);
-    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet first/);   // the flagged stray blocks the receipt
+    assert.deepEqual([ctx.run('approvals').receipts[0].canApprove, ctx.run('approvals').receipts[0].warn], [true, '1 flagged pallet still to decide']);   // the stray warns, no longer blocks
     ctx.run('pallet_reject', { truckId: t.id, palletId: stray[0].id, note: 'not ours' });
     const pv = ctx.run('receipt_preview', { truckId: t.id });
     assert.deepEqual(pv.perIf, [{ ifId: '9001', ifNum: 'IF9001', shipped: 504, received: 480, short: 24 }]);
@@ -2025,9 +2025,8 @@ test('pallet_accept in off mode is pending: receipt blocked until the IF reads a
     assert.equal(ctx.run('unload_scan', { truckId: b2.t.id, raw: stray.code }, false).result, 'never_loaded');
     assert.deepEqual([ctx.data.getPallet(stray.id).data.flaggedTruck, ctx.data.getLoad(b2.t.id).data.flagged || []], [t.id, []]);
     ctx.run('unload_done', { truckId: t.id }, false);
-    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet/);
     let ap = ctx.run('approvals');
-    assert.deepEqual([ap.flagged.length, ap.receipts[0].pending.length, ap.receipts[0].canApprove, ap.receipts[0].blockReason], [0, 1, false, 'Decide 1 flagged pallet first']);
+    assert.deepEqual([ap.flagged.length, ap.receipts[0].pending.length, ap.receipts[0].canApprove, ap.receipts[0].warn], [0, 1, true, '1 flagged pallet still to decide']);
     const realInfo = ctx.ns.ifInfo;                                       // the office edits the IF in NetSuite
     ctx.ns.ifInfo = () => { const o = realInfo(); o['9001'].lines = [{ item: '975', sku: 'YSN100', qty: 516 }]; return o; };
     ap = ctx.run('approvals');
@@ -2061,8 +2060,8 @@ test('approvals.flagged lists undecided pallets across trucks; the receipt card 
     const ap = ctx.run('approvals');
     assert.deepEqual(ap.flagged.map(f => [f.palletId, f.truckId, f.sku, f.pcs, f.by]), [[s1.id, a.t.id, 'YSN100', 12, 'Miguel'], [s2.id, b.t.id, 'YSN100', 12, 'Miguel']]);
     const rec = ap.receipts.find(x => x.truck.id === a.t.id);
-    assert.deepEqual([rec.flagged.map(f => f.palletId), rec.canApprove, rec.blockReason], [[s1.id], false, 'Decide 1 flagged pallet first']);
-    assert.throws(() => ctx.run('receipt_approve', { truckId: a.t.id }), /Decide 1 flagged pallet first/);
+    assert.deepEqual([rec.flagged.map(f => f.palletId), rec.canApprove, rec.warn], [[s1.id], true, '1 flagged pallet still to decide']);
+    assert.equal(ctx.run('receipt_approve', { truckId: a.t.id }).perIf[0].received, 504);   // approves with the stray still undecided
     assert.equal(ctx.run('approvals').receipts.some(x => x.truck.id === b.t.id), true, 'a truck with only a flagged pallet still gets a receipt card');
 });
 
@@ -2268,7 +2267,7 @@ test('pallet_accept off-IF (qty mode): pending; approvals settles it once a Pack
     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
     assert.deepEqual([r.outcome, r.text], ['pending', '⏳ Accepted · office creates IF for 120 YSN201 on TO700 (memo ' + ctx.data.getPallet(stray.id).data.decision.op.token + ') · receipt waits']);
     ctx.run('unload_done', { truckId: t.id }, false);
-    assert.equal(ctx.run('approvals').receipts[0].canApprove, false);
+    assert.deepEqual([ctx.run('approvals').receipts[0].canApprove, ctx.run('approvals').receipts[0].warn], [true, '1 flagged pallet still to decide']);
     officeIfs(ctx, [officeIf('9100', 'B')]);                              // the office creates the IF in NetSuite
     const ap = ctx.run('approvals');
     assert.equal(ap.receipts[0].canApprove, true);
@@ -2573,7 +2572,7 @@ test('final fix F2: a pending accept can be withdrawn by Reject; the receipt unb
     const lt = truckWith(ctx, 2, '9002').t;
     const big = printLabels(ctx, 1, 'Jwd1', [{ item: '11', sku: 'YSN201', cfg: '', pcs: 1100 }])[0];
     assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false).result, 'no_to');   // 1,100 + the pending 120 is over TO700's 1,200
-    assert.equal(ctx.run('approvals').receipts[0].canApprove, false);
+    assert.equal(ctx.run('approvals').receipts[0].warn, '1 flagged pallet still to decide');
     const r = ctx.run('pallet_reject', { truckId: t.id, palletId: stray.id, note: 'office will not make an IF' });
     assert.equal(r.outcome, 'rejected');
     assert.equal(r.text, '↩ Rejected · "office will not make an IF" · pending accept withdrawn · back to labeled');
@@ -2581,7 +2580,7 @@ test('final fix F2: a pending accept can be withdrawn by Reject; the receipt unb
     assert.deepEqual([p.status, p.loadId, p.data.flag, p.data.decision.kind, p.data.decision.text], ['labeled', '', '', 'rejected', r.text]);
     assert.deepEqual([x.data.flagged, x.data.claim || '', x.data.corrections.filter(k => k.pending).length, x.data.corrections.filter(k => k.kind === 'pallet_reject').length], [[], '', 0, 1]);
     const ap = ctx.run('approvals');
-    assert.deepEqual([ap.receipts[0].canApprove, ap.receipts[0].pending.length, ap.receipts[0].blockReason], [true, 0, '']);
+    assert.deepEqual([ap.receipts[0].canApprove, ap.receipts[0].pending.length, ap.receipts[0].warn], [true, 0, '']);
     assert.equal(ctx.run('truck_scan', { truckId: lt.id, raw: big.code }, false).result, 'addon');       // the reservation is gone
 });
 
@@ -2601,16 +2600,16 @@ test('final fix F3: a pallet on a truck marked shipped cannot be accepted or rej
     });
 });
 
-test('final fix F4: a pallet flagged between the receipt checks and the claim still blocks the approve (no claim left behind)', () => {
+test('final fix F4 (2026-10-07): a pallet flagged mid-approve no longer blocks it; the receipt posts what is in and the stray stays flagged', () => {
     const ctx = setup();
     const { t, ps } = departed(ctx, 42, '5260055', '9001');
     ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
     ctx.run('unload_done', { truckId: t.id }, false);
     const s = printLabels(ctx, 1, 'Jfl4', [L975])[0];
     hookOnce(ctx.data, 'palletsByLoad', () => ctx.run('unload_scan', { truckId: t.id, raw: s.code }, false));   // a floor scan flags it mid-request
-    assert.throws(() => ctx.run('receipt_approve', { truckId: t.id }), /Decide 1 flagged pallet first/);
+    assert.equal(ctx.run('receipt_approve', { truckId: t.id }).perIf[0].received, 504);
     const x = ctx.data.getLoad(t.id);
-    assert.deepEqual([x.status === 'approving', x.data.claim || ''], [false, '']);
+    assert.deepEqual([x.status, x.data.claim || '', x.data.flagged], ['received', '', [String(s.id)]]);
 });
 
 test('final fix F5: a pending-accepted or flagged pallet is refused at Riverside and not loaded', () => {
@@ -2623,4 +2622,56 @@ test('final fix F5: a pending-accepted or flagged pallet is refused at Riverside
     assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'pending');
     r = ctx.run('truck_scan', { truckId: lt.id, raw: stray.code }, false);                   // accepted, pending the office
     assert.deepEqual([r.result, r.tone, r.pallet.id, ctx.data.getPallet(stray.id).status, r.view.totals.pallets], ['flagged_tippecanoe', 'bad', stray.id, 'labeled', 2]);
+});
+
+// ── 2026-10-07: shipped IFs are never edited; flagged pallets no longer block the receipt ──
+test('2026-10-07: accepting a stray whose SKU is on a Shipped truck IF makes an add-on IF instead of editing the shipped IF', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t, ps } = departed(ctx, 42, '5260071');
+    const ri = ctx.ns.ifInfo;                                             // NetSuite: the truck's IF is Shipped (C), as it is at Tippecanoe
+    ctx.ns.ifInfo = () => { const o = ri(); if (o['9001']) o['9001'].status = 'C'; return o; };
+    const stray = strayOn(ctx, t);                                        // YSN100, same SKU as IF9001
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    const before = ctx.tx._t.ops.length;
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
+    assert.equal(r.outcome, 'accepted');
+    assert.match(r.text, /new IF on /);
+    const ops = ctx.tx._t.ops.slice(before);
+    assert.deepEqual(ops.map(o => o.op), ['if_create', 'if_stamp'], 'the shipped IF is not edited');
+    const x = ctx.data.getLoad(t.id), add = x.data.alloc.find(a => a.addOn);
+    assert.deepEqual([add.lines['975'], x.data.alloc.find(a => a.ifId === '9001').lines['975'], ctx.data.getPallet(stray.id).status], [12, 504, 'received']);
+});
+
+test('2026-10-07: approve the receipt with a stray undecided and a pallet missing; accept the stray later → a late receipt for it alone', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'qty';
+    const { t, ps } = departed(ctx, 42, '5260072');
+    const stray = strayOn(ctx, t);
+    ps.slice(0, 41).forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));   // one pallet missing
+    ctx.run('unload_done', { truckId: t.id }, false);
+    const rec = ctx.run('approvals').receipts[0];
+    assert.deepEqual([rec.canApprove, rec.warn, rec.missing.length], [true, '1 flagged pallet still to decide', 1]);
+    const a1 = ctx.run('receipt_approve', { truckId: t.id });
+    assert.deepEqual(a1.perIf, [{ ifId: '9001', ifNum: 'IF9001', shipped: 504, received: 492, short: 12 }]);
+    assert.equal(ctx.data.getPallet(stray.id).data.flag, 'never_loaded');   // still waiting for a decision
+    assert.equal(ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id }).outcome, 'accepted');
+    const late = ctx.run('approvals').receipts.find(x => x.truck.id === t.id);
+    assert.deepEqual([late.lateOnly, late.canApprove, late.warn], [true, true, '']);
+    const a2 = ctx.run('receipt_approve', { truckId: t.id });
+    assert.deepEqual(ctx.data.getLoad(t.id).data.rplan.map(o => o.lines['975']), [492, 12]);
+    assert.equal(a2.perIf[0].received, 504);
+});
+
+test('2026-10-07: other items not ticked in at unload show on the receipt card and do not block it', () => {
+    const ctx = setup();
+    const r0 = truckWith(ctx, 42), t = r0.t, ps = r0.ps;
+    ctx.run('truck_other_add', { truckId: t.id, desc: 'Office desk', qty: 2 }, false);
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).view.truck.status, 'ready');
+    ship(ctx, { truckId: t.id, seal: '5260073' });
+    ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('unload_done', { truckId: t.id }, false);
+    const rec = ctx.run('approvals').receipts[0];
+    assert.deepEqual([rec.canApprove, rec.otherNotIn.map(o => [o.desc, o.qty])], [true, [['Office desk', 2]]]);
+    assert.equal(ctx.run('receipt_approve', { truckId: t.id }).perIf[0].received, 504);
 });

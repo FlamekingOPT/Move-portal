@@ -1167,7 +1167,9 @@ h3{font-size:15px;margin:16px 0 8px}
                 return '<div class="card">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + (x.error ? errBox(x.error) : '') +
                     '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' +
                     x.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
-                    (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + '</div>' : '') +
+                    (missing.length ? '<div class="muted">Missing: ' + esc(missing.join(', ')) + ' · stays in transit on the TO</div>' : '') +
+                    (x.warn ? '<div class="muted warn">⚠ ' + esc(x.warn) + ' · you can approve now, a pallet accepted later posts as a late receipt</div>' : '') +
+                    ((x.otherNotIn || []).length ? '<div class="muted warn">⚠ Other items not checked in: ' + x.otherNotIn.map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ') + '</div>' : '') +
                     ((x.flagged || []).length || (x.pending || []).length || (x.decided || []).length
                         ? '<div class="muted" style="margin-top:8px"><b>Flagged pallets' + ((x.flagged || []).length ? ' · ' + x.flagged.length + ' to decide' : '') + '</b></div>' +
                           '<div class="diffs">' + (x.flagged || []).map(flagRow).join('') + (x.pending || []).map(p => '<div><b>' + esc(p.code) + '</b> · ' + esc(p.text) + '</div>').join('') +

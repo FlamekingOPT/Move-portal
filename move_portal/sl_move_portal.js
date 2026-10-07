@@ -1059,9 +1059,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function decidedRows(x) {
         return (x.data.corrections || []).filter(k => (k.kind === 'pallet_accept' || k.kind === 'pallet_reject') && !k.pending).map(k => ({ code: k.code, text: k.text || '', at: k.at, by: whoName(k.by) }));
     }
-    function blockReasonOf(x) {
+    // Undecided flagged pallets no longer block a receipt (Jack 2026-10-07): the receipt posts what is in, a pallet accepted later posts as a late receipt.
+    function flaggedWarnOf(x) {
         const n = flaggedRows(x).length + pendingAccepts(x).length;
-        return n ? 'Decide ' + n + ' flagged pallet' + (n === 1 ? '' : 's') + ' first' : '';
+        return n ? n + ' flagged pallet' + (n === 1 ? '' : 's') + ' still to decide' : '';
+    }
+    // Other items (typed lines, not inventory) not ticked in at unload: shown on the receipt card, never block it.
+    function otherNotInOf(x) {
+        const tick = x.data.otherItemsIn || {};
+        return ((x.data.depart || {}).otherItems || []).filter(o => !tick[o.id]);
     }
     // A decision runs only on a truck at Tippecanoe that nobody is processing (an approve or another decision in flight holds the claim).
     function inFlight(cur) { return !!(cur.data.claim && !stale(cur) && !cur.data.error); }
@@ -1166,7 +1172,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const cands = (x.data.alloc || []).filter(a => String(a.ifId).indexOf('new:') !== 0 && Number(a.lines[item]) > 0).sort((p, q) => Number(p.ifId) - Number(q.ifId));
         for (let i = 0; i < cands.length; i++) {
             const f = info[String(cands[i].ifId)];
-            if (f) return { ifId: String(cands[i].ifId), ifNum: f.ifNum, toId: String(f.toId), toNum: cands[i].toNum, alloc: Number(cands[i].lines[item]) || 0, from: (f.lines || []).filter(l => String(l.item) === item).reduce((s, l) => s + Number(l.qty || 0), 0) };
+            if (f) return { ifId: String(cands[i].ifId), ifNum: f.ifNum, status: String(f.status || ''), toId: String(f.toId), toNum: cands[i].toNum, alloc: Number(cands[i].lines[item]) || 0, from: (f.lines || []).filter(l => String(l.item) === item).reduce((s, l) => s + Number(l.qty || 0), 0) };
         }
         return null;
     }
@@ -1271,7 +1277,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             return { target: target, base: base, to: to, op: op,
                 dec: { kind: 'accepted_pending', ifId: target.ifId, ifNum: target.ifNum, toId: target.toId, toNum: target.toNum, item: item, sku: sk, pcs: pcs, op: op, by: c.user, at: c.now.stamp } };
         };
-        if (!planFor(x0, ns.ifInfo())) return acceptOffIf(x0, p0, item, sk, pcs, c);           // no IF on the truck carries this SKU (it claims for itself)
+        // A Shipped IF is never edited (Jack 2026-10-07): the pallet goes on its own add-on IF from an open TO, like a SKU on none of the truck's IFs.
+        const onIf = Ld => { const pl = planFor(Ld, ns.ifInfo()); return pl && pl.target.status !== 'C' ? pl : null; };
+        if (!onIf(x0)) return acceptOffIf(x0, p0, item, sk, pcs, c);                          // no unshipped IF on the truck carries this SKU (it claims for itself)
         const cl = claimLoad(x0, null, 'accept', decideGuard, {});
         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
         const release = patch => { assertClaim(id, claim, label, 'accept'); data.updateLoad(data.getLoad(id), { data: Object.assign({ claim: '', workingAt: 0, phase: '' }, patch) }); };
@@ -1279,7 +1287,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         try {
             mustFlaggedOn(cl.Ld, a.palletId);                       // another decision may have landed between the first check and the claim
             if (ns.resetCache) ns.resetCache();
-            plan = planFor(cl.Ld, ns.ifInfo());                     // the real target: from the claimed truck, with the pending accepts and NetSuite as they are now
+            plan = onIf(cl.Ld);                                     // the real target: from the claimed truck, with the pending accepts and NetSuite as they are now
             if (!plan) throw userErr('This truck changed while it was being checked. Try again.');
         } catch (e) { dropClaim(id, claim); throw e; }
         const target = plan.target, base = plan.base, to = plan.to, op = plan.op, dec = plan.dec;
@@ -1457,14 +1465,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const canApprove = cur => (UNLOADABLE.indexOf(cur.status) !== -1 && !inFlight(cur)) || (cur.status === T.APPROVING && (cur.data.error || stale(cur)));
         const x0 = mustTruck(a.truckId);
         if (!canApprove(x0)) throw userErr(x0.status === T.APPROVING ? 'This truck is already being approved. Wait a few minutes, then try again.' : 'This truck is ' + x0.status + ', not ready to unload');
-        const block = blockReasonOf(x0);
-        if (block) throw userErr(block);
         if (!receiptPlan(x0).ops.length) throw userErr('Nothing new scanned in on this truck');
         const prevStatus = x0.status === T.APPROVING ? (x0.data.prevStatus || T.RECEIVING) : x0.status === T.DEPARTED ? T.RECEIVING : x0.status;
         const cl = claimLoad(x0, T.APPROVING, 'receive', cur => {
             if (!canApprove(cur)) throw userErr('This truck is ' + cur.status + ', not ready to approve');
-            const b = blockReasonOf(cur);                           // a pallet may have been flagged since the fail-fast check above
-            if (b) throw userErr(b);
         }, { prevStatus: prevStatus });
         const x = cl.Ld, claim = cl.claim, label = truckLabel(x);
         const rp = receiptPlan(x), seq = (Number(x.data.recvSeq) || 0) + 1;
@@ -1567,8 +1571,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                     const unposted = unpostedOf(x, counts);
                     const fl = flaggedRows(x), pend = pendingRows(x);
                     if (!isStuck && !fl.length && !pend.length && (!unposted || (x.status !== T.RECEIVED && !x.data.recvRequested))) return null;
-                    const rp = receiptPlan(x), block = blockReasonOf(x);
-                    const o = { truck: sum(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED, flagged: fl, pending: pend, decided: decidedRows(x), canApprove: !block, blockReason: block };
+                    const rp = receiptPlan(x);
+                    const o = { truck: sum(x), perIf: rp.perIf, missing: rp.missing, lateOnly: x.status === T.RECEIVED, flagged: fl, pending: pend, decided: decidedRows(x),
+                        canApprove: rp.ops.length > 0 || isStuck, blockReason: rp.ops.length || isStuck ? '' : 'Nothing new scanned in', warn: flaggedWarnOf(x), otherNotIn: otherNotInOf(x) };
                     if (isStuck) o.stuck = true;
                     return o;
                 } catch (e) {
