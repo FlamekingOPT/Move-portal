@@ -1220,8 +1220,12 @@ h3{font-size:15px;margin:16px 0 8px}
             }
             const v = r.view, t = v.truck;
             m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs</div>' +
-                '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' + v.lines.map(l => '<tr><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) + '</td><td>' + num(l.scanned) + ' / ' + num(l.expected) + '</td></tr>').join('') +
-                v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td>' + num(x.scanned) + ' extra</td></tr>').join('') + '</table>' +
+                (v.receipt
+                    ? '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' + v.receipt.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
+                      (v.receipt.missing.length ? '<div class="muted warn">Missing: ' + esc(v.receipt.missing.join(', ')) + ' · in transit on the TO</div>' : '') +
+                      '<div class="muted">Receipts: ' + (v.receipt.irs.length ? v.receipt.irs.map(r => '<b>' + esc(r.irNum) + '</b>' + (r.pcs != null ? ' · ' + num(r.pcs) + ' pcs' : '') + (r.ifNum ? ' (' + esc(r.ifNum) + ')' : '')).join(', ') : 'none yet') + '</div>'
+                    : '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' + v.lines.map(l => '<tr><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) + '</td><td>' + num(l.scanned) + ' / ' + num(l.expected) + '</td></tr>').join('') +
+                      v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td>' + num(x.scanned) + ' extra</td></tr>').join('') + '</table>') +
                 ((v.otherItems || []).length ? '<div class="muted">Other: ' + v.otherItems.map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ') + '</div>' : '') + noteHtml(v.shortNote) +
                 '<div class="row2"><button class="dbtn gh" data-act="notecancel">Close</button></div></div>';
             document.body.appendChild(m);
@@ -1288,7 +1292,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const r = await api('receipt_approve', { truckId: el.dataset.id });
             tone(r.ok ? 'ok' : 'bad');
             const w = r.ok ? (r.written || []) : [], m = r.ok ? (r.missing || []) : [];
-            SCREENS.approve(r.ok ? flash('green', '✅ Receipt approved', w.length ? w.length + ' written to NetSuite' : 'Plan saved (no NetSuite write in this mode)', m.length ? m.length + ' pallets stay in transit' : '') : errBox(r.error));
+            SCREENS.approve(r.ok ? flash('green', '✅ Receipt approved', w.length ? ((r.irs || []).length ? r.irs.map(x => x.irNum + (x.pcs != null ? ' · ' + num(x.pcs) + ' pcs' : '')).join(', ') : w.length + ' written to NetSuite') : 'Plan saved (no NetSuite write in this mode)', m.length ? m.length + ' pallets stay in transit' : '') : errBox(r.error));
         };
 
         ACT.apaccept = async el => {
@@ -1320,7 +1324,7 @@ h3{font-size:15px;margin:16px 0 8px}
             return '<div style="overflow-x:auto"><table class="tbl"><tr>' + cols.map(c => '<th>' + c + '</th>').join('') + '</tr>' + (rows.map(x => '<tr data-act="dashrow" data-id="' + esc(x.truckId) + '" style="cursor:pointer">' +
                 '<td>' + esc(x.day) + '</td><td><b>' + esc(x.truck) + '</b></td><td>' + esc([x.trailer, x.seal].filter(Boolean).join(' · ')) + '</td><td>' + esc((x.ifs || []).join(', ')) + '</td><td>' + num(x.pallets) + ' · ' + num(x.pcs) + '</td>' +
                 '<td>' + statusPill(x.status) + '</td><td class="muted">' + esc([x.startedBy, x.startedAt].filter(Boolean).join(' ')) + '</td><td class="muted">' + esc([x.markedBy, x.markedAt].filter(Boolean).join(' ')) + '</td>' +
-                '<td class="muted">' + esc([x.confirmedBy, x.confirmedAt].filter(Boolean).join(' ')) + '</td><td class="muted">' + esc(x.receivedAt || '') + '</td><td class="muted">' + (x.corrections || []).map(esc).join('<br>') + '</td></tr>').join('') ||
+                '<td class="muted">' + esc([x.confirmedBy, x.confirmedAt].filter(Boolean).join(' ')) + '</td><td class="muted">' + esc(x.receivedAt || '') + ((x.irs || []).length ? '<br>' + x.irs.map(esc).join('<br>') : '') + '</td><td class="muted">' + (x.corrections || []).map(esc).join('<br>') + '</td></tr>').join('') ||
                 '<tr><td colspan="11" class="muted">No trucks yet</td></tr>') + '</table></div>';
         }
         function paintHist() {
@@ -1406,7 +1410,7 @@ h3{font-size:15px;margin:16px 0 8px}
             return '<div style="overflow-x:auto"><table class="tbl"><tr>' + head + '</tr>' + (rows.map(x => '<tr data-act="dashrow" data-id="' + esc(x.truckId) + '" style="cursor:pointer">' +
                 '<td><b>' + esc(x.ifNum) + '</b></td><td>' + esc(x.toNum || '') + '</td><td>' + esc(x.truck) + (x.truckNo && x.trailer ? ' · Trailer ' + esc(x.trailer) : '') + (x.seal ? ' · seal ' + esc(x.seal) : '') + '</td>' +
                 '<td>' + (x.skus || []).map(s => esc(s.sku) + ' <span class="muted">×' + num(s.qty) + '</span>').join(', ') + '</td><td>' + num(x.pallets) + ' · ' + num(x.pcs) + '</td>' +
-                '<td>' + (x.received == null ? '—' : num(x.received)) + (x.flagged ? ' <span class="warn">+' + x.flagged + ' flagged</span>' : '') + '</td><td>' + statusPill(x.status) + '</td>' +
+                '<td>' + (x.received == null ? '—' : num(x.received)) + ((x.irs || []).length ? ' <span class="muted">· ' + x.irs.map(esc).join(', ') + '</span>' : '') + (x.flagged ? ' <span class="warn">+' + x.flagged + ' flagged</span>' : '') + '</td><td>' + statusPill(x.status) + '</td>' +
                 '<td class="muted' + (x.status === 'ship_pending' && x.lastMin >= LATE_MIN ? ' warn' : '') + '">' + esc((x.lastBy ? x.lastBy + ' ' : '') + String(x.lastKind || '').replace(/_/g, ' ')) + (x.lastMin == null ? '' : ' · ' + ago(x.lastMin)) + '</td></tr>').join('') ||
                 '<tr><td colspan="8" class="muted">No active loads</td></tr>') + '</table></div>';
         }

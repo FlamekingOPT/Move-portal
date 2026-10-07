@@ -2675,3 +2675,22 @@ test('2026-10-07: other items not ticked in at unload show on the receipt card a
     assert.deepEqual([rec.canApprove, rec.otherNotIn.map(o => [o.desc, o.qty])], [true, [['Office desk', 2]]]);
     assert.equal(ctx.run('receipt_approve', { truckId: t.id }).perIf[0].received, 504);
 });
+
+test('2026-10-07: IR numbers on the approve result, Active loads, truck history; the pop-up of a shipped truck shows received / shipped and missing', () => {
+    const ctx = setup();
+    ctx.data.db.settings.writeMode = 'on';
+    const { t, ps } = departed(ctx, 42, '5260074');
+    ps.slice(0, 41).forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('unload_done', { truckId: t.id }, false);
+    const a = ctx.run('receipt_approve', { truckId: t.id });
+    assert.equal(a.irs.length, 1);
+    assert.match(a.irs[0].irNum, /^IR\d+$/);
+    assert.deepEqual([a.irs[0].pcs, a.irs[0].ifNum], [492, 'IF9001']);
+    assert.equal(ctx.data.getLoad(t.id).data.irNums[a.irs[0].irId], a.irs[0].irNum);
+    const v = ctx.run('truck_get', { truckId: t.id }).view;
+    assert.deepEqual([v.receipt.perIf[0].received, v.receipt.perIf[0].shipped, v.receipt.missing, v.receipt.irs[0].irNum], [492, 504, [ps[41].code], a.irs[0].irNum]);
+    const rep = ctx.run('report');
+    assert.deepEqual(rep.history.find(h => h.truckId === t.id).irs, [a.irs[0].irNum + ' (492)']);
+    const dash = ctx.run('dashboard');
+    assert.deepEqual(dash.rows.find(r => r.truckId === t.id).irs, [a.irs[0].irNum]);
+});

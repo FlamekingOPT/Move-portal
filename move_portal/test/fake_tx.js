@@ -14,7 +14,8 @@ function makeFakeTx() {
             const hooked = t.onApply ? t.onApply(op) : undefined;
             if (hooked != null && hooked !== '') return String(hooked);
             return op.op === 'if_qty' || op.op === 'if_stamp' ? String(op.ifId) : String(++t.seq);
-        }
+        },
+        tranIds: ids => { const o = {}; (ids || []).forEach(id => { o[String(id)] = 'IR' + id; }); return o; }
     };
 }
 

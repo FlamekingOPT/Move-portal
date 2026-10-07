@@ -174,6 +174,22 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return data.palletsByLoad(x.id, [VP.RECEIVED]).filter(p => !p.data.postedSeq).length;
     }
     // opt.planned / opt.trucks: reads the caller already made, so a needs_fix view doesn't read them again.
+    // The truck's Item Receipts from its writes (receipt:<ifId>:<seq> -> id): number, IF, pieces. irNums holds numbers saved at approve;
+    // older trucks are looked up once per request.
+    const IR_SEEN = {};
+    function irsOf(x) {
+        const d = x.data || {}, saved = d.irNums || {}, list = [];
+        Object.keys(d.writes || {}).forEach(k => {
+            const m = /^receipt:([^:]+):(\d+)$/.exec(k);
+            if (m) list.push({ ifId: m[1], seq: Number(m[2]), irId: String(d.writes[k]) });
+        });
+        const need = list.filter(r => !saved[r.irId] && !(r.irId in IR_SEEN)).map(r => r.irId);
+        if (need.length && tx.tranIds) { let got = {}; try { got = tx.tranIds(need); } catch (e) { /* ids shown */ } need.forEach(id => { IR_SEEN[id] = got[id] || ''; }); }
+        return list.sort((p, q) => p.seq - q.seq || Number(p.ifId) - Number(q.ifId)).map(r => {
+            const op = (d.rplan || []).find(o => String(o.ifId) === r.ifId && Number(o.seq) === r.seq);
+            return Object.assign(r, { irNum: saved[r.irId] || IR_SEEN[r.irId] || 'IR id ' + r.irId, ifNum: op ? op.ifNum : '', pcs: op ? Object.keys(op.lines).reduce((s, i) => s + Number(op.lines[i]), 0) : null });
+        });
+    }
     function truckView(x, c, opt) {
         const d = x.data || {}, dp = defPcs(c), live = verify.liveIfs(d.ifs);
         const ps = data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
@@ -189,7 +205,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
             trailers: c.S.trailers || DEFAULT_TRAILERS, carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
-            trailer: d.trailer || '', otherItems: d.otherItems || [], shortNote: d.shortNote || null };
+            trailer: d.trailer || '', otherItems: d.otherItems || [], shortNote: d.shortNote || null,
+            receipt: d.depart ? receiptView(x, ps) : null };
+    }
+    // After departure the truck pop-up shows what arrived, not what was loaded: received / shipped per IF, missing pallets, its IRs.
+    function receiptView(x, ps) {
+        const sent = ps.filter(p => p.status !== VP.LOADED), d = x.data;
+        const rp = verify.planReceipts({ alloc: d.alloc || [], pallets: sent, received: d.received || {}, stamp: d.depart, seq: 0 });
+        return { perIf: rp.perIf, missing: sent.filter(p => p.status === VP.MISSING).map(p => p.code),
+            inTransit: sent.filter(p => p.status === VP.IN_TRANSIT).length, irs: irsOf(x) };
     }
     // Stages where pallets may go on or off.
     const OPEN = [T.LOADING, T.NEEDS_FIX, T.READY];
@@ -1495,11 +1519,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         });
         data.palletsByLoad(x.id, [VP.IN_TRANSIT]).filter(p => transit[String(p.id)]).forEach(p => data.updatePallet(p, { status: VP.MISSING }));
         const missing = cnt(data.palletStatusCounts([x.id]), x.id, VP.MISSING);
+        const newIrs = Object.keys(writes).filter(k => k.indexOf('receipt:') === 0 && !((x.data.writes || {})[k])).map(k => String(writes[k]));
+        let irNums = Object.assign({}, x.data.irNums);
+        try { if (newIrs.length && tx.tranIds) irNums = Object.assign(irNums, tx.tranIds(newIrs)); } catch (e) { log.error({ title: 'move receive ' + x.id + ' IR numbers', details: String(e) }); }
         assertClaim(x.id, claim, label, 'receive');   // right before the final write: never overwrite another request's state
         const fin = data.getLoad(x.id);
         data.updateLoad(fin, { status: T.RECEIVED, data: { rplan: (fin.data.rplan || []).concat(rp.ops), prevStatus: '', received: rp.cumulative, recvSeq: seq, recvRequested: null,
-            unposted: unposted, missing: missing, error: '', writes: writes, workingAt: 0, claim: '', phase: '', lastStep: stepOf('receipt_approved', c) } });
-        return { perIf: rp.perIf, missing: rp.missing, written: res.written, view: unloadView(mustTruck(x.id), c) };
+            unposted: unposted, missing: missing, error: '', writes: writes, irNums: irNums, workingAt: 0, claim: '', phase: '', lastStep: stepOf('receipt_approved', c) } });
+        const after = mustTruck(x.id);
+        return { perIf: rp.perIf, missing: rp.missing, written: res.written, irs: irsOf(after), view: unloadView(after, c) };
     });
 
     // ── v3 manager approvals and shadow report ───────────────────────────
@@ -1646,13 +1674,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (dep) {
                 const ps = shippedAll[String(x.id)] || [];
                 const rp = verify.planReceipts({ alloc: d.alloc || [], pallets: ps, received: d.received || {}, stamp: dep, seq: 0 }), got = cnt(counts, x.id, VP.RECEIVED) > 0;
-                const sk = skuNames([...new Set((d.alloc || []).reduce((s, al) => s.concat(Object.keys(al.lines)), []))]);
+                const sk = skuNames([...new Set((d.alloc || []).reduce((s, al) => s.concat(Object.keys(al.lines)), []))]), irs = irsOf(x);
                 (d.alloc || []).forEach(al => {
                     const per = rp.perIf.find(f => String(f.ifId) === String(al.ifId)) || { received: 0, shipped: 0 };
                     const pcs = Object.keys(al.lines).reduce((s, k) => s + Number(al.lines[k]), 0);
                     const pal = ps.filter(p => (p.lines || []).some(l => al.lines[String(l.item)] > 0)).length;      // pallets whose SKU this IF carries (a shared SKU counts on each IF)
                     rows.push(Object.assign({}, base, { ifId: String(al.ifId), ifNum: al.ifNum, toNum: al.toNum, skus: Object.keys(al.lines).map(k => ({ sku: sk[k] || k, qty: Number(al.lines[k]) })),
-                        pallets: (d.alloc || []).length === 1 ? ps.length : pal, pcs: pcs, received: got || x.status === T.RECEIVED ? per.received : null }));
+                        pallets: (d.alloc || []).length === 1 ? ps.length : pal, pcs: pcs, received: got || x.status === T.RECEIVED ? per.received : null,
+                        irs: irs.filter(r => r.ifId === String(al.ifId)).map(r => r.irNum) }));
                 });
             } else {
                 const live = verify.liveIfs(d.ifs), ps = loadedAll[String(x.id)] || [], fill = verify.fillExpected(live, verify.sumLines(ps));
@@ -1729,6 +1758,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 seal: dep ? dep.seal : (q.seal || ''), ifs: verify.liveIfs(d.ifs).map(f => f.ifNum), pallets: sts.reduce((s, st) => s + cnt(counts, x.id, st), 0), pcs: pcsOf(counts, x.id, sts),
                 status: x.status, stage: stageOf(x), startedBy: whoName(d.startedBy), startedAt: d.startedAt || '', markedBy: whoName(q.by), markedAt: q.at || (dep && dep.markedBy ? dep.at : ''),
                 confirmedBy: dep ? whoName(dep.approvedBy) || dep.approvedByRoster || '' : '', confirmedAt: dep ? dep.at : '', receivedAt: d.recvApprovedAt || '',
+                irs: dep ? irsOf(x).map(r => r.irNum + (r.pcs != null ? ' (' + verify._fmt(r.pcs) + ')' : '')) : [],
                 corrections: (d.corrections || []).map(corrText) };
         });
         return { rows: rows, days: Object.values(days).sort((p, q) => (p.day < q.day ? 1 : -1)), history: history, pulledAt: ns.pulledAt(), writeMode: writeMode(c) };

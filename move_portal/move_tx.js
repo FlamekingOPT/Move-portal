@@ -143,5 +143,14 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         throw new Error('Unknown op ' + op.op);
     }
 
-    return { apply };
+    // Item Receipt numbers (IR14494) for receipt internal ids; an unreadable one is left out (the caller shows the id).
+    function tranIds(ids) {
+        const out = {};
+        (ids || []).forEach(id => {
+            try { const v = search.lookupFields({ type: search.Type.ITEM_RECEIPT, id: id, columns: ['tranid'] }).tranid; if (v) out[String(id)] = 'IR' + String(v).replace(/^IR/i, ''); } catch (e) { /* shown as the id */ }
+        });
+        return out;
+    }
+
+    return { apply, tranIds };
 });
