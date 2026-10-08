@@ -143,11 +143,12 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         throw new Error('Unknown op ' + op.op);
     }
 
-    // Item Receipt numbers (IR14494) for receipt internal ids; an unreadable one is left out (the caller shows the id).
-    function tranIds(ids) {
-        const out = {};
+    // Transaction numbers for internal ids: receipts (IR14494) by default, kind 'if' for fulfillments (IF53837).
+    // An unreadable one is left out (the caller shows the id).
+    function tranIds(ids, kind) {
+        const out = {}, isIf = kind === 'if', type = isIf ? search.Type.ITEM_FULFILLMENT : search.Type.ITEM_RECEIPT, pre = isIf ? 'IF' : 'IR';
         (ids || []).forEach(id => {
-            try { const v = search.lookupFields({ type: search.Type.ITEM_RECEIPT, id: id, columns: ['tranid'] }).tranid; if (v) out[String(id)] = 'IR' + String(v).replace(/^IR/i, ''); } catch (e) { /* shown as the id */ }
+            try { const v = search.lookupFields({ type: type, id: id, columns: ['tranid'] }).tranid; if (v) out[String(id)] = pre + String(v).replace(/^I[FR]/i, ''); } catch (e) { /* shown as the id */ }
         });
         return out;
     }

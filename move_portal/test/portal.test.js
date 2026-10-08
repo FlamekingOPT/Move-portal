@@ -2247,7 +2247,7 @@ test('pallet_accept off-IF (on mode): add-on IF created on the covering TO, stam
     ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
     assert.equal(r.outcome, 'accepted');
-    assert.match(r.text, /^✅ Accepted · IF 90\d · new IF on TO700$/);
+    assert.match(r.text, /^✅ Accepted · IF90\d · new IF on TO700$/);
     const ops = ctx.tx._t.ops.filter(o => o.toId === '700' || o.ifNum === 'IF 901');
     assert.deepEqual(ops.map(o => o.op), ['if_create', 'if_stamp']);
     assert.deepEqual([ops[0].lines, ops[0].seal, ops[1].ifId, ops[1].lines], [{ '11': 120 }, '5260010', '901', { '11': 120 }]);
@@ -2336,7 +2336,7 @@ test('Task 2: a retry after completeAccept failed on an add-on does not create t
     assert.deepEqual([p1.status, p1.data.flag, x1.data.claim, ctx.tx._t.ops.filter(o => o.op === 'if_create').length], ['labeled', 'never_loaded', '', 1]);
     const r = ctx.run('pallet_accept', { truckId: t.id, palletId: stray.id });
     assert.equal(r.outcome, 'accepted');
-    assert.equal(r.text, '✅ Accepted · IF 901 · new IF on TO700');
+    assert.equal(r.text, '✅ Accepted · IF901 · new IF on TO700');
     assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_create').length, 1);
     assert.equal(ctx.tx._t.ops.filter(o => o.op === 'if_stamp' && o.ifId === '901').length, 1);
     assert.equal(ctx.data.getPallet(stray.id).status, 'received');

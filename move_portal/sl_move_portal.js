@@ -177,6 +177,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // The truck's Item Receipts from its writes (receipt:<ifId>:<seq> -> id): number, IF, pieces. irNums holds numbers saved at approve;
     // older trucks are looked up once per request.
     const IR_SEEN = {};
+    // The real number of an IF the portal just created (IF53837); its internal id if NetSuite can't say.
+    function newIfNum(id) {
+        let n = '';
+        try { if (tx.tranIds) n = tx.tranIds([String(id)], 'if')[String(id)] || ''; } catch (e) { /* shown as the id */ }
+        return n || 'IF ' + id;
+    }
     function irsOf(x) {
         const d = x.data || {}, saved = d.irNums || {}, list = [];
         Object.keys(d.writes || {}).forEach(k => {
@@ -913,7 +919,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 wrote = true;
                 const op = byKey[k], cur = data.getLoad(id), patch = { correctionWrites: Object.assign({}, cur.data.correctionWrites,
                     { [k + '|' + corrSig(op)]: { key: k, op: op.op, id: String(newId), sig: corrSig(op), at: c.now.stamp, by: c.user } }) };
-                if (op.op === 'if_create') patch.ifs = (cur.data.ifs || []).concat([{ ifId: String(newId), ifNum: 'IF ' + newId, toId: String(op.toId), toNum: op.toNum, status: 'B',
+                if (op.op === 'if_create') patch.ifs = (cur.data.ifs || []).concat([{ ifId: String(newId), ifNum: newIfNum(newId), toId: String(op.toId), toNum: op.toNum, status: 'B',
                     lines: Object.keys(op.lines).map(it => ({ item: String(it), sku: sk[String(it)], qty: Number(op.lines[it]) })) }]);
                 data.updateLoad(cur, { data: patch });   // fresh read: the write record and the attached IF land together
             });
@@ -1274,7 +1280,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 if (ns.resetCache) ns.resetCache();
                 return { outcome: 'pending', text: dec.text, view: unloadView(mustTruck(id), c) };
             }
-            const fin = Object.assign({}, dec, { ifId: String(newId), ifNum: 'IF ' + newId });
+            const fin = Object.assign({}, dec, { ifId: String(newId), ifNum: newIfNum(newId) });
             fin.text = acceptText(fin);
             completeAccept(id, data.getPallet(p.id), fin, c);
             release({});
