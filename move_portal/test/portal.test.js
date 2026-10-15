@@ -2757,3 +2757,91 @@ test('office IFs on: a truck still needs an IF; off: office-IF actions refuse a 
     const t = scanTruck(ctx, 1);
     assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: '1' }), /no IFs/);
 });
+
+function shipScan(ctx, n, mode) {
+    ctx.data.db.settings.writeMode = mode || 'on';
+    const t = scanTruck(ctx, n || 2);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id, seal: 'S' + t.id }, false);
+    return t;
+}
+
+test('scan-built Approve (on): writes TO then Shipped IF and the receipt lands on them', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 2);
+    ctx.run('ship_confirm', { truckId: t.id });
+    const x = ctx.data.getLoad(t.id), d = x.data;
+    const [to, f] = ctx.tx._t.ops;
+    assert.deepEqual([to.op, to.orderStatus, to.fromLoc, to.toLoc, to.lines, to.token], ['to_create', 'B', '35', '99', { '11': 240 }, '[MV-' + t.id + ']']);
+    assert.deepEqual([f.op, f.ship, f.toId, f.seal, f.trailer, f.lines], ['if_create', true, d.toId, 'S' + t.id, d.trailer, { '11': 240 }]);
+    assert.deepEqual([x.status, x.to, x.if, d.toNum, d.ifNum], ['departed', d.toId, d.ifId, 'TO' + d.toId, 'IF' + d.ifId]);
+    assert.deepEqual(d.alloc, [{ ifId: d.ifId, ifNum: 'IF' + d.ifId, toId: d.toId, toNum: 'TO' + d.toId, lines: { '11': 240 }, addOn: false }]);
+    t.ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('receipt_approve', { truckId: t.id });
+    const ir = ctx.tx._t.ops[2];
+    assert.deepEqual([ir.op, ir.ifId, ir.toId, ir.lines], ['receipt', d.ifId, d.toId, { '11': 240 }]);
+});
+
+test('scan-built Approve is blocked on a stock short and writes nothing', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 2);
+    ctx.data.db.stock['35']['11'].avail = 100;
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }), /Can't approve: YSN201 on truck 240, available 100/);
+    assert.equal(ctx.tx._t.ops.length, 0);
+    assert.equal(ctx.data.getLoad(t.id).status, 'ship_pending');
+});
+
+test('scan-built Approve in off / qty: plan only, the truck ships in the portal, no TO', () => {
+    ['off', 'qty'].forEach(m => {
+        const ctx = scanSetup();
+        const t = shipScan(ctx, 1, m);
+        ctx.run('ship_confirm', { truckId: t.id });
+        assert.equal(ctx.tx._t.ops.length, 0);
+        assert.equal(ctx.data.getLoad(t.id).status, 'departed');
+    });
+});
+
+test('scan-built: TO saved, IF failed → locked; Retry makes only the IF; Release needs the TO closed', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.tx._t.failOn = op => op.op === 'if_create';             // the fake sees the resolved op, so match by op, not by key
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }), /A manager can press Retry/);
+    let x = ctx.data.getLoad(t.id);
+    assert.equal(x.status, 'departing');
+    assert.ok(x.data.writes['to_create:' + t.id]);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: 'PLT1' }, false), /closed|waiting/);
+    assert.throws(() => ctx.run('ship_sendback', { truckId: t.id, note: 'x' }), /already being processed|not waiting/);
+    assert.throws(() => ctx.run('depart_release', { truckId: t.id }), /Close TO/);
+    ctx.tx._t.failOn = null;
+    ctx.run('depart_retry', { truckId: t.id });
+    assert.deepEqual(ctx.tx._t.ops.map(o => o.op), ['to_create', 'if_create']);
+    assert.equal(ctx.data.getLoad(t.id).status, 'departed');
+});
+
+test('scan-built: Release after the manager closed the TO puts the truck back on the floor', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.tx._t.failOn = op => op.op === 'if_create';
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }));
+    const toId = ctx.data.getLoad(t.id).data.writes['to_create:' + t.id];
+    ctx.tx._t.closed[toId] = true;
+    ctx.run('depart_release', { truckId: t.id });
+    const x = ctx.data.getLoad(t.id);
+    assert.equal(x.status, 'ready');                     // released, re-verified (scan trucks always match)
+    assert.equal(x.data.writes, null);
+});
+
+test('scan-built: Reject sends the truck back to the floor with the reason', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.run('ship_sendback', { truckId: t.id, note: 'take 2 YSN201 off' });
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.sentBack.note], ['loading', 'take 2 YSN201 off']);
+});
+
+test('Approvals shows a scan truck as one plain card with lines and weight', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 2);
+    const s = ctx.run('approvals').shipPending.find(q => String(q.truck.id) === String(t.id));
+    assert.deepEqual([s.scan, s.lines, s.lbs], [true, [{ sku: 'YSN201', pcs: 240 }], 2490]);
+});

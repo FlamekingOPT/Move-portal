@@ -410,6 +410,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function departPlan(x, inp, c, chk) {
         const truckNo = verify.truckNoForDay(chk.trucks, c.now.dayIso, x.id), ps = chk.ps;
         if (!ps.length) throw userErr('Nothing is loaded on this truck');
+        if (isScan(x)) {
+            const plan = verify.scanApprovePlan({ ref: x.id, lines: verify.linesPcs(verify.truckLines(ps)),
+                stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso }, S: c.S });
+            return { truckNo: truckNo, palletKey: palletKey(ps), plan: plan, ifs: [], otherItems: x.data.otherItems || [] };
+        }
         let plan;
         try {
             plan = verify.planDeparture({ ifs: chk.r.ifs, pallets: ps, toLines: reservedToLines(x.id, chk.trucks, null, c),
@@ -443,7 +448,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         try {
             verify.runOps(x.data.plan, writeMode(c), op => {
                 assertClaim(x.id, claim, truckLabel(x), 'depart');
-                return tx.apply(op);
+                return tx.apply(verify.resolveNew(op, writes));
             }, writes,
                 (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });  // fresh read so a stale copy never rewrites the claim
         } catch (e) {
@@ -459,7 +464,17 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (!planned || planned.indexOf(String(p.id)) !== -1) data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day });
             else data.updatePallet(p, { status: VP.LABELED, load: '', data: { flag: 'left_at_dock', leftAt: (c.now || {}).stamp || '', leftTruck: x.id } });
         });
-        data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { error: '', writes: writes, workingAt: 0, claim: '', phase: '', shortNote: null } });   // the note lives until the truck leaves
+        let ids = {};
+        if (isScan(x) && writes['to_create:' + x.id] && writes['if_create:new:to:' + x.id]) {   // on mode: the TO and IF exist now
+            const toId = String(writes['to_create:' + x.id]), ifId = String(writes['if_create:new:to:' + x.id]);
+            let toNum = 'TO ' + toId;
+            try { if (tx.tranIds) toNum = tx.tranIds([toId], 'to')[toId] || toNum; } catch (e) { /* shown as the id */ }
+            const ifNum = newIfNum(ifId);
+            ids = { toId: toId, toNum: toNum, ifId: ifId, ifNum: ifNum,
+                alloc: (x.data.alloc || []).map(a => Object.assign({}, a, { ifId: ifId, ifNum: ifNum, toId: toId, toNum: toNum })) };
+        }
+        data.updateLoad(data.getLoad(x.id), Object.assign({ status: T.DEPARTED, data: Object.assign({ error: '', writes: writes, workingAt: 0, claim: '', phase: '', shortNote: null }, ids) },
+            ids.toId ? { to: ids.toId, if: ids.ifId } : {}));   // the note lives until the truck leaves
         return { departed: true, view: truckView(mustTruck(x.id), c) };
     }
 
@@ -1019,6 +1034,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         mustPending(x0);
         const inp = shipInput(x0), mc = markCtx(x0, c);
         sealTaken(inp.seal, x0.id);
+        if (isScan(x0)) {                                // spec 2026-10-14 S4: blocked before anything is claimed or written
+            const tl = verify.linesPcs(verify.truckLines(data.palletsByLoad(x0.id, [VP.LOADED]))), items = Object.keys(tl);
+            const st = data.locationStock(c.S.locFrom, items), avail = {};
+            items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; });
+            const shorts = verify.stockCheck(tl, avail);
+            if (shorts.length) throw userErr('Can\'t approve: ' + verify.stockText(shorts, skuNames(items)) + '. Send it back to take pallets off, or fix stock in NetSuite and approve again.');
+        }
         let d = null, cl;
         try {
             // Re-verified from the guarded copy, and the plan is written with the claim.
@@ -1053,7 +1075,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('depart_release', true, (a, c) => {
         const guard = cur => {
             if (cur.status !== T.DEPARTING || !cur.data.depart) throw userErr('Nothing to release on this truck');
-            if (stampWritten(cur)) throw userErr('This truck is already stamped in NetSuite. Press Retry to finish the departure.');
+            if (isScan(cur)) {
+                const w = cur.data.writes || {}, toId = w['to_create:' + cur.id];
+                if (w['if_create:new:to:' + cur.id]) throw userErr('This truck is already in NetSuite. Press Retry to finish the departure.');
+                if (toId && !tx.toClosed(toId)) throw userErr('Close TO ' + toId + ' in NetSuite first (it has no IF yet), then Release.');
+            } else if (stampWritten(cur)) throw userErr('This truck is already stamped in NetSuite. Press Retry to finish the departure.');
             if (!cur.data.error && !stale(cur)) throw userErr('This departure is still running. Wait a minute, then try again.');
         };
         guard(mustTruck(a.truckId));
@@ -1613,7 +1639,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const flagged = [].concat.apply([], settled.map(x => flaggedRows(x))).sort((p, q) => (Number(p.truckId) - Number(q.truckId)) || (Number(p.palletId) - Number(q.palletId)));   // oldest truck first
         const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
             const q = x.data.shipReq;
-            return { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
+            const sr = isScan(x) ? scanRows(x, data.palletsByLoad(x.id, [VP.LOADED]), c) : null;
+            return { scan: !!sr, lines: sr ? sr.rows.map(r => ({ sku: r.sku, pcs: r.pcs })) : [], lbs: sr ? sr.total : null, truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
                 ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
                 otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) };
         });
@@ -1624,7 +1651,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             trucks: fixTrucks,
             freeIfs: freeIfs,
             writeMode: writeMode(c),
-            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { canRelease: !stampWritten(x) })),
+            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { scan: isScan(x), canRelease: isScan(x) ? !(x.data.writes || {})['if_create:new:to:' + x.id] : !stampWritten(x),
+                toId: isScan(x) ? (x.data.writes || {})['to_create:' + x.id] || '' : '' })),
             receipts: settled.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;
                 try {
