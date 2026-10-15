@@ -2899,6 +2899,10 @@ test('scan-built: a late pallet accepted after shipping gets a one-pallet TO + S
     assert.ok(x.data.writes['to_create:' + ref] && x.data.writes['if_create:new:to:' + ref]);
     assert.equal(x.data.alloc.length, 2);
     assert.equal(ctx.data.getPallet(late.id).status, 'received');
+    t.ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
+    ctx.run('receipt_approve', { truckId: t.id });
+    const irs = ctx.tx._t.ops.filter(o => o.op === 'receipt');
+    assert.ok(irs.some(o => o.ifId === x.data.alloc[1].ifId && o.toId === x.data.alloc[1].toId && o.lines['11'] === 120));
 });
 
 test('scan-built: a late pallet is refused when Riverside cannot cover it, and nothing is written', () => {
@@ -2920,4 +2924,23 @@ test('Dashboard lists a loading scan truck as one row with its SKUs', () => {
     const t = scanTruck(ctx, 2);
     const row = ctx.run('dashboard').rows.find(r => String(r.truckId) === String(t.id));
     assert.deepEqual([row.ifNum, row.toNum, row.skus, row.pallets, row.pcs], ['—', '—', [{ sku: 'YSN201', qty: 240 }], 2, 240]);
+});
+
+test('scan-built: a late-pallet Accept retried after a failed IF is not blocked by the stock the TO already took', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.run('ship_confirm', { truckId: t.id });
+    const late = printLabels(ctx, 1, 'Jlate3')[0];
+    ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);
+    const ref = t.id + '-P' + late.id, n0 = ctx.tx._t.ops.length;
+    ctx.tx._t.failOn = op => op.op === 'if_create';
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: late.id }), /Accept refused/);
+    ctx.tx._t.failOn = null;
+    ctx.data.db.stock['35']['11'].avail = 10;                    // the TO already consumed the stock
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: late.id });
+    assert.equal(r.outcome, 'accepted');
+    const ops = ctx.tx._t.ops.slice(n0).filter(o => o.ref === ref || o.op === 'if_create');
+    assert.equal(ops.filter(o => o.op === 'to_create').length, 1);
+    assert.equal(ops.filter(o => o.op === 'if_create').length, 1);
+    assert.equal(ctx.data.getPallet(late.id).status, 'received');
 });

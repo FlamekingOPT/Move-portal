@@ -1352,7 +1352,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     // Spec 2026-10-14 S13: a scan-built truck has no office TO to add to, so the pallet gets its own TO + Shipped IF, stamped like its truck.
     function acceptScanPallet(x0, p0, item, sk, pcs, c) {
-        const st = data.locationStock(c.S.locFrom, [item]), shorts = verify.stockCheck({ [item]: pcs }, { [item]: st[item] ? Number(st[item].avail) || 0 : 0 });
+        const ref0 = x0.id + '-P' + p0.id, resumed = !!((data.getLoad(x0.id).data.writes || {})['to_create:' + ref0]);   // a retry: the TO already took the stock
+        const st = resumed ? {} : data.locationStock(c.S.locFrom, [item]), shorts = resumed ? [] : verify.stockCheck({ [item]: pcs }, { [item]: st[item] ? Number(st[item].avail) || 0 : 0 });
         if (shorts.length) return { outcome: 'refused', text: '⛔ Can\'t accept: ' + verify.stockText(shorts, { [item]: sk }), view: unloadView(x0, c) };
         const cl = claimLoad(x0, null, 'accept', decideGuard, {});
         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
