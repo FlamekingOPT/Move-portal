@@ -2812,7 +2812,6 @@ test('scan-built: TO saved, IF failed → locked; Retry makes only the IF; Relea
     assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: 'PLT1' }, false), /closed|waiting/);
     assert.throws(() => ctx.run('ship_sendback', { truckId: t.id, note: 'x' }), /already being processed|not waiting/);
     assert.throws(() => ctx.run('depart_release', { truckId: t.id }), /Close TO/);
-    ctx.tx._t.failOn = null;
     ctx.run('depart_retry', { truckId: t.id });
     assert.deepEqual(ctx.tx._t.ops.map(o => o.op), ['to_create', 'if_create']);
     assert.equal(ctx.data.getLoad(t.id).status, 'departed');
@@ -2844,4 +2843,42 @@ test('Approvals shows a scan truck as one plain card with lines and weight', () 
     const t = shipScan(ctx, 2);
     const s = ctx.run('approvals').shipPending.find(q => String(q.truck.id) === String(t.id));
     assert.deepEqual([s.scan, s.lines, s.lbs], [true, [{ sku: 'YSN201', pcs: 240 }], 2490]);
+});
+
+test('scan-built: after Release a second Approve makes a fresh TO with its own tag and ships', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.tx._t.failOn = op => op.op === 'if_create';
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }));
+    const toId = ctx.data.getLoad(t.id).data.writes['to_create:' + t.id];
+    ctx.tx._t.closed[toId] = true;
+    ctx.run('depart_release', { truckId: t.id });
+    ctx.run('ship_mark', { truckId: t.id, seal: 'S' + t.id }, false);
+    ctx.run('ship_confirm', { truckId: t.id });
+    const x = ctx.data.getLoad(t.id), tos = ctx.tx._t.ops.filter(o => o.op === 'to_create');
+    assert.equal(tos.length, 2);
+    assert.equal(tos[1].token, '[MV-' + t.id + '-R1]');
+    assert.equal(x.status, 'departed');
+    assert.notEqual(x.data.toId, toId);
+    assert.equal(x.data.toId, x.to);
+});
+
+test('scan-built: Release is refused while an unrecorded TO with the current tag is still open', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.tx._t.failOn = op => op.op === 'to_create';
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }));
+    ctx.tx._t.tags['[MV-' + t.id + ']'] = '777';
+    assert.throws(() => ctx.run('depart_release', { truckId: t.id }), /Close TO777/);
+});
+
+test('scan-built: Release is refused once the IF exists, and the retries row says canRelease false', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    const cur = ctx.data.getLoad(t.id);
+    ctx.data.updateLoad(cur, { status: 'departing', data: { error: 'pallet step failed', depart: { day: '2026-10-15' }, workingAt: 0,
+        writes: { ['to_create:' + t.id]: '501', ['if_create:new:to:' + t.id]: '502' } } });
+    assert.throws(() => ctx.run('depart_release', { truckId: t.id }), /already in NetSuite/);
+    const r = ctx.run('approvals').retries.find(q => String(q.id) === String(t.id));
+    assert.deepEqual([r.canRelease, r.toId, r.toNum], [false, '501', 'TO501']);
 });

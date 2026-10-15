@@ -411,9 +411,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const truckNo = verify.truckNoForDay(chk.trucks, c.now.dayIso, x.id), ps = chk.ps;
         if (!ps.length) throw userErr('Nothing is loaded on this truck');
         if (isScan(x)) {
-            const plan = verify.scanApprovePlan({ ref: x.id, lines: verify.linesPcs(verify.truckLines(ps)),
+            const plan = verify.scanApprovePlan({ ref: x.data.approveRef || x.id, lines: verify.linesPcs(verify.truckLines(ps)),
                 stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso }, S: c.S });
-            return { truckNo: truckNo, palletKey: palletKey(ps), plan: plan, ifs: [], otherItems: x.data.otherItems || [] };
+            return { truckNo: truckNo, approveRef: x.data.approveRef || String(x.id), palletKey: palletKey(ps), plan: plan, ifs: [], otherItems: x.data.otherItems || [] };
         }
         let plan;
         try {
@@ -465,8 +465,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             else data.updatePallet(p, { status: VP.LABELED, load: '', data: { flag: 'left_at_dock', leftAt: (c.now || {}).stamp || '', leftTruck: x.id } });
         });
         let ids = {};
-        if (isScan(x) && writes['to_create:' + x.id] && writes['if_create:new:to:' + x.id]) {   // on mode: the TO and IF exist now
-            const toId = String(writes['to_create:' + x.id]), ifId = String(writes['if_create:new:to:' + x.id]);
+        const ref = x.data.approveRef || x.id;
+        if (isScan(x) && writes['to_create:' + ref] && writes['if_create:new:to:' + ref]) {   // on mode: the TO and IF exist now
+            const toId = String(writes['to_create:' + ref]), ifId = String(writes['if_create:new:to:' + ref]);
             let toNum = 'TO ' + toId;
             try { if (tx.tranIds) toNum = tx.tranIds([toId], 'to')[toId] || toNum; } catch (e) { /* shown as the id */ }
             const ifNum = newIfNum(ifId);
@@ -985,9 +986,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // What the claim write carries, so a departing truck always has its plan (no claimed-but-unplanned state).
     function departData(d, inp, c) {
-        return { depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
+        return Object.assign({ depart: Object.assign({ truckNo: d.truckNo, day: c.now.dayIso, at: c.now.stamp, by: c.actor,
             approvedBy: c.mgr ? c.user : '', approvedByRoster: c.mgr ? c.actor : '', otherItems: d.otherItems || [] }, inp), plan: d.plan.ops, alloc: d.plan.alloc, unplanned: d.plan.unplanned,
-            bol: d.plan.bol, ifs: d.ifs, departPallets: d.palletKey, writes: {}, lastStep: stepOf('confirmed', c) };
+            bol: d.plan.bol, ifs: d.ifs, departPallets: d.palletKey, writes: {}, lastStep: stepOf('confirmed', c) }, d.approveRef ? { approveRef: d.approveRef } : {});
     }
     // Re-verify and plan from a truck copy; a mismatch is thrown, so a claim is never taken (or is released) on a load that no longer matches.
     function planOrMismatch(x, inp, c) {
@@ -1071,14 +1072,19 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     // A stuck departure that wrote no stamp yet: a manager sends it back to needs_fix (the seal is free again) and it re-verifies.
+    function toNumOf(id) {
+        try { if (tx.tranIds) return tx.tranIds([String(id)], 'to')[String(id)] || 'TO ' + id; } catch (e) { /* the id */ }
+        return 'TO ' + id;
+    }
     function stampWritten(x) { return Object.keys(x.data.writes || {}).some(k => k.indexOf('if_stamp:') === 0); }
     act('depart_release', true, (a, c) => {
         const guard = cur => {
             if (cur.status !== T.DEPARTING || !cur.data.depart) throw userErr('Nothing to release on this truck');
             if (isScan(cur)) {
-                const w = cur.data.writes || {}, toId = w['to_create:' + cur.id];
-                if (w['if_create:new:to:' + cur.id]) throw userErr('This truck is already in NetSuite. Press Retry to finish the departure.');
-                if (toId && !tx.toClosed(toId)) throw userErr('Close TO ' + toId + ' in NetSuite first (it has no IF yet), then Release.');
+                const ref = cur.data.approveRef || cur.id, w = cur.data.writes || {};
+                if (w['if_create:new:to:' + ref]) throw userErr('This truck is already in NetSuite. Press Retry to finish the departure.');
+                const toId = w['to_create:' + ref] || (tx.findTo ? tx.findTo('[MV-' + ref + ']') : null);   // a TO that saved but was never recorded
+                if (toId && !tx.toClosed(toId)) throw userErr('Close ' + toNumOf(toId) + ' in NetSuite first (it has no IF yet), then Release.');
             } else if (stampWritten(cur)) throw userErr('This truck is already stamped in NetSuite. Press Retry to finish the departure.');
             if (!cur.data.error && !stale(cur)) throw userErr('This departure is still running. Wait a minute, then try again.');
         };
@@ -1091,8 +1097,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         });
         assertClaim(cl.Ld.id, cl.claim, truckLabel(cl.Ld), 'release');
         // verify cleared too: a re-verify that fails below must not leave the old (ready) result on a needs_fix truck.
-        data.updateLoad(data.getLoad(cl.Ld.id), { status: T.NEEDS_FIX, data: { claim: '', workingAt: 0, phase: '', error: '', depart: null, plan: null, alloc: null,
-            unplanned: null, bol: null, writes: null, departPallets: null, verify: null, shipReq: null } });
+        data.updateLoad(data.getLoad(cl.Ld.id), { status: T.NEEDS_FIX, data: Object.assign({ claim: '', workingAt: 0, phase: '', error: '', depart: null, plan: null, alloc: null,
+            unplanned: null, bol: null, writes: null, departPallets: null, verify: null, shipReq: null },
+            isScan(cl.Ld) ? { approveRef: cl.Ld.id + '-R' + ((cl.Ld.data.releases || 0) + 1), releases: (cl.Ld.data.releases || 0) + 1 } : {}) });
         return verifyOut(verifyTruck(cl.Ld.id, c), c);
     });
 
@@ -1651,8 +1658,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             trucks: fixTrucks,
             freeIfs: freeIfs,
             writeMode: writeMode(c),
-            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { scan: isScan(x), canRelease: isScan(x) ? !(x.data.writes || {})['if_create:new:to:' + x.id] : !stampWritten(x),
-                toId: isScan(x) ? (x.data.writes || {})['to_create:' + x.id] || '' : '' })),
+            retries: trucks.filter(x => x.status === T.DEPARTING && stuck(x)).map(x => Object.assign(sum(x), { scan: isScan(x), canRelease: isScan(x) ? !(x.data.writes || {})['if_create:new:to:' + (x.data.approveRef || x.id)] : !stampWritten(x),
+                toId: isScan(x) ? (x.data.writes || {})['to_create:' + (x.data.approveRef || x.id)] || '' : '',
+                toNum: isScan(x) && (x.data.writes || {})['to_create:' + (x.data.approveRef || x.id)] ? toNumOf((x.data.writes || {})['to_create:' + (x.data.approveRef || x.id)]) : '' })),
             receipts: settled.filter(x => UNLOADABLE.indexOf(x.status) !== -1 || (x.status === T.APPROVING && stuck(x))).map(x => {
                 const isStuck = x.status === T.APPROVING;
                 try {

@@ -200,5 +200,6 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         return out;
     }
 
-    return { apply, tranIds, toClosed };
+    function findTo(token) { const f = findByToken(token, 'TrnfrOrd'); return f ? String(f) : null; }
+    return { apply, tranIds, toClosed, findTo };
 });
