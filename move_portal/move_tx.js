@@ -156,7 +156,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     }
     function createIf(op) {
         if (op.ship === true && op.token) {           // scan-built: a Shipped IF an earlier request saved on this TO
-            const found = findByToken(op.token, 'ItemShip', ['AND', ['createdfrom', 'anyof', String(op.toId)], 'AND', ['status', 'anyof', ['ItemShip:C']]]);
+            const found = findIf(op.token, op.toId);
             if (found) return found;
         }
         if (op.ship === false && op.token) {
@@ -201,5 +201,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     }
 
     function findTo(token) { const f = findByToken(token, 'TrnfrOrd'); return f ? String(f) : null; }
-    return { apply, tranIds, toClosed, findTo };
+    // A Shipped IF on this TO tagged with the token (a scan-built truck's or late pallet's).
+    function findIf(token, toId) { return findByToken(token, 'ItemShip', ['AND', ['createdfrom', 'anyof', String(toId)], 'AND', ['status', 'anyof', ['ItemShip:C']]]); }
+    return { apply, tranIds, toClosed, findTo, findIf };
 });

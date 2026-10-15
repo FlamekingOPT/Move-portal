@@ -255,7 +255,8 @@ define([], function () {
         return opAllowed(op, mode) && !!w && String(w).indexOf('skipped:') !== 0;
     }
     function reservationsFromTrucks(o) {
-        const res = {}, others = (o.trucks || []).filter(t => String(t.id) !== String(o.exceptId) && t.data && t.data.v3);
+        // A scan-built truck never uses office TO room (spec S3): its pallets go on its own new TO at Approve.
+        const res = {}, others = (o.trucks || []).filter(t => String(t.id) !== String(o.exceptId) && t.data && t.data.v3 && t.data.kind !== 'scan');
         others.filter(t => RESERVING.indexOf(t.status) !== -1 && t.data.plan).forEach(t => t.data.plan.forEach(op => {
             if (inNetSuite(op, o.mode, t.data.writes)) return;
             if (op.op === 'if_qty') addRes(res, op.toId, op.item, Number(op.to) - Number(op.from));

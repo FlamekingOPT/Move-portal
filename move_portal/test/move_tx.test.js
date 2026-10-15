@@ -231,6 +231,14 @@ test('if_create Shipped with a token finds an earlier Shipped IF on that TO, els
     assert.deepEqual([s.log.last.values.shipstatus, s.log.last.values.memo, s.log.last.values.custbody7], ['C', 'Truck 3 · 11/02 · [MV-12]', 'SEAL: 0048812']);
 });
 
+test('findIf finds a Shipped IF by its tag on that TO', () => {
+    const s = setup({ found: '902' });
+    assert.equal(s.tx.findIf('[MV-12]', '600'), '902');
+    const f = JSON.stringify(s.log.searches[0].filters);
+    assert.ok(f.indexOf('[MV-12]') !== -1 && f.indexOf('ItemShip:C') !== -1 && f.indexOf('"600"') !== -1);
+    assert.equal(setup({}).tx.findIf('[MV-12]', '600'), null);
+});
+
 test('toClosed: Closed status, every line closed, or gone', () => {
     const s = setup({ to: [{ item: '975', quantity: 600, isclosed: true }] });
     assert.equal(s.tx.toClosed('600'), true);

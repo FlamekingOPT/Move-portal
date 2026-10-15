@@ -29,7 +29,7 @@ const snap = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
 // Seed settings the first time the store is created; merge items and trailers on every start.
 const TRAILERS = ['537224', '416460', '105488', '522051', '211659', '543804', '487491'];
 if (!data.db.settings.v3seeded) {
-    Object.assign(data.db.settings, { locFrom: String(snap.locFrom || '35'), locTo: String(snap.locTo || '46'), labelCode: 'qr', writeMode: 'off',
+    Object.assign(data.db.settings, { locFrom: String(snap.locFrom || '35'), locTo: String(snap.locTo || '46'), labelCode: 'qr', writeMode: 'off', officeIfs: false,
         defaultCarrier: 'Armstrong Group', trailers: TRAILERS.slice(), v3seeded: true });
 }
 data.db.settings.trailers = data.db.settings.trailers || [];

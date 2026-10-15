@@ -91,9 +91,9 @@ function makeFakeData(core) {
             return id;
         },
         updatePallet: (p, patch) => { applyPallet(db.pallets[p.id], patch, p); },
-        labeledPiecesByItem: () => {
-            const o = {};
-            pallets().filter(p => p.status === 'labeled').forEach(p => (p.data.lines || []).forEach(l => { o[l.item] = (o[l.item] || 0) + l.pcs; }));
+        labeledPiecesByItem: statuses => {
+            const o = {}, st = statuses || ['labeled'];
+            pallets().filter(p => st.indexOf(p.status) !== -1).forEach(p => (p.data.lines || []).forEach(l => { o[l.item] = (o[l.item] || 0) + l.pcs; }));
             return o;
         },
         movedByDay: () => { const o = {}; pallets().filter(p => p.shippedDay).forEach(p => { o[p.shippedDay] = (o[p.shippedDay] || 0) + 1; }); return o; },

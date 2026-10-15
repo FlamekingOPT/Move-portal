@@ -207,7 +207,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const vd = d.verify ? pubDiffs(d.verify.diffs || [], ps.filter(p => p.status === VP.LOADED)) : null;
         return { stage: x.status, verify: d.verify ? Object.assign({}, d.verify, { diffs: vd }) : null,
             suggestions: x.status === T.NEEDS_FIX && d.verify ? suggestionsFor(x, d.ifs, d.verify.diffs || [], dp, (opt || {}).trucks, (opt || {}).planned) : [],   // only needs_fix reads NetSuite here
-            truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }), lines: lines,
+            truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }, isScan(x) ? { toNum: d.toNum || '', ifNum: d.ifNum || '' } : {}), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
             trailers: c.S.trailers || DEFAULT_TRAILERS, carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
@@ -287,8 +287,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return res;
     }
     // Open TO lines minus the room other trucks will need (loading surplus, planned-but-unwritten raises and add-ons, pending accepts).
+    // TOs scan-built trucks created (spec S3): never office room, whatever NetSuite says is left on them.
+    function scanTos(trucks) {
+        const o = {};
+        (trucks || []).forEach(x => Object.keys((x.data && x.data.writes) || {}).forEach(k => { if (k.indexOf('to_create:') === 0) o[String(x.data.writes[k])] = true; }));
+        return o;
+    }
     function reservedToLines(exceptId, trucks, loadedAll, c, openTo) {
-        const byTruck = {}, toLines = verify.reserveToLines(openTo || ns.openToLines(), pendingReservations(trucks));
+        const own = scanTos(trucks), open = (openTo || ns.openToLines()).filter(r => !own[String(r.toId)]);
+        const byTruck = {}, toLines = verify.reserveToLines(open, pendingReservations(trucks));
         (loadedAll || data.palletsByStatus([VP.LOADED])).forEach(p => { (byTruck[p.loadId] = byTruck[p.loadId] || []).push(p); });
         Object.keys(byTruck).forEach(k => { byTruck[k] = verify.sumLines(byTruck[k]); });
         return verify.reserveToLines(toLines, verify.reservationsFromTrucks({ trucks: trucks, loadedByTruck: byTruck, toLines: toLines, mode: writeMode(c), exceptId: exceptId }));
@@ -445,8 +452,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function finishDepart(x, c, claim) {
         const writes = Object.assign({}, x.data.writes);
+        let res;
         try {
-            verify.runOps(x.data.plan, writeMode(c), op => {
+            res = verify.runOps(x.data.plan, writeMode(c), op => {
                 assertClaim(x.id, claim, truckLabel(x), 'depart');
                 return tx.apply(verify.resolveNew(op, writes));
             }, writes,
@@ -476,7 +484,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         }
         data.updateLoad(data.getLoad(x.id), Object.assign({ status: T.DEPARTED, data: Object.assign({ error: '', writes: writes, workingAt: 0, claim: '', phase: '', shortNote: null }, ids) },
             ids.toId ? { to: ids.toId, if: ids.ifId } : {}));   // the note lives until the truck leaves
-        return { departed: true, view: truckView(mustTruck(x.id), c) };
+        // What this attempt wrote, and what stayed a plan (writeMode): the manager's Approve message says which.
+        return Object.assign({ departed: true, written: res.written, planOnly: res.planOnly, view: truckView(mustTruck(x.id), c) },
+            ids.toId ? { toNum: ids.toNum, ifNum: ids.ifNum } : {});
     }
 
     const A = {};
@@ -563,7 +573,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const info = data.itemInfo(items), st = items.length ? data.locationStock(c.S.locFrom, items) : {}, avail = {}, cfg = {};
         const cs = data.configsByItem(c.S.activeBatch);
         items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; const d = (cs[k] || []).find(x => x.isDefault) || (cs[k] || [])[0]; if (d) cfg[k] = d.code; });
-        return verify.labelRows(rows, { skuMap: skuMap, items: info, avail: avail, labeled: data.labeledPiecesByItem(), cfg: cfg, maxPrint: Number(c.S.maxPrint) || 250 });
+        return verify.labelRows(rows, { skuMap: skuMap, items: info, avail: avail, labeled: data.labeledPiecesByItem([VP.LABELED, VP.LOADED]), cfg: cfg, maxPrint: Number(c.S.maxPrint) || 250 });
     });
 
     function pubReq(q) {
@@ -1094,7 +1104,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (isScan(cur)) {
                 const ref = cur.data.approveRef || cur.id, w = cur.data.writes || {};
                 if (w['if_create:new:to:' + ref]) throw userErr('This truck is already in NetSuite. Press Retry to finish the departure.');
-                const toId = w['to_create:' + ref] || (tx.findTo ? tx.findTo('[MV-' + ref + ']') : null);   // a TO that saved but was never recorded
+                const tag = verify.scanTag(ref), toId = w['to_create:' + ref] || (tx.findTo ? tx.findTo(tag) : null);   // a TO that saved but was never recorded
+                // A Shipped IF that saved but was never recorded: releasing would ship the truck twice.
+                if (toId && tx.findIf && tx.findIf(tag, toId)) throw userErr('This truck is already in NetSuite (IF found). Press Retry to finish the departure.');
                 if (toId && !tx.toClosed(toId)) throw userErr('Close ' + toNumOf(toId) + ' in NetSuite first (it has no IF yet), then Release.');
             } else if (stampWritten(cur)) throw userErr('This truck is already stamped in NetSuite. Press Retry to finish the departure.');
             if (!cur.data.error && !stale(cur)) throw userErr('This departure is still running. Wait a minute, then try again.');
@@ -1461,12 +1473,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             throw e;
         }
     });
+    // Spec S12: a late-pallet Accept on a scan truck that made its TO but not its IF. Rejecting now would orphan that TO (it holds the stock).
+    function halfAccepted(x, palletId) {
+        const ref = x.id + '-P' + palletId, w = x.data.writes || {}, toId = w['to_create:' + ref];
+        if (!toId || w['if_create:new:to:' + ref] || tx.toClosed(toId)) return;
+        const n = toNumOf(toId);
+        throw userErr(n + ' was created for this pallet. Accept again to finish it, or close ' + n + ' in NetSuite first.');
+    }
     act('pallet_reject', true, (a, c) => {
         const note = String(a.note || '').trim().slice(0, 300);
         if (!note) throw userErr('Enter a note: why is this pallet rejected?');
         const x0 = mustTruck(a.truckId);
         decideGuard(x0);
         const p0 = mustFlaggedOn(x0, a.palletId, true);
+        halfAccepted(x0, p0.id);
         const cl = claimLoad(x0, null, 'reject', decideGuard, {});
         const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
         const pendingOne = !!(p0.data.decision && p0.data.decision.kind === 'accepted_pending');
@@ -1474,6 +1494,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         let p;
         try {
             const again = mustFlaggedOn(cl.Ld, a.palletId, true);   // another decision may have landed between the first check and the claim
+            halfAccepted(cl.Ld, p0.id);
             if (!!(again.data.decision && again.data.decision.kind === 'accepted_pending') !== pendingOne) throw userErr('That pallet was just decided by someone else. Refresh.');
             p = data.getPallet(p0.id);
             unloadFromOther(p, c);
@@ -1690,10 +1711,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const flagged = [].concat.apply([], settled.map(x => flaggedRows(x))).sort((p, q) => (Number(p.truckId) - Number(q.truckId)) || (Number(p.palletId) - Number(q.palletId)));   // oldest truck first
         const shipPending = trucks.filter(x => x.status === T.SHIP_PENDING && x.data.shipReq).map(x => {
             const q = x.data.shipReq;
-            const sr = isScan(x) ? scanRows(x, data.palletsByLoad(x.id, [VP.LOADED]), c) : null;
-            return { scan: !!sr, lines: sr ? sr.rows.map(r => ({ sku: r.sku, pcs: r.pcs })) : [], lbs: sr ? sr.total : null, truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
+            let sr = null, err = '';
+            if (isScan(x)) {
+                try { sr = scanRows(x, data.palletsByLoad(x.id, [VP.LOADED]), c); } catch (e) {     // one bad truck must not fail the whole Approvals response
+                    log.error({ title: 'move ship card ' + x.id, details: (e && e.stack) || String(e) });
+                    err = 'Could not read this truck: ' + (e.message || e);
+                }
+            }
+            return Object.assign({ scan: isScan(x), lines: sr ? sr.rows.map(r => ({ sku: r.sku, pcs: r.pcs })) : [], lbs: sr ? sr.total : null }, err ? { error: err } : {}, { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
                 ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
-                otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) };
+                otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) });
         });
         return {
             shipPending: shipPending,

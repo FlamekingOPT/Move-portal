@@ -186,9 +186,10 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
     }
     function createPallet(patch) { return Number(createWith(REC.PALLET, palletValues(patch, null))); }
     function updatePallet(p, patch) { record.submitFields({ type: REC.PALLET, id: p.id, values: palletValues(patch, p) }); }
-    function labeledPiecesByItem() {
+    // statuses: the label preview also counts loaded pallets (still at Riverside); the print plan counts labeled only.
+    function labeledPiecesByItem(statuses) {
         const out = {};
-        palletsByStatus([core.PALLET.LABELED]).forEach(p => p.lines.forEach(l => { out[l.item] = (out[l.item] || 0) + (Number(l.pcs) || 0); }));
+        palletsByStatus(statuses || [core.PALLET.LABELED]).forEach(p => p.lines.forEach(l => { out[l.item] = (out[l.item] || 0) + (Number(l.pcs) || 0); }));
         return out;
     }
     function movedByDay() {

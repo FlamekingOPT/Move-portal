@@ -615,6 +615,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (st === 'ship_pending') return flash('amber', '🚚 Marked shipped: waiting for a manager to confirm', esc('Seal ' + ((t.shipReq || {}).seal || '')));
             if (st === 'departing') return flash('amber', 'Departing… a NetSuite write is pending', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals');
             if (t.depart && t.status === 'departed') return err + flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal),
+                v.scan ? (t.toNum ? esc(t.toNum + ' + ' + t.ifNum) : '') :
                 t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged');
             return err;
         }
@@ -1182,6 +1183,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 const id = esc(x.truck.id), lab = esc(x.truck.label);
                 return '<div class="card bl"><h4>🚚 ' + lab + '</h4><div class="muted">' + esc(['Seal ' + x.seal, 'sent ' + (x.markedAt || '') + ' by ' + (x.markedBy || '?')].join(' · ')) + '</div>' +
                     '<div class="muted">' + esc(x.lines.map(l => l.sku + ' × ' + num(l.pcs)).join(' · ')) + ' · ' + num(x.pallets) + ' pallets' + (x.lbs != null ? ' · ' + num(x.lbs) + ' lb' : '') + '</div>' +
+                    (x.error ? '<div class="muted">⚠ ' + esc(x.error) + '</div>' : '') +
                     '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Approve</button>' +
                     '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Reject</button></div>' +
                     '<div class="muted sm">Approve writes the TO + IF to NetSuite and marks it Shipped.</div></div>';
@@ -1296,6 +1298,11 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!r.ok) { SCREENS.approve(errBox(r.error)); return; }
             if (r.needsFix) { SCREENS.approve(flash('red', '❌ ' + esc(label) + ' no longer matches its IFs: back to Needs IF fix', '', (r.diffs || []).map(d => esc(d.text)).join('<br>'))); return; }
             const t = r.view.truck;
+            if (r.view.scan) {                          // scan-built: say what reached NetSuite (spec §3 "Plan saved"); no BOL line
+                SCREENS.approve(flash('green', r.toNum ? '✅ ' + esc(t.label) + ' shipped · ' + esc(r.toNum) + ' + ' + esc(r.ifNum) + ' written to NetSuite'
+                    : '✅ ' + esc(t.label) + ' shipped in the portal · Plan saved (writeMode ' + esc(r.view.writeMode) + ': nothing written to NetSuite)', esc('Seal ' + ((t.depart || {}).seal || ''))));
+                return;
+            }
             SCREENS.approve(flash('green', '✅ ' + esc(t.label) + ' shipped', esc('Seal ' + ((t.depart || {}).seal || '')),
                 t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged'));
         };

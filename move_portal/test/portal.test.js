@@ -2959,3 +2959,119 @@ test('labels_preview drops null sheet entries and keeps sheet row numbers', () =
     const r = ctx.run('labels_preview', { rows: [null, { sku: 'YSN201', pcs: 120, pallets: 1, odd: 0 }] });
     assert.deepEqual(r.rows.map(x => [x.n, x.status]), [[3, 'ok']]);
 });
+
+// ── final fix wave (2026-10-15) ──────────────────────────────────────────
+test('final1: scan Approve says what was written: TO + IF numbers in on, plan-only keys in off', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    const r = ctx.run('ship_confirm', { truckId: t.id });
+    const d = ctx.data.getLoad(t.id).data;
+    assert.deepEqual([r.departed, r.toNum, r.ifNum, r.planOnly], [true, 'TO' + d.toId, 'IF' + d.ifId, []]);
+    assert.deepEqual(r.written, ['to_create:' + t.id, 'if_create:new:to:' + t.id]);
+    assert.deepEqual([r.view.truck.toNum, r.view.truck.ifNum], ['TO' + d.toId, 'IF' + d.ifId]);
+    const off = scanSetup();
+    const t2 = shipScan(off, 1, 'off');
+    const r2 = off.run('ship_confirm', { truckId: t2.id });
+    assert.ok(r2.planOnly.length > 0);
+    assert.deepEqual([r2.written, r2.toNum, r2.ifNum], [[], undefined, undefined]);
+});
+
+test('final2: a loaded scan truck reserves no office TO room (office IFs on)', () => {
+    const ctx = scanSetup();
+    scanTruck(ctx, 10);                                     // 1,200 YSN201 loaded: all of TO700's room if it were reserved
+    ctx.data.db.settings.officeIfs = true;
+    const o = truckWith(ctx, 1, '9001');
+    const extra = printLabels(ctx, 1, 'Jextra', [LINE201]);  // YSN201 is on none of this truck's IFs: an add-on from TO700
+    assert.equal(ctx.run('truck_scan', { truckId: o.t.id, raw: extra[0].code }).result, 'addon');
+});
+
+test('final2: a TO a scan truck created is never offered as office room', () => {
+    const ctx = scanSetup();
+    const s = shipScan(ctx, 1);
+    ctx.run('ship_confirm', { truckId: s.id });
+    const toId = ctx.data.getLoad(s.id).data.toId;
+    ctx.data.db.settings.officeIfs = true;
+    const orig = ctx.ns.openToLines;
+    ctx.ns.openToLines = () => orig().filter(r => r.item !== '11')
+        .concat([{ toId: toId, toNum: 'TO' + toId, trandate: '2026-10-14', toStatus: 'B', item: '11', sku: 'YSN201', qty: 240, remaining: 240 }]);
+    const o = truckWith(ctx, 1, '9001');
+    const extra = printLabels(ctx, 1, 'Jextra2', [LINE201]);
+    assert.equal(ctx.run('truck_scan', { truckId: o.t.id, raw: extra[0].code }).result, 'no_to');
+});
+
+test('final3: labels_preview counts loaded-but-unshipped pallets as used stock', () => {
+    const ctx = scanSetup();
+    ctx.data.db.stock['35']['11'].avail = 300;
+    scanTruck(ctx, 2);                                       // 240 loaded, none labeled
+    const r = ctx.run('labels_preview', { rows: [{ sku: 'YSN201', pcs: 120, pallets: 1, odd: 0 }] });
+    assert.equal(r.rows[0].status, 'warn');
+    assert.match(r.rows[0].msg, /Riverside shows 60 unlabeled/);
+    assert.deepEqual(ctx.data.labeledPiecesByItem(), {});    // the print plan still counts labeled only
+});
+
+test('final4: Release refuses when a Shipped IF with the tag is on the TO, recorded TO or found by tag', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.tx._t.failOn = op => op.op === 'if_create';
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }));
+    const toId = ctx.data.getLoad(t.id).data.writes['to_create:' + t.id];
+    ctx.tx._t.closed[toId] = true;
+    ctx.tx._t.ifTags['[MV-' + t.id + ']|' + toId] = '888';  // the IF saved but was never recorded
+    assert.throws(() => ctx.run('depart_release', { truckId: t.id }), /already in NetSuite \(IF found\)\. Press Retry/);
+    assert.equal(ctx.data.getLoad(t.id).status, 'departing');
+    const c2 = scanSetup();
+    const t2 = shipScan(c2, 1);
+    c2.tx._t.failOn = op => op.op === 'to_create';
+    assert.throws(() => c2.run('ship_confirm', { truckId: t2.id }));
+    c2.tx._t.tags['[MV-' + t2.id + ']'] = '777';
+    c2.tx._t.closed['777'] = true;
+    c2.tx._t.ifTags['[MV-' + t2.id + ']|777'] = '889';
+    assert.throws(() => c2.run('depart_release', { truckId: t2.id }), /IF found/);
+    delete c2.tx._t.ifTags['[MV-' + t2.id + ']|777'];
+    c2.run('depart_release', { truckId: t2.id });            // closed TO, no IF: released
+    assert.equal(c2.data.getLoad(t2.id).status, 'ready');
+});
+
+test('final5: Reject refuses a late pallet whose TO was created without its IF, until that TO is closed', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.run('ship_confirm', { truckId: t.id });
+    const late = printLabels(ctx, 1, 'Jlate5')[0];
+    ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);
+    ctx.tx._t.failOn = op => op.op === 'if_create';
+    assert.throws(() => ctx.run('pallet_accept', { truckId: t.id, palletId: late.id }), /Accept refused/);
+    const toId = ctx.data.getLoad(t.id).data.writes['to_create:' + t.id + '-P' + late.id];
+    assert.ok(toId);
+    assert.throws(() => ctx.run('pallet_reject', { truckId: t.id, palletId: late.id, note: 'wrong truck' }),
+        new RegExp('TO' + toId + ' was created for this pallet\\. Accept again to finish it, or close TO' + toId + ' in NetSuite first'));
+    const still = () => (ctx.data.getLoad(t.id).data.flagged || []).map(String).indexOf(String(late.id)) !== -1;
+    assert.equal(still(), true);                               // still waiting for a decision
+    assert.equal(ctx.data.getLoad(t.id).data.claim || '', '');
+    ctx.tx._t.closed[toId] = true;
+    assert.equal(ctx.run('pallet_reject', { truckId: t.id, palletId: late.id, note: 'wrong truck' }).outcome, 'rejected');
+    assert.equal(still(), false);
+});
+
+test('final6: one scan truck that cannot be read does not break Approvals', () => {
+    const ctx = scanSetup();
+    const a = shipScan(ctx, 1);
+    const ps = printLabels(ctx, 1, 'Jb', [{ item: '12', sku: 'YSN301', cfg: 'A', pcs: 60 }]);
+    const b = ctx.run('truck_start', { trailer: tr() }, false).view.truck.id;
+    ctx.run('truck_scan', { truckId: b, raw: ps[0].code }, false);
+    ctx.run('truck_verify', { truckId: b }, false);
+    ctx.run('ship_mark', { truckId: b, seal: 'SB' }, false);
+    const orig = ctx.data.itemInfo;
+    ctx.data.itemInfo = items => { if ((items || []).indexOf('11') !== -1) throw new Error('item read failed'); return orig(items); };
+    const sp = ctx.run('approvals').shipPending;
+    const ra = sp.find(q => String(q.truck.id) === String(a.id)), rb = sp.find(q => String(q.truck.id) === String(b));
+    assert.deepEqual([ra.scan, ra.lines, ra.lbs], [true, [], null]);
+    assert.match(ra.error, /item read failed/);
+    assert.deepEqual([rb.lines, rb.error], [[{ sku: 'YSN301', pcs: 60 }], undefined]);
+});
+
+test('final7: a fresh local beta seeds officeIfs false', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, 'preview_server.js'), 'utf8');
+    const at = src.indexOf('if (!data.db.settings.v3seeded)');
+    assert.ok(at !== -1);
+    assert.match(src.slice(at, src.indexOf('\n}', at)), /officeIfs: false/);
+});

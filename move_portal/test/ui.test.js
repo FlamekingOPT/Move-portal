@@ -304,3 +304,8 @@ test('excel upload helpers: mapRows, csvObjs, printSpecs behave', () => {
     assert.strictEqual(specs.reduce((a, s) => a + s.n, 0), 6);
     assert.strictEqual(specs[1].lines[0].pcs, 18);
 });
+
+test('scan truck ship messages: Plan saved in off/qty, TO + IF numbers in on', () => {
+    const src = ui._clientMain.toString();
+    ['Plan saved (writeMode ', ' written to NetSuite', 'shipped in the portal'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
+});
