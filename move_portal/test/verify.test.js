@@ -454,3 +454,38 @@ test('stockCheck lists every SKU the truck needs more of than is available', () 
     assert.deepEqual(v.stockCheck({ '13': 5 }, {}), [{ item: '13', need: 5, avail: 0 }]);
     assert.equal(v.stockText(shorts, { '11': 'YSN201' }), 'YSN201 on truck 504, available 360');
 });
+
+test('scanApprovePlan: a TO then a Shipped IF on it, tagged, with keys that never collide', () => {
+    const p = v.scanApprovePlan({ ref: '12', lines: { '11': 504, '12': 36 }, stamp: { trailer: '537224', seal: '0048812', truckNo: 3, dayIso: '2026-11-02' },
+        S: { locFrom: '35', locTo: '46', toStatus: 'B' } });
+    const [to, f] = p.ops;
+    assert.deepEqual(to, { op: 'to_create', ref: '12', token: '[MV-12]', fromLoc: '35', toLoc: '46', orderStatus: 'B', lines: { '11': 504, '12': 36 },
+        memo: '[MV-12] Trailer 537224 · Truck 3 · 11/02' });
+    assert.deepEqual(f, { op: 'if_create', ref: '12', toId: 'new:to:12', ship: true, token: '[MV-12]', lines: { '11': 504, '12': 36 },
+        trailer: '537224', seal: '0048812', memo: 'Truck 3 · 11/02 · [MV-12]' });
+    assert.deepEqual(p.alloc, [{ ifId: 'new:12', ifNum: '(new)', toId: 'new:to:12', toNum: '(new TO)', lines: { '11': 504, '12': 36 }, addOn: false }]);
+    assert.deepEqual([p.unplanned, p.corrections, p.bol], [[], [], null]);
+    assert.equal(v.opKey(to), 'to_create:12');
+    assert.equal(v.opKey(f), 'if_create:new:to:12');
+    const late = v.scanApprovePlan({ ref: '12-P900', lines: { '11': 72 }, stamp: { trailer: 't', seal: 's', truckNo: 3, dayIso: '2026-11-02' }, S: { locFrom: '35', locTo: '46' } });
+    assert.equal(late.ops[0].orderStatus, 'B');                       // toStatus missing → B
+    assert.notEqual(v.opKey(late.ops[0]), v.opKey(to));
+    assert.notEqual(v.opKey(late.ops[1]), v.opKey(f));
+});
+
+test('to_create writes only in on mode; resolveNew swaps the new TO and IF ids', () => {
+    const to = { op: 'to_create', ref: '12' };
+    assert.deepEqual([v.opAllowed(to, 'off'), v.opAllowed(to, 'qty'), v.opAllowed(to, 'on')], [false, false, true]);
+    const writes = { 'to_create:12': '700', 'if_create:new:to:12': '800' };
+    assert.deepEqual(v.resolveNew({ op: 'if_create', toId: 'new:to:12', ref: '12' }, writes), { op: 'if_create', toId: '700', ref: '12' });
+    assert.deepEqual(v.resolveNew({ op: 'receipt', ifId: 'new:12', toId: 'new:to:12' }, writes), { op: 'receipt', ifId: '800', toId: '700' });
+    assert.throws(() => v.resolveNew({ op: 'if_create', toId: 'new:to:13' }, writes), /The TO for 13 was not created yet/);
+    assert.deepEqual(v.resolveNew({ op: 'receipt', ifId: 'new:600', toId: '600' }, { 'if_create:600': '901' }), { op: 'receipt', ifId: '901', toId: '600' });   // office add-on: unchanged
+});
+
+test('a scan-built truck loads any labeled pallet without a TO check', () => {
+    const p = { id: 5, status: 'labeled', loadId: '', lines: [{ item: '99', pcs: 10 }] };
+    assert.deepEqual(v.classifyLoadScan({ pallet: p, truckId: '7', trucks: {}, scanBuilt: true }), { result: 'ok', set: { status: 'loaded', loadId: '7' } });
+    assert.equal(v.classifyLoadScan({ pallet: Object.assign({}, p, { status: 'void' }), truckId: '7', trucks: {}, scanBuilt: true }).result, 'void');
+    assert.equal(v.classifyLoadScan({ pallet: p, truckId: '7', trucks: {}, ifs: [], toLines: [], loadedByItem: {} }).result, 'no_to');   // office truck: unchanged
+});

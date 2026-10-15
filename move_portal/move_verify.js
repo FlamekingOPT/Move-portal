@@ -125,6 +125,7 @@ define([], function () {
             return { result: 'locked', otherTruckId: pt, otherLabel: other.label || '' };
         }
         if (p.status !== VP.LABELED) return { result: 'shipped', otherTruckId: pt, otherLabel: other.label || '' };
+        if (o.scanBuilt) return { result: 'ok', set: { status: VP.LOADED, loadId: String(o.truckId) } };   // the scans are the order: no TO to fit
         return fitOnTruck(p, o);
     }
 
@@ -133,6 +134,18 @@ define([], function () {
 
     // ── departure ────────────────────────────────────────────────────────
     function memoFor(truckNo, dayIso) { return 'Truck ' + truckNo + ' · ' + String(dayIso).slice(5, 7) + '/' + String(dayIso).slice(8, 10); }
+    function scanTag(ref) { return '[MV-' + ref + ']'; }
+    // Approve on a scan-built truck (spec 2026-10-14 §3): a new TO for what was scanned, then its IF saved Shipped with the stamp.
+    function scanApprovePlan(o) {
+        const ref = String(o.ref), tag = scanTag(ref), st = o.stamp || {}, S = o.S || {}, memo = memoFor(st.truckNo, st.dayIso);
+        const lines = Object.assign({}, o.lines);
+        const to = { op: 'to_create', ref: ref, token: tag, fromLoc: String(S.locFrom), toLoc: String(S.locTo), orderStatus: S.toStatus || 'B', lines: lines,
+            memo: tag + ' Trailer ' + st.trailer + ' · ' + memo };
+        const f = { op: 'if_create', ref: ref, toId: 'new:to:' + ref, ship: true, token: tag, lines: Object.assign({}, lines), trailer: st.trailer, seal: st.seal,
+            memo: memo + ' · ' + tag };
+        return { ops: [to, f], alloc: [{ ifId: 'new:' + ref, ifNum: '(new)', toId: 'new:to:' + ref, toNum: '(new TO)', lines: Object.assign({}, lines), addOn: false }],
+            unplanned: [], corrections: [], bol: null };
+    }
     function normSeal(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
     function sealKey(s) { return String(s == null ? '' : s).toUpperCase().replace(/^\s*SEAL\s*:?\s*/, '').replace(/\s+/g, ''); }
     function departOf(t) { return (t && t.data && t.data.depart) || null; }
@@ -306,6 +319,7 @@ define([], function () {
     // ── write gate ───────────────────────────────────────────────────────
     function opKey(op) {
         if (op.op === 'if_qty') return 'if_qty:' + op.ifId + ':' + op.item;
+        if (op.op === 'to_create') return 'to_create:' + op.ref;
         if (op.op === 'if_create') return 'if_create:' + op.toId;
         if (op.op === 'receipt') return 'receipt:' + op.ifId + ':' + op.seq;
         return op.op + ':' + op.ifId;
@@ -326,11 +340,21 @@ define([], function () {
         });
         return { written, planOnly };
     }
+    // 'new:' placeholders in a stored plan: an add-on IF (ifId 'new:<toId>', key if_create:<toId>) and, on a scan-built truck,
+    // its new TO (toId 'new:to:<ref>', key to_create:<ref>). The IF is resolved first, by the op's toId as stored.
     function resolveNew(op, writes) {
-        if (!op.ifId || String(op.ifId).indexOf('new:') !== 0) return op;
-        const id = writes && writes['if_create:' + op.toId];
-        if (!id) throw new Error('The add-on IF from TO ' + op.toId + ' was not created yet');
-        return Object.assign({}, op, { ifId: String(id) });
+        let out = op;
+        if (out.ifId && String(out.ifId).indexOf('new:') === 0) {
+            const id = writes && writes['if_create:' + out.toId];
+            if (!id) throw new Error('The add-on IF from TO ' + out.toId + ' was not created yet');
+            out = Object.assign({}, out, { ifId: String(id) });
+        }
+        if (out.toId && String(out.toId).indexOf('new:to:') === 0) {
+            const ref = String(out.toId).slice(7), id = writes && writes['to_create:' + ref];
+            if (!id) throw new Error('The TO for ' + ref + ' was not created yet');
+            out = Object.assign({}, out, { toId: String(id) });
+        }
+        return out;
     }
 
     // ── shadow compare (beta) ────────────────────────────────────────────
@@ -506,7 +530,7 @@ define([], function () {
 
     return { _fmt: fmt, TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
-        verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps,
+        verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps, scanTag, scanApprovePlan,
         lbs, truckLines, linesPcs, truckWeight, stockCheck, stockText,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });
