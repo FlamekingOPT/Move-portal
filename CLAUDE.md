@@ -38,7 +38,7 @@ Jack wants to go back to the v2 idea: a trailer load built from scans creates th
 
 13. Approach 1 confirmed; office-IF code kept behind a Settings switch `officeIfs` (default false); TO status B; Reject → floor with reason; 250-label cap per upload; TO-without-IF locks the truck (Retry, or close TO in NetSuite + Release); late pallet after ship → one-pallet TO + IF.
 
-**⏭ NEXT (2026-10-15):** spec written → `docs/superpowers/specs/2026-10-14-move-portal-scan-built-to-design.md`, **awaiting Jack's review**. After approval: writing-plans → `docs/superpowers/plans/2026-10-15-move-portal-scan-built-to.md`. The options, as presented:
+**⏭ NEXT (2026-10-15):** spec approved → `docs/superpowers/specs/2026-10-14-move-portal-scan-built-to-design.md`. Plan written → `docs/superpowers/plans/2026-10-15-move-portal-scan-built-to.md` (11 tasks), **awaiting Jack's review + choice of execution (subagent-driven or native)**. No code yet. The options, as presented:
 - **Approach 1 (recommended): extend v3.** Each truck gets a "New TO" line bucket. The ship confirm becomes **Approve & Ship**: stock check → office-IF corrections → `to_create` → `if_create` (full qty) → stamp every IF Shipped. Receiving is unchanged. The add-on IF from an office TO becomes "add to the new TO". Gated by writeMode `on`; `off`/`qty` are plan only.
 - **Approach 2 (rejected):** revive the v2 code from `main` for scan-built trucks. That means two load models.
 - **Approach 3 (rejected):** a new TO per extra SKU.
