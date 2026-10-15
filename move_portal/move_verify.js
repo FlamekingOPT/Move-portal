@@ -552,7 +552,7 @@ define([], function () {
             row.total = Math.max(0, pallets) * pcs + row.odd;
             used[item] = (used[item] || 0) + row.total;
             const left = (Number((ctx.avail || {})[item]) || 0) - (Number((ctx.labeled || {})[item]) || 0);
-            if (used[item] > left) { row.status = 'warn'; row.msg = sku + ': ' + fmt(used[item]) + ' pcs labeled after this, Riverside shows ' + fmt(Math.max(0, left)) + ' unlabeled'; }
+            if (used[item] > left) { row.status = 'warn'; row.msg = sku + ': ' + fmt(used[item]) + ' pcs to print, Riverside has ' + fmt(Math.max(0, left)) + ' not yet on a truck'; }
             labels += row.labels;
             out.push(row);
         });

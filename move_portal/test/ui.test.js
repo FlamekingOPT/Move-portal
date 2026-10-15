@@ -309,3 +309,9 @@ test('scan truck ship messages: Plan saved in off/qty, TO + IF numbers in on', (
     const src = ui._clientMain.toString();
     ['Plan saved (writeMode ', ' written to NetSuite', 'shipped in the portal'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
+
+test('label counts: no stale-label row on the dashboard; the plan says "on trucks"', () => {
+    const src = ui._clientMain.toString();
+    assert.equal(src.indexOf('Labeled, never loaded (stale)'), -1);
+    assert.ok(src.indexOf('already on trucks') !== -1);
+});

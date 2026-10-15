@@ -573,7 +573,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const info = data.itemInfo(items), st = items.length ? data.locationStock(c.S.locFrom, items) : {}, avail = {}, cfg = {};
         const cs = data.configsByItem(c.S.activeBatch);
         items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; const d = (cs[k] || []).find(x => x.isDefault) || (cs[k] || [])[0]; if (d) cfg[k] = d.code; });
-        return verify.labelRows(rows, { skuMap: skuMap, items: info, avail: avail, labeled: data.labeledPiecesByItem([VP.LABELED, VP.LOADED]), cfg: cfg, maxPrint: Number(c.S.maxPrint) || 250 });
+        return verify.labelRows(rows, { skuMap: skuMap, items: info, avail: avail, labeled: data.labeledPiecesByItem([VP.LOADED]), cfg: cfg, maxPrint: Number(c.S.maxPrint) || 250 });
     });
 
     function pubReq(q) {
@@ -663,7 +663,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('plan', true, (a, c) => {
         const sm = stockModel(c);
         const m = tracker(c, sm.est);
-        const labeled = data.labeledPiecesByItem();
+        const labeled = data.labeledPiecesByItem([VP.LOADED]);   // a label counts once it is scanned onto a truck, never when printed
         const rows = [], noConfig = [];
         Object.keys(sm.stock).forEach(item => {
             const st = sm.stock[item];
@@ -1845,7 +1845,6 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             neverLoaded: stillFlagged([].concat.apply([], trucks.map(x => x.data.flagged || []))).length,
             damaged: data.countPallets({ damaged: true }),
             edited: data.countPallets({ edited: true, status: [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING] }),
-            stale: data.countPallets({ status: [VP.LABELED], printedBefore: core.isoAddDays(c.now.dayIso, -(Number(c.S.staleDays) || 5)) }),
             noConfig: stockModel(c).est.unknownItems.length
         };
         return { waiting: waiting, target: c.S.target, days: days, rows: rows, exc: exc, noConfigSkus: [],

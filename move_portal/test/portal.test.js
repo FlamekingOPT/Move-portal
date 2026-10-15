@@ -131,18 +131,24 @@ test('config import: preview flags problems; chunked commit is retry-safe; activ
     assert.throws(() => ctx.run('cfg_commit_chunk', { batch: 'x', configs: [], upTo: 0 }), /Bad batch/);
 });
 
-test('plan subtracts already-labeled stock and lists SKUs with no config', () => {
+test('plan counts only pallets scanned onto a truck, never printed-only labels, and lists SKUs with no config', () => {
     const ctx = setup();
     ctx.data.db.items.push({ item: '14', sku: 'NOCFG', desc: '', upc: '' });
     ctx.data.db.stock['35']['14'] = { onHand: 5, avail: 5 };
-    printLabels(ctx, 3);
-    const r = ctx.run('plan');
-    const y201 = r.rows.find(x => x.sku === 'YSN201');
-    assert.deepEqual([y201.palletsLeft, y201.labeled, y201.cfg, y201.pcs], [7, 3, 'A', 120]);
+    printLabels(ctx, 3);                                   // printed, never scanned: counts as nothing
+    let r = ctx.run('plan');
+    let y201 = r.rows.find(x => x.sku === 'YSN201');
+    assert.deepEqual([y201.palletsLeft, y201.labeled, y201.cfg, y201.pcs], [10, 0, 'A', 120]);
+    assert.equal(r.labeledPallets, 0);
     assert.equal(r.rows.find(x => x.sku === 'YSN301').palletsLeft, 10);
     assert.deepEqual(r.noConfig.map(x => x.sku), ['NOCFG']);
-    assert.equal(r.labeledPallets, 3);
     assert.equal(r.dayLabel, '2026-10-14');
+    ctx.data.db.settings.officeIfs = false;                // scan two of them onto a truck: now they count
+    const v = ctx.run('truck_start', { trailer: tr() }, false).view;
+    ctx.data.palletsByJob('Jtest1').slice(0, 2).forEach(p => ctx.run('truck_scan', { truckId: v.truck.id, raw: p.code }, false));
+    r = ctx.run('plan');
+    y201 = r.rows.find(x => x.sku === 'YSN201');
+    assert.deepEqual([y201.palletsLeft, y201.labeled, r.labeledPallets], [8, 2, 2]);
 });
 
 // ── dashboard ──
@@ -2947,9 +2953,11 @@ test('scan-built: a late-pallet Accept retried after a failed IF is not blocked 
 
 test('labels_preview checks rows against NetSuite stock and is managers only', () => {
     const ctx = setup();
-    printLabels(ctx, 2);                                   // 240 YSN201 labeled already; avail 1000
-    const r = ctx.run('labels_preview', { rows: [{ sku: 'YSN201', pcs: 120, pallets: 7, odd: 0 }] });
-    assert.deepEqual([r.rows[0].status, r.rows[0].total, r.labels], ['warn', 840, 7]);
+    printLabels(ctx, 2);                                   // printed only: never counted; avail 1000
+    let r = ctx.run('labels_preview', { rows: [{ sku: 'YSN201', pcs: 120, pallets: 7, odd: 0 }] });
+    assert.deepEqual([r.rows[0].status, r.rows[0].total, r.labels], ['ok', 840, 7]);
+    r = ctx.run('labels_preview', { rows: [{ sku: 'YSN201', pcs: 120, pallets: 9, odd: 0 }] });
+    assert.deepEqual([r.rows[0].status, r.rows[0].msg], ['warn', 'YSN201: 1,080 pcs to print, Riverside has 1,000 not yet on a truck']);
     assert.throws(() => ctx.run('labels_preview', { rows: [] }, false), /Managers only/);
     assert.throws(() => ctx.run('labels_preview', { rows: new Array(501).fill({ sku: 'YSN201', pcs: 1, pallets: 1 }) }), /500 rows/);
 });
@@ -3005,7 +3013,7 @@ test('final3: labels_preview counts loaded-but-unshipped pallets as used stock',
     scanTruck(ctx, 2);                                       // 240 loaded, none labeled
     const r = ctx.run('labels_preview', { rows: [{ sku: 'YSN201', pcs: 120, pallets: 1, odd: 0 }] });
     assert.equal(r.rows[0].status, 'warn');
-    assert.match(r.rows[0].msg, /Riverside shows 60 unlabeled/);
+    assert.match(r.rows[0].msg, /Riverside has 60 not yet on a truck/);
     assert.deepEqual(ctx.data.labeledPiecesByItem(), {});    // the print plan still counts labeled only
 });
 
@@ -3074,4 +3082,11 @@ test('final7: a fresh local beta seeds officeIfs false', () => {
     const at = src.indexOf('if (!data.db.settings.v3seeded)');
     assert.ok(at !== -1);
     assert.match(src.slice(at, src.indexOf('\n}', at)), /officeIfs: false/);
+});
+
+test('printed-only labels never count: the dashboard has no stale-label exception', () => {
+    const ctx = setup();
+    printLabels(ctx, 3);
+    const exc = ctx.run('dashboard').exc;
+    assert.equal('stale' in exc, false);
 });

@@ -912,8 +912,8 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!r.ok) { box.innerHTML = errBox(r.error); return; }
             S.plan = r;
             box.innerHTML = '<div class="muted"><b>' + esc(r.dayLabel) + '</b> · needed ' + (r.neededPerDay == null ? '—' : r.neededPerDay) + ' pallets/day · ' +
-                r.labeledPallets + ' already labeled. Suggested counts split today\'s need across SKUs by pallets left. Change any count.</div>' +
-                '<div id="planmsg"></div><div style="overflow-x:auto"><table class="tbl"><tr><th>SKU</th><th>Config</th><th>Pallets left</th><th>Labeled</th><th>Print</th><th></th></tr>' +
+                r.labeledPallets + ' already on trucks. Suggested counts split today\'s need across SKUs by pallets left. Change any count.</div>' +
+                '<div id="planmsg"></div><div style="overflow-x:auto"><table class="tbl"><tr><th>SKU</th><th>Config</th><th>Pallets left</th><th>On trucks</th><th>Print</th><th></th></tr>' +
                 r.rows.map((x, k) => '<tr><td><b>' + esc(x.sku) + '</b><div class="muted">' + esc(x.desc) + '</div></td><td>' + esc(x.cfg) + ' · ' + x.pcs + '</td><td>' + x.palletsLeft +
                     '</td><td>' + x.labeled + '</td><td><input class="num" data-plan="' + k + '" inputmode="numeric" value="' + x.suggest + '"></td><td><button class="dbtn pri" data-act="planrow" data-k="' + k +
                     '">Print</button></td></tr>').join('') + '</table></div><button class="btn go" data-act="planall">Print all</button>' +
@@ -1560,7 +1560,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="card"><h4>Active loads <span class="pill p-gray">' + new Set(r.rows.map(x => x.truckId)).size + ' trucks</span></h4><div class="muted">one row per IF, like the Move Tracker · not yet received · tap a row to open</div><div id="dashtools"></div><div id="dashloads"></div></div>' +
                 '<div class="grid3"><div class="card"><h4>Trucks shipped per day</h4>' + barChart(r.days, r.tiles.plan) + '</div>' +
                 '<div class="card"><h4>Exceptions</h4>' + [['Missing pallets (in transit)', r.exc.missing], ['Flagged, waiting on manager', r.exc.neverLoaded], ['Damaged', r.exc.damaged], ['Edited at dock', r.exc.edited],
-                    ['Labeled, never loaded (stale)', r.exc.stale], ['SKUs with stock but no config', r.exc.noConfig]].map(x => '<div class="warnrow"><span>' + esc(x[0]) + '</span><b>' + x[1] + '</b></div>').join('') + '</div></div>');
+                    ['SKUs with stock but no config', r.exc.noConfig]].map(x => '<div class="warnrow"><span>' + esc(x[0]) + '</span><b>' + x[1] + '</b></div>').join('') + '</div></div>');
             $('dashtools').innerHTML = tableTools('dl', S.dashSt, SORTS, 'dln');
             wireTools('dl', S.dashSt, paintLoads);
             paintLoads();

@@ -520,7 +520,7 @@ test('labelRows: ok / warn on a running total / skip, labels with odd pallets, c
         { sku: 201, pcs: 5, pallets: 1 }
     ], ctx);
     assert.deepEqual(r.rows.map(x => [x.n, x.status, x.labels]), [[2, 'ok', 20], [3, 'ok', 5], [4, 'warn', 2], [5, 'skip', 0], [6, 'skip', 0], [8, 'ok', 1]]);
-    assert.equal(r.rows[2].msg, 'YSN201: 450 pcs labeled after this, Riverside shows 432 unlabeled');
+    assert.equal(r.rows[2].msg, 'YSN201: 450 pcs to print, Riverside has 432 not yet on a truck');
     assert.equal(r.rows[3].msg, 'Unknown SKU NOPE');
     assert.equal(r.rows[4].msg, 'Pallets must be 1 or more');
     assert.deepEqual([r.rows[1].total, r.rows[1].cfg, r.labels, r.over], [306, 'A', 28, false]);
