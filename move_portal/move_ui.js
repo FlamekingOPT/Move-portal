@@ -850,9 +850,10 @@ h3{font-size:15px;margin:16px 0 8px}
         // ── Manager: Labels (requests · print a SKU · print plan · reprint · SKU configs) ──
         SCREENS.labels = () => {
             const sec = (id, title) => '<div class="card lsec"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>';
-            main(sec('lb_sku', 'Print a SKU') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
+            main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
             labelQueue($('lb_queue'));
             labelSku($('lb_sku'));
+            labelUpload($('lb_xlsx'));
             labelPlan($('lb_plan'));
             labelReprint($('lb_reprint'));
             labelConfigs($('lb_configs'));
@@ -938,7 +939,8 @@ h3{font-size:15px;margin:16px 0 8px}
 
         function labelSku(box) {
             S.ed = newEd();
-            box.innerHTML = '<div id="sku_edbox"></div><div id="skumsg"></div><button class="btn pri" data-act="skuprint">Print labels</button>';
+            box.innerHTML = '<div id="sku_edbox"></div><label class="f" for="sku_odd">Odd pallet (optional) · pcs</label><input class="inp" id="sku_odd" type="number" min="0" placeholder="e.g. 18">' +
+                '<div id="skuwarn"></div><div id="skumsg"></div><button class="btn pri" data-act="skuprint">Print labels</button>';
             mountEd({ count: true }, '', 'sku', $('sku_edbox'));
         }
         ACT.skuprint = async el => {
@@ -948,8 +950,79 @@ h3{font-size:15px;margin:16px 0 8px}
             const n = Math.floor(Number(S.ed.count) || 0);
             if (n < 1) return;
             busy(el, true);
-            await printMany([{ lines: edPayload(), n: n }], 'office', $('skumsg'));
+            const odd = Math.floor(Number(($('sku_odd') || {}).value) || 0), l = edPayload()[0];
+            $('skuwarn').innerHTML = '';
+            const pv = await api('labels_preview', { rows: [{ sku: l.sku, pcs: l.pcs, pallets: n, odd: odd }] });
+            if (pv.ok && pv.rows[0] && pv.rows[0].status === 'warn') $('skuwarn').innerHTML = flash('amber', '⚠ ' + esc(pv.rows[0].msg) + '. You can still print.');
+            const specs = [{ lines: edPayload(), n: n }].concat(odd > 0 ? [{ lines: edPayload().map(x => Object.assign({}, x, { pcs: odd })), n: 1 }] : []);
+            await printMany(specs, 'office', $('skumsg'));
             busy(el, false);
+        };
+
+        // Excel / CSV upload (spec 2026-10-14 §6): SheetJS on demand from cdnjs; headers matched loosely; preview; Print all through printMany.
+        const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        function loadXlsx() {
+            if (window.XLSX) return Promise.resolve(window.XLSX);
+            return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = XLSX_URL; s.onload = () => ok(window.XLSX); s.onerror = () => bad(new Error('Could not load the Excel reader (no internet?). Save the sheet as .csv and upload that.')); document.head.appendChild(s); });
+        }
+        const HEAD = { sku: ['sku'], pcs: ['pcs per pallet', 'pcs/pallet', 'pcs'], pallets: ['pallets'], odd: ['odd pallet pcs', 'odd pallet', 'odd'] };
+        function mapRows(objs) {
+            if (!objs.length) return [];
+            const norm = k => String(k).trim().toLowerCase().replace(/\s+/g, ' ');
+            const keys = Object.keys(objs[0]), pick = names => keys.find(k => names.indexOf(norm(k)) !== -1);
+            const col = { sku: pick(HEAD.sku), pcs: pick(HEAD.pcs), pallets: pick(HEAD.pallets), odd: pick(HEAD.odd) };
+            if (!col.sku || !col.pcs || !col.pallets) throw new Error('The sheet needs the columns SKU, Pcs per pallet and Pallets (Odd pallet pcs is optional)');
+            return objs.map(o => ({ sku: o[col.sku], pcs: o[col.pcs], pallets: o[col.pallets], odd: col.odd ? o[col.odd] : '' }));
+        }
+        function csvObjs(text) {
+            const lines = String(text).split(/\r?\n/).filter(l => l.trim() !== '');
+            if (!lines.length) return [];
+            const head = lines.shift().split(',').map(s => s.trim());
+            return lines.map(l => { const c = l.split(','); const o = {}; head.forEach((h, i) => { o[h] = (c[i] || '').trim(); }); return o; });
+        }
+        async function readSheet(file) {
+            if (/\.csv$/i.test(file.name)) return mapRows(csvObjs(await file.text()));
+            const X = await loadXlsx(), wb = X.read(await file.arrayBuffer(), { type: 'array' });
+            return mapRows(X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
+        }
+        function labelUpload(box) {
+            box.innerHTML = '<div class="muted">Columns: SKU · Pcs per pallet · Pallets · Odd pallet pcs (optional). One row per SKU (pcs per pallet, pallets, odd pallet pcs).</div>' +
+                '<input type="file" id="xlsx_file" accept=".xlsx,.xls,.csv"> <button class="btn ghost sm" data-act="xlsxtemplate">Download template</button>' +
+                '<div id="xlsx_out"></div>';
+            $('xlsx_file').onchange = () => ACT.xlsxpick();
+        }
+        ACT.xlsxpick = async () => {
+            const f = $('xlsx_file').files[0], out = $('xlsx_out');
+            if (!f) return;
+            let rows;
+            try { rows = await readSheet(f); } catch (e) { out.innerHTML = errBox(e.message); return; }
+            const pv = await api('labels_preview', { rows: rows });
+            if (!pv.ok) { out.innerHTML = errBox(pv.error); return; }
+            S.xlsx = pv;
+            const pill = r => r.status === 'ok' ? '✅' : r.status === 'warn' ? '<span class="pill p-amber">⚠ ' + esc(r.msg) + '</span>' : '<span class="pill p-red">' + esc(r.msg) + ': skipped</span>';
+            out.innerHTML = '<div class="muted"><b>' + esc(f.name) + '</b> · ' + pv.rows.length + ' rows read</div><table class="tbl"><tr><th>Row</th><th>SKU</th><th>Pcs/plt</th><th>Pallets</th><th>Odd</th><th>Pcs</th><th></th></tr>' +
+                pv.rows.map(r => '<tr><td>' + r.n + '</td><td>' + esc(r.sku) + '</td><td>' + num(r.pcs) + '</td><td>' + num(r.pallets) + '</td><td>' + (r.odd ? num(r.odd) : '—') + '</td><td>' + num(r.total) + '</td><td>' + pill(r) + '</td></tr>').join('') + '</table>' +
+                (pv.over ? errBox(pv.labels + ' labels: split the file (max ' + B.maxPrint + ' per print)') :
+                    '<div class="muted">Warnings don\'t stop printing.</div><div id="xlsx_msg"></div><button class="btn pri" data-act="xlsxprint">🖨 Print all · ' + pv.labels + ' labels</button>');
+        };
+        ACT.xlsxprint = async el => {
+            const pv = S.xlsx;
+            if (!pv) return;
+            const specs = [];
+            pv.rows.filter(r => r.status !== 'skip').forEach(r => {
+                const line = { item: r.item, sku: r.sku, cfg: r.cfg, pcs: r.pcs };
+                if (r.pallets > 0) specs.push({ lines: [line], n: r.pallets });
+                if (r.odd > 0) specs.push({ lines: [Object.assign({}, line, { pcs: r.odd })], n: 1 });
+            });
+            busy(el, true);
+            await printMany(specs, 'office', $('xlsx_msg'));
+            busy(el, false);
+        };
+        ACT.xlsxtemplate = async () => {
+            try {
+                const X = await loadXlsx(), ws = X.utils.aoa_to_sheet([['SKU', 'Pcs per pallet', 'Pallets', 'Odd pallet pcs']]), wb = X.utils.book_new();
+                X.utils.book_append_sheet(wb, ws, 'Labels'); X.writeFile(wb, 'move-labels-template.xlsx');
+            } catch (e) { alert(e.message); }
         };
 
         // SKU configs: import (CSV) and the current list.
@@ -1101,6 +1174,14 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         const LATE_MIN = 30;
         function shipConfirmCard(x) {
+            if (x.scan) {
+                const id = esc(x.truck.id), lab = esc(x.truck.label);
+                return '<div class="card bl"><h4>🚚 ' + lab + '</h4><div class="muted">' + esc(['Seal ' + x.seal, 'sent ' + (x.markedAt || '') + ' by ' + (x.markedBy || '?')].join(' · ')) + '</div>' +
+                    '<div class="muted">' + esc(x.lines.map(l => l.sku + ' × ' + num(l.pcs)).join(' · ')) + ' · ' + num(x.pallets) + ' pallets' + (x.lbs != null ? ' · ' + num(x.lbs) + ' lb' : '') + '</div>' +
+                    '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Approve</button>' +
+                    '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Reject</button></div>' +
+                    '<div class="muted sm">Approve writes the TO + IF to NetSuite and marks it Shipped.</div></div>';
+            }
             const t = x.truck, id = esc(t.id), lab = esc(t.label), late = x.ageMin != null && x.ageMin >= LATE_MIN;
             const oth = (x.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
             return '<div class="card ' + (late ? 'amberc' : 'bl') + '"><h4>🚚 ' + lab + ' · marked shipped' + (late ? ' <span class="pill p-amber">waiting ' + x.ageMin + ' min</span>' : '') + '</h4>' +
@@ -1178,7 +1259,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const flg = (r.flagged || []).length ? '<h3 id="ap_flag">Flagged pallets</h3>' + flaggedCard(r.flagged) : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +
-                (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Release to Needs IF fix</button>' : '') + '</div>').join('');
+                (t.canRelease ? '<button class="btn ghost sm" data-act="aprelease" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">' + (t.scan ? (t.toNum ? 'Release (after you Close ' + esc(t.toNum) + ' in NetSuite)' : 'Release to the floor') : 'Release to Needs IF fix') + '</button>' : '') + '</div>').join('');
             const rec = r.receipts.map(x => {
                 const head = '<h4>📥 ' + esc(x.truck.label) + (x.lateOnly ? ' · late arrivals' : ' · receipt') + '</h4>';
                 if (!x.perIf) return '<div class="card warnc">' + head + (x.stuck ? '<div class="muted warn">⚠ Stuck, re-approve</div>' : '') + errBox(x.error || 'Could not build the receipt') +
@@ -1216,7 +1297,7 @@ h3{font-size:15px;margin:16px 0 8px}
         };
         ACT.apsendback = async el => {
             const label = el.dataset.label || 'this truck';
-            const note = prompt('Send ' + label + ' back to the floor. Note for the floor (required):');
+            const note = prompt('Reason for the floor (required)');
             if (note == null) return;
             if (!note.trim()) { tone('bad'); SCREENS.approve(errBox('Enter a note for the floor')); return; }
             busy(el, true);
