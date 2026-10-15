@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan-built TO Mockup</title>
+<style>
+  :root{--navy:#1a3557;--ink:#111827;--mute:#6b7280;--line:#e5e7eb;--soft:#f8fafc;--bg:#f3f4f6;
+    --blue-bg:#E6F1FB;--blue:#0C447C;--teal-bg:#E1F5EE;--teal:#0F6E56;--amb-bg:#FAEEDA;--amb:#633806;
+    --vio-bg:#ece9f7;--vio:#3C3489;--ok:#059669;--warn:#b45309;--bad:#c2410c;--red-bg:#fef2f2}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);margin:0;color:var(--ink);font-size:14px}
+  .hdr{background:var(--navy);color:#fff;padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+  .hdr h1{font-size:17px;margin:0}.hdr .sub{font-size:12px;opacity:.8}
+  .seg{display:inline-flex;background:rgba(255,255,255,.12);border-radius:7px;padding:2px;flex-wrap:wrap}
+  .seg button{border:0;background:transparent;color:#fff;font:inherit;font-size:12px;font-weight:700;padding:6px 10px;border-radius:6px;cursor:pointer}
+  .seg button.on{background:#fff;color:var(--navy)}
+  .wrap{max-width:1000px;margin:0 auto;padding:14px 16px 60px}
+  .mock{background:#fff7ed;border:1px dashed #f59e0b;color:#7c2d12;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+  .card{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden}
+  .card-h{padding:11px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .card-b{border-top:1px solid var(--line);padding:12px 14px}
+  .so{font-weight:800;font-size:15px;color:var(--navy)}
+  .meta{font-size:12px;color:var(--mute)}
+  .pill{font-size:11px;font-weight:700;border-radius:99px;padding:2px 9px;background:#eef2f7;color:#334155;white-space:nowrap}
+  .pill.blue{background:var(--blue-bg);color:var(--blue)}.pill.teal{background:var(--teal-bg);color:var(--teal)}
+  .pill.amb{background:var(--amb-bg);color:var(--amb)}.pill.vio{background:var(--vio-bg);color:var(--vio)}
+  .pill.red{background:var(--red-bg);color:var(--bad)}
+  .grow{flex:1}
+  .sect{font-size:12px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;margin:16px 0 8px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:var(--soft);padding:7px 10px;text-align:left;font-weight:700;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line)}
+  td{padding:8px 10px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .btn{border:0;border-radius:8px;padding:10px 16px;font:inherit;font-weight:800;cursor:pointer;background:var(--navy);color:#fff}
+  .btn.ghost{background:#fff;color:var(--navy);border:1px solid #cbd5e1}
+  .btn.ok{background:var(--ok)}.btn.dis{background:#cbd5e1;color:#64748b;cursor:not-allowed}
+  .btn.big{width:100%;padding:16px;font-size:17px}
+  input.f{font:inherit;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;width:100%}
+  label.l{display:block;font-size:12px;font-weight:700;color:var(--mute);margin:10px 0 4px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .chk{display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer}
+  .chk.on{border-color:var(--blue);background:var(--blue-bg)}
+  .bucket{border-radius:9px;padding:10px 12px;margin-bottom:10px}
+  .bucket.if{background:var(--blue-bg)}.bucket.new{background:var(--vio-bg)}
+  .bucket h4{margin:0 0 6px;font-size:13px}
+  .scanbox{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px;font-family:Consolas,monospace;font-size:13px;min-height:44px}
+  .scanbox .hit{color:#86efac}.scanbox .new{color:#c4b5fd}
+  .banner{border-radius:9px;padding:12px 14px;font-weight:700;margin-bottom:12px}
+  .banner.ok{background:var(--teal-bg);color:var(--teal)}
+  .banner.bad{background:var(--red-bg);color:var(--bad);border:1px solid #fecaca}
+  .banner.amb{background:var(--amb-bg);color:var(--amb)}
+  ol.steps{margin:0;padding-left:0;list-style:none;counter-reset:s}
+  ol.steps li{counter-increment:s;display:flex;gap:10px;padding:9px 0;border-bottom:1px solid #f3f4f6}
+  ol.steps li:before{content:counter(s);flex:none;width:24px;height:24px;border-radius:50%;background:var(--navy);color:#fff;font-weight:800;font-size:12px;display:grid;place-items:center}
+  ol.steps li.skip:before{background:#cbd5e1}
+  ol.steps li.done:before{content:"✓";background:var(--ok)}
+  .new-tag{color:var(--vio);font-weight:800}
+  .tablet{max-width:520px}
+  .hide{display:none}
+  .note{font-size:12px;color:var(--mute);margin-top:8px}
+  .sw{display:inline-flex;gap:6px;font-size:12px;align-items:center;color:var(--mute)}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div><h1>Move Portal · scan-built TO (Approach 1)</h1><div class="sub">Mockup 2026-10-15 · Riverside 35 → Tippecanoe 46 · nothing is written until the manager clicks Approve</div></div>
+  <div class="seg" id="seg">
+    <button data-s="0">0 Labels</button>
+    <button data-s="1" class="on">1 Start truck</button>
+    <button data-s="2">2 Load</button>
+    <button data-s="3">3 Verify</button>
+    <button data-s="4">4 Shipments</button>
+    <button data-s="5">5 Approve</button>
+    <button data-s="6">6 Written</button>
+  </div>
+</div>
+<div class="wrap">
+  <div class="mock">MOCKUP: sample data, no NetSuite. Step 0 is labels (manager); steps 1–4 are the floor tablet; 5–6 are the manager. No office IFs on this flow: every truck is built from scans. Changes from today's v3 flow are marked <span class="new-tag">NEW</span>.</div>
+
+  <!-- 0 LABELS -->
+  <section id="s0" class="hide">
+    <div class="row" style="align-items:flex-start">
+      <div class="tablet grow">
+        <div class="card"><div class="card-h"><span class="so">Labels · Print pallet labels</span></div>
+          <div class="card-b">
+            <label class="l">SKU</label>
+            <input class="f" id="lSku" value="YSN201" oninput="lab()">
+            <div class="meta" style="margin-top:4px">Riverside available <b>720</b> · already labeled <b id="lDone">288</b></div>
+            <div class="row">
+              <div class="grow"><label class="l">Pcs per pallet</label><input class="f" id="lPcs" type="number" value="72" oninput="lab()"></div>
+              <div class="grow"><label class="l">Pallets</label><input class="f" id="lN" type="number" value="6" oninput="lab()"></div>
+            </div>
+            <label class="l">Odd pallet (optional)</label>
+            <input class="f" placeholder="e.g. 1 pallet × 18 pcs">
+            <div id="lMsg" class="banner ok" style="margin-top:12px"></div>
+            <button class="btn big" id="lBtn" onclick="printLab()">🖨 Print 6 labels (4×6 QR)</button>
+            <div class="sect">Or upload an Excel <span class="new-tag">NEW</span></div>
+            <div class="row"><button class="btn ghost" onclick="upload()">📄 Upload .xlsx</button><a href="#" class="meta" onclick="return false">Download template</a></div>
+            <div class="meta" style="margin-top:4px">Columns: SKU · Pcs per pallet · Pallets · Odd pallet pcs (optional). One row per SKU.</div>
+            <div id="upBox" class="hide" style="margin-top:10px">
+              <div class="meta" style="margin-bottom:6px"><b>labels_11-02.xlsx</b> · 4 rows read</div>
+              <table><thead><tr><th>SKU</th><th class="n">Pcs/plt</th><th class="n">Pallets</th><th class="n">Odd</th><th class="n">Pcs</th><th></th></tr></thead><tbody>
+                <tr><td>YSN401</td><td class="n">36</td><td class="n">20</td><td class="n">—</td><td class="n">720</td><td>✅</td></tr>
+                <tr><td>YSN201</td><td class="n">72</td><td class="n">8</td><td class="n">18</td><td class="n">594</td><td><span class="pill amb" title="Riverside shows 432 unlabeled">⚠ +162 over avail.</span></td></tr>
+                <tr><td>YSN301</td><td class="n">72</td><td class="n">4</td><td class="n">—</td><td class="n">288</td><td>✅</td></tr>
+                <tr><td>YSN9XX</td><td class="n">48</td><td class="n">2</td><td class="n">—</td><td class="n">96</td><td><span class="pill red">SKU not found: skipped</span></td></tr>
+              </tbody></table>
+              <div class="note">Warnings don't stop printing. Only rows NetSuite can't match (bad SKU, blank pallets) are skipped.</div>
+              <button class="btn big" style="margin-top:10px" onclick="this.textContent='✓ 33 labels sent to printer';this.className='btn big dis'">🖨 Print all · 33 labels</button>
+            </div>
+            <div class="note">Labels are portal records only (PLT numbers). Nothing goes to NetSuite until a truck is approved. Pcs per pallet comes from the saved pallet config for the SKU; edit it here for a one-off.</div>
+          </div></div>
+      </div>
+      <div class="grow" style="min-width:300px">
+        <div class="card"><div class="card-h"><span class="so">Labeled, not loaded yet</span></div>
+          <div class="card-b"><table><thead><tr><th>SKU</th><th class="n">Pallets</th><th class="n">Pcs</th><th>Printed</th></tr></thead><tbody id="lList">
+            <tr><td>YSN401</td><td class="n">18</td><td class="n">648</td><td class="meta">PLT201–218 · today</td></tr>
+            <tr><td>YSN201</td><td class="n">4</td><td class="n">288</td><td class="meta">PLT219–222 · today</td></tr>
+          </tbody></table>
+          <div class="note">Reprint, or void a label that won't ship, from this list.</div></div></div>
+        <div class="card"><div class="card-h"><span class="so">Label requests from the floor</span><span class="pill amb">1</span></div>
+          <div class="card-b"><div class="row"><div class="grow"><b>YSN301</b> × 2 pallets<div class="meta">Santiago Chumil · 9:12 · "found 2 more in aisle 4"</div></div><button class="btn ghost">Print</button></div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 1 START -->
+  <section id="s1" class="tablet">
+    <div class="card"><div class="card-h"><span class="so">Load out · Start truck</span></div>
+      <div class="card-b">
+        <label class="l">Trailer #</label>
+        <input class="f" value="537224">
+        <div class="note">Just the trailer #. No IFs to pick: the TO and IF are built from what gets scanned.</div>
+        <div style="margin-top:14px"><button class="btn big" onclick="go(2)">Start Trailer 537224</button></div>
+      </div></div>
+  </section>
+
+  <!-- 2 LOAD -->
+  <section id="s2" class="hide">
+    <div class="row" style="align-items:flex-start">
+      <div class="tablet grow">
+        <div class="card"><div class="card-h"><span class="so">Trailer 537224</span><span class="grow"></span><span class="pill">Loading</span></div>
+          <div class="card-b">
+            <div class="row" style="margin-bottom:10px"><button class="btn ghost" onclick="scan()">➕ Simulate a scan</button><span class="meta">(mockup only: stands in for the scanner)</span></div>
+            <div class="scanbox" id="log">Waiting for scan…</div>
+            <div class="row" style="margin-top:10px"><button class="btn ghost">➖ Take off</button><button class="btn ghost">+ Add other item</button></div>
+            <div style="margin-top:14px"><button class="btn big" id="finLoad" onclick="go(3)">Finish loading</button></div>
+          </div></div>
+      </div>
+      <div class="grow" style="min-width:300px">
+        <div class="bucket new"><h4>On this truck</h4><table><thead><tr><th>SKU</th><th class="n">Pallets</th><th class="n">Pcs</th></tr></thead><tbody id="bNew"></tbody></table><div class="meta" id="newEmpty">Nothing yet.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 VERIFY -->
+  <section id="s3" class="hide tablet">
+    <div class="card"><div class="card-h"><span class="so">Verify load · Trailer 537224</span><span class="grow"></span><span class="meta">25 pallets · 1,152 pcs · <b>19,125 lb</b></span></div>
+      <div class="card-b">
+        <table><thead><tr><th>SKU</th><th class="n">Pallets</th><th class="n">Pcs</th><th class="n">Weight</th><th class="n">Riverside avail.</th><th></th></tr></thead><tbody>
+          <tr><td>YSN401</td><td class="n">18</td><td class="n">648</td><td class="n">12,960 lb</td><td class="n">1,296</td><td>✅</td></tr>
+          <tr><td>YSN201</td><td class="n">7</td><td class="n">504</td><td class="n">5,040 lb</td><td class="n">720</td><td>✅</td></tr>
+          <tr><td class="meta">Pallets (tare)</td><td class="n meta">25 × 45</td><td></td><td class="n meta">1,125 lb</td><td></td><td></td></tr>
+          <tr><td><b>Total</b></td><td class="n"><b>25</b></td><td class="n"><b>1,152</b></td><td class="n"><b>19,125 lb</b></td><td></td><td></td></tr>
+        </tbody></table>
+        <div class="note">Weight = pieces × the item's NetSuite weight + pallet tare (sample numbers).</div>
+        <div class="note">The crew checks this against the trailer. Stock is shown early here so a short shows up before the manager hits it. ← Back to Load to fix anything.</div>
+        <div style="margin-top:14px"><button class="btn big ok" onclick="go(4)">Finish → Shipments</button></div>
+      </div></div>
+  </section>
+
+  <!-- 4 SHIPMENTS -->
+  <section id="s4" class="hide tablet">
+    <div class="card"><div class="card-h"><span class="so">Shipments</span></div>
+      <div class="card-b">
+        <div class="row"><b>Trailer 537224</b><span class="pill teal">Verified</span><span class="grow"></span><span class="meta">25 pallets · 1,152 pcs · 19,125 lb</span></div>
+        <label class="l">Seal #</label><input class="f" value="0048812">
+        <div style="margin-top:12px"><button class="btn big" onclick="this.textContent='⏳ Sent for approval: waiting for manager';this.className='btn big dis'">Mark shipped · send for approval</button></div>
+        <div class="note">The truck goes to the manager's Approve list. Nothing is in NetSuite yet.</div>
+      </div></div>
+  </section>
+
+  <!-- 5 APPROVE -->
+  <section id="s5" class="hide">
+    <div class="row" style="margin-bottom:10px"><span class="sw"><b>Scenario:</b>
+      <label><input type="radio" name="sc" checked onchange="sc(0)"> stock OK</label>
+      <label><input type="radio" name="sc" onchange="sc(1)"> YSN201 short at Riverside</label></span></div>
+    <div id="stockBad" class="banner bad hide">⛔ Approve blocked: <b>YSN201</b> scanned 504, Riverside available 360. Take 4 pallets off, or fix stock in NetSuite, then reload. Nothing has been written.</div>
+    <div class="card"><div class="card-h"><span class="so">Trailer 537224</span><span class="pill">Truck 3 · 11/02</span><span class="grow"></span><span class="meta">Seal 0048812 · sent 10:42 by Miguel Trejo</span></div>
+      <div class="card-b">
+        <div class="meta" style="margin-bottom:12px">YSN401 × 648 · YSN201 × 504 · 25 pallets · 19,125 lb</div>
+        <div class="row"><button id="apBtn" class="btn ok big" style="width:auto;flex:1" onclick="go(6)">Approve</button><button class="btn ghost">Reject → back to floor</button></div>
+        <div class="note">Approve writes the TO + IF to NetSuite and marks it Shipped.</div>
+      </div></div>
+  </section>
+
+  <!-- 6 WRITTEN -->
+  <section id="s6" class="hide">
+    <div class="banner ok">✅ Trailer 537224 shipped · TO8812 + IF53911 created · IF stamped Shipped</div>
+    <div class="card"><div class="card-h"><span class="so">In NetSuite now</span></div>
+      <div class="card-b"><table><thead><tr><th>Record</th><th>What</th><th class="n">Qty</th><th>Status</th></tr></thead><tbody>
+        <tr><td><span class="new-tag">TO8812</span></td><td>built from the scans</td><td class="n">1,152</td><td><span class="pill blue">Pending Receipt</span></td></tr>
+        <tr><td><span class="new-tag">IF53911</span></td><td>on TO8812</td><td class="n">1,152</td><td><span class="pill teal">Shipped</span></td></tr>
+      </tbody></table>
+      <div class="note">If a write fails partway, the card shows what landed and a <b>Retry</b> that resumes from the failed step (never a second TO).</div></div></div>
+    <div class="card"><div class="card-h"><span class="so">Tippecanoe · Unload</span><span class="meta">unchanged</span></div>
+      <div class="card-b">Receiving works as today: scan pallets in, manager <b>Approve receipt</b> → IR on TO8812 from IF53911.</div></div>
+  </section>
+</div>
+
+<script>
+  function go(n){document.querySelectorAll('section').forEach(s=>s.classList.add('hide'));
+    document.getElementById('s'+n).classList.remove('hide');
+    document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.s==n));window.scrollTo(0,0)}
+  document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>go(b.dataset.s));
+  // 18 × YSN401 (36) then 7 × YSN201 (72)
+  const plan=[];for(let i=0;i<18;i++)plan.push(['YSN401',36]);for(let i=0;i<7;i++)plan.push(['YSN201',72]);
+  let k=0,lines=[];
+  function render(){let nw={};
+    for(let i=0;i<k;i++){const[s,q]=plan[i];nw[s]=nw[s]||[0,0];nw[s][0]++;nw[s][1]+=q}
+    document.getElementById('bNew').innerHTML=Object.entries(nw).map(([s,v])=>`<tr><td>${s}</td><td class="n">${v[0]}</td><td class="n">${v[1]}</td></tr>`).join('');
+    document.getElementById('newEmpty').style.display=Object.keys(nw).length?'none':'';
+    document.getElementById('log').innerHTML=lines.slice(-5).join('<br>')||'Waiting for scan…'}
+  function scan(){if(k>=plan.length)return;const[s,q]=plan[k];k++;
+    lines.push(`<span class="hit">✓ PLT${200+k} ${s} × ${q} loaded</span>`);render()}
+  function sc(bad){document.getElementById('stockBad').classList.toggle('hide',!bad);
+    const b=document.getElementById('apBtn');b.className=bad?'btn dis big':'btn ok big';b.onclick=bad?null:()=>go(6)}
+  function lab(){const pcs=+document.getElementById('lPcs').value||0,n=+document.getElementById('lN').value||0,tot=pcs*n,left=720-288;
+    const m=document.getElementById('lMsg'),b=document.getElementById('lBtn');
+    if(tot>left){m.className='banner amb';m.textContent=`⚠ ${tot} pcs is ${tot-left} more than Riverside shows unlabeled (${left}). You can still print.`;b.className='btn big'}
+    else{m.className='banner ok';m.textContent=`${n} pallets × ${pcs} = ${tot} pcs · ${left-tot} left unlabeled after this`;b.className='btn big'}
+    b.textContent=`🖨 Print ${n} labels (4×6 QR)`}
+  function printLab(){const b=document.getElementById('lBtn');if(b.classList.contains('dis'))return;
+    const pcs=+document.getElementById('lPcs').value,n=+document.getElementById('lN').value;
+    document.getElementById('lList').insertAdjacentHTML('beforeend',`<tr><td>${document.getElementById('lSku').value}</td><td class="n">${n}</td><td class="n">${n*pcs}</td><td class="meta">PLT223–${222+n} · just now</td></tr>`);
+    b.textContent='✓ Sent to printer';b.className='btn big dis'}
+  function upload(){document.getElementById('upBox').classList.remove('hide')}
+  render();lab();
+</script>
+</body>
+</html>

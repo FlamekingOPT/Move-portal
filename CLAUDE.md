@@ -27,7 +27,18 @@ Jack wants to go back to the v2 idea: a trailer load built from scans creates th
 4. **Mixing is allowed:** a truck can start on office IF(s), and extra pallets those IFs don't cover go onto **one new TO + IF** on the same truck/seal. The V6 scan block ("no open office TO") goes away. A truck can also start with no IF at all (trailer # only).
 5. **Stock check at Approve:** if Riverside *available* doesn't cover a scanned SKU, **Approve is blocked** (e.g. "YSN201 scanned 504, available 360"). Nothing partial is written.
 
-**⏭ Pending question for Jack (re-ask first):** go with approach 1? The options, as presented:
+**2026-10-15 mockup round** (`docs/mockups/2026-10-15 move portal scan-built TO mockup.html`), Jack's rulings:
+6. **No office IFs in this flow.** Start truck = trailer # only; every move truck is scan-built (supersedes the mixing in 4 and the office-IF part of 2).
+7. **Load** has no TO/IF buckets, just "on this truck" by SKU, plus a **Finish loading** button → Verify.
+8. **Verify** shows pallets / pcs / **weight** per SKU + pallet tare + total (item weight from NetSuite; tare 45 lb is a placeholder) and Riverside available; **Finish → Shipments**.
+9. **Seal # stays on Shipments** with **Mark shipped**, which sends the truck for approval.
+10. **Approve** is a plain card per truck (summary + Approve / Reject); Approve writes TO + IF + Shipped stamp. Stock short still blocks with a message.
+11. **Labels: the manager prints** (SKU, pcs/pallet from config, pallet count, odd pallet; labeled-not-loaded list; floor label requests). Over Riverside available = **warn only, never block**.
+12. **Excel upload for labels:** .xlsx with SKU · Pcs per pallet · Pallets · Odd pallet pcs (one row per SKU), preview with per-row warnings, unknown SKU rows skipped, then Print all.
+
+13. Approach 1 confirmed; office-IF code kept behind a Settings switch `officeIfs` (default false); TO status B; Reject → floor with reason; 250-label cap per upload; TO-without-IF locks the truck (Retry, or close TO in NetSuite + Release); late pallet after ship → one-pallet TO + IF.
+
+**⏭ NEXT (2026-10-15):** spec written → `docs/superpowers/specs/2026-10-14-move-portal-scan-built-to-design.md`, **awaiting Jack's review**. After approval: writing-plans → `docs/superpowers/plans/2026-10-15-move-portal-scan-built-to.md`. The options, as presented:
 - **Approach 1 (recommended): extend v3.** Each truck gets a "New TO" line bucket. The ship confirm becomes **Approve & Ship**: stock check → office-IF corrections → `to_create` → `if_create` (full qty) → stamp every IF Shipped. Receiving is unchanged. The add-on IF from an office TO becomes "add to the new TO". Gated by writeMode `on`; `off`/`qty` are plan only.
 - **Approach 2 (rejected):** revive the v2 code from `main` for scan-built trucks. That means two load models.
 - **Approach 3 (rejected):** a new TO per extra SKU.
