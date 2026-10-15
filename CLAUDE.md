@@ -19,7 +19,22 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **SDD ledger:** `docs/sdd-ledger/progress.md` (every ruling, review finding, minor and ON-MODE GATE item), with every task brief/report under `docs/sdd-ledger/v3/`, `verify-load/`, `rework/`, `dashboard/`.
 - **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
-## 🧭 READ FIRST — HANDOFF (2026-10-07) · SANDBOX END-TO-END PASSED IN `on` MODE · ⏭ NEXT = PROD LAUNCH THIS WEEK (Jack wants real orders)
+## 🧭 READ FIRST — BRAINSTORM PAUSED (2026-10-14) · PORTAL BUILDS THE TO + IF FROM A SCANNED TRAILER · ⏭ ASK JACK THE PENDING QUESTION
+Jack wants to go back to the v2 idea: a trailer load built from scans creates the TO + IF on manager approval. This reverses v3 decisions V1/V6. The brainstorm is classed **architectural**, so it gets a spec and then a plan. **No spec or code yet.** Decisions so far:
+1. A single manager **Approve** in the portal writes everything at once: a new TO (approved, status B, 35 → 46) + its IF + the Shipped stamp (seal/trailer). Nothing is written before that click.
+2. The office **may still make IFs** on its existing TOs. The portal verifies those the v3 way.
+3. Every scan-built truck gets its **own new TO**. The office **stops making new move TOs** and only makes IFs on TOs that already exist.
+4. **Mixing is allowed:** a truck can start on office IF(s), and extra pallets those IFs don't cover go onto **one new TO + IF** on the same truck/seal. The V6 scan block ("no open office TO") goes away. A truck can also start with no IF at all (trailer # only).
+5. **Stock check at Approve:** if Riverside *available* doesn't cover a scanned SKU, **Approve is blocked** (e.g. "YSN201 scanned 504, available 360"). Nothing partial is written.
+
+**⏭ Pending question for Jack (re-ask first):** go with approach 1? The options, as presented:
+- **Approach 1 (recommended): extend v3.** Each truck gets a "New TO" line bucket. The ship confirm becomes **Approve & Ship**: stock check → office-IF corrections → `to_create` → `if_create` (full qty) → stamp every IF Shipped. Receiving is unchanged. The add-on IF from an office TO becomes "add to the new TO". Gated by writeMode `on`; `off`/`qty` are plan only.
+- **Approach 2 (rejected):** revive the v2 code from `main` for scan-built trucks. That means two load models.
+- **Approach 3 (rejected):** a new TO per extra SKU.
+
+After the approach is agreed, present the design in sections: data model + Approve sequence → floor UI → errors/retry → tests. Then the spec in `docs/superpowers/specs/2026-10-14-move-portal-scan-built-to-design.md`, then writing-plans. The prod launch steps below stay valid for the office-IF path.
+
+## 🧭 HANDOFF (2026-10-07) · SANDBOX END-TO-END PASSED IN `on` MODE · ⏭ NEXT = PROD LAUNCH THIS WEEK (Jack wants real orders)
 **State:** branch `feat/v3-verification`, last code commit **77b81e4**, tests **291/291**. The sandbox ran **three real trucks end to end in write mode `on`** on 2026-10-07; each one wrote to NetSuite (IF stamped Shipped, Item Receipt created at Tippecanoe 42):
 
 | Truck | IF | What it exercised | NetSuite result |
