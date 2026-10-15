@@ -21,7 +21,7 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
     const SF = { pallet: 'custrecord_mvsc_pallet', load: 'custrecord_mvsc_load', result: 'custrecord_mvsc_result', data: 'custrecord_mvsc_data' };
     const RF = { status: 'custrecord_mvr_status', requester: 'custrecord_mvr_requester', data: 'custrecord_mvr_data' };
     const DEFAULTS = { locFrom: '', locTo: '', fromName: 'Riverside', toName: 'Tippecanoe', target: '2026-11-15', start: '2026-10-01',
-        skip: [], labelCode: 'both', roster: [], maxPrint: 250, staleDays: 5, toStatus: 'B', activeBatch: '' };
+        skip: [], labelCode: 'both', roster: [], maxPrint: 250, staleDays: 5, toStatus: 'B', activeBatch: '', officeIfs: false, palletTare: 45 };
     const ITEM_TYPES = ['InvtPart', 'Assembly'];
     let cfgCache = {};
 
@@ -74,10 +74,11 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
 
     // ── items / stock ────────────────────────────────────────────────────
     function skuOfName(n) { const s = String(n || ''); const i = s.lastIndexOf(' : '); return i >= 0 ? s.slice(i + 3) : s; }
-    function itemCols() { return ['itemid', 'salesdescription', 'displayname', 'upccode'].map(n => search.createColumn({ name: n })); }
+    function itemCols() { return ['itemid', 'salesdescription', 'displayname', 'upccode', 'weight', 'weightunit'].map(n => search.createColumn({ name: n })); }
     function itemRow(r) {
         return { item: String(r.id), sku: skuOfName(r.getValue('itemid')),
-            desc: r.getValue('salesdescription') || r.getValue('displayname') || '', upc: r.getValue('upccode') || '' };
+            desc: r.getValue('salesdescription') || r.getValue('displayname') || '', upc: r.getValue('upccode') || '',
+            weight: Number(r.getValue('weight')) || 0, wunit: String(r.getValue('weightunit') || '') };
     }
     function itemLookup(q) {
         if (!q) return [];

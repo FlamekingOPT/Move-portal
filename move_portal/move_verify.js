@@ -412,7 +412,7 @@ define([], function () {
             links: "SELECT ptl.previousdoc AS ifid, ptl.nextdoc AS rcptid FROM previoustransactionlink ptl WHERE ptl.linktype = 'TOrdCost' AND ptl.previousdoc IN ({IDS})",
             receipts: "SELECT r.id AS rcptid, r.tranid AS tranid, r.custbody_rsm_container_no AS trailer, r.custbody7 AS seal, tl.item AS item, tl.quantity AS qty " +
                 "FROM transaction r JOIN transactionline tl ON tl.transaction = r.id WHERE r.type = 'ItemRcpt' AND tl.location = " + T + " AND tl.quantity > 0 AND r.id IN ({IDS})",
-            items: "SELECT i.id AS item, i.itemid AS sku, i.displayname AS descr, i.upccode AS upc FROM item i WHERE i.id IN ({IDS})",
+            items: "SELECT i.id AS item, i.itemid AS sku, i.displayname AS descr, i.upccode AS upc, i.weight AS weight, i.weightunit AS wunit FROM item i WHERE i.id IN ({IDS})",
             // Riverside on hand, for the local print plan (in NetSuite the plan reads live stock through move_data).
             onHand: "SELECT ail.item AS item, SUM(ail.quantityonhand) AS onhand FROM aggregateItemLocation ail WHERE ail.location = " + F + " AND ail.quantityonhand > 0 GROUP BY ail.item"
         };
@@ -458,7 +458,7 @@ define([], function () {
             ifInfo: () => { const o = {}; Object.values(ifs).forEach(f => { o[f.ifId] = { ifNum: f.ifNum, status: f.status, toId: f.toId, lines: f.lines.map(l => Object.assign({}, l)) }; }); return o; },
             ifsByTo: () => JSON.parse(JSON.stringify(byTo)),
             receiptsByIf: () => JSON.parse(JSON.stringify(recs)),
-            items: () => (raw.items || []).map(i => ({ item: S(i.item), sku: S(i.sku), desc: S(i.descr), upc: S(i.upc) })),
+            items: () => (raw.items || []).map(i => ({ item: S(i.item), sku: S(i.sku), desc: S(i.descr), upc: S(i.upc), weight: Number(i.weight) || 0, wunit: S(i.wunit) })),
             onHand: () => { const o = {}; (raw.onHand || []).forEach(r => { o[S(r.item)] = (o[S(r.item)] || 0) + Number(r.onhand || 0); }); return o; },
             pulledAt: () => S(raw.pulledAt),
             resetCache: () => {}

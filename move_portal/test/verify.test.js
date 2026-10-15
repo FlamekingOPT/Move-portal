@@ -236,7 +236,7 @@ test('buildReads: planned IFs (A/B), merged lines, TO remaining after every IF, 
     assert.deepEqual(r.ifsByTo(), { 500: ['9000', '9001', '9002'], 800: ['9050'] });
     assert.deepEqual(r.receiptsByIf(), { 9000: [{ id: '7000', tranid: 'IR7000', trailer: '537224', seal: 'SEAL: 5249300', lines: { 975: 504 } }] });
     assert.equal(r.ifInfo()['9000'].status, 'C');
-    assert.deepEqual(r.items()[0], { item: '975', sku: 'YSN100', desc: '100# LP cylinder', upc: '0975' });
+    assert.deepEqual(r.items()[0], { item: '975', sku: 'YSN100', desc: '100# LP cylinder', upc: '0975', weight: 0, wunit: '' });
     assert.equal(r.pulledAt(), '2026-10-05T14:00:00-07:00');
 });
 
@@ -488,4 +488,10 @@ test('a scan-built truck loads any labeled pallet without a TO check', () => {
     assert.deepEqual(v.classifyLoadScan({ pallet: p, truckId: '7', trucks: {}, scanBuilt: true }), { result: 'ok', set: { status: 'loaded', loadId: '7' } });
     assert.equal(v.classifyLoadScan({ pallet: Object.assign({}, p, { status: 'void' }), truckId: '7', trucks: {}, scanBuilt: true }).result, 'void');
     assert.equal(v.classifyLoadScan({ pallet: p, truckId: '7', trucks: {}, ifs: [], toLines: [], loadedByItem: {} }).result, 'no_to');   // office truck: unchanged
+});
+
+test('the items query and reads carry weight and unit', () => {
+    assert.match(v.SQL('35', '46').items, /i\.weight AS weight, i\.weightunit AS wunit/);
+    const r = v.buildReads({ items: [{ item: 11, sku: 'YSN201', descr: 'x', upc: '', weight: '20', wunit: '1' }] });
+    assert.deepEqual(r.items()[0], { item: '11', sku: 'YSN201', desc: 'x', upc: '', weight: 20, wunit: '1' });
 });

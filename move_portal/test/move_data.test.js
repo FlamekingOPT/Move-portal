@@ -49,3 +49,11 @@ test('move_data: getLoad reads the record with record.load; bad JSON throws, nev
     s = setup({ rows: [{ id: '8', custrecord_mvl_status: 'loading', custrecord_mvl_data: '{"v3":tr' }] });
     assert.throws(() => s.data.loadsByStatus(['loading']), /Truck 8 data is unreadable/);
 });
+
+test('settings default to scan-built (officeIfs false, tare 45) and item rows carry weight', () => {
+    const s = setup({ rows: [{ id: '1', custrecord_mvs_data: '{}' }] }).data.getSettings();
+    assert.equal(s.officeIfs, false);
+    assert.equal(s.palletTare, 45);
+    const i = setup({ rows: [{ id: '11', itemid: 'YSN201', weight: '20', weightunit: '1' }] }).data.itemInfo(['11'])['11'];
+    assert.deepEqual([i.weight, i.wunit], [20, '1']);
+});

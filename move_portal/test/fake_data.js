@@ -5,7 +5,7 @@ function clone(x) { return x == null ? x : JSON.parse(JSON.stringify(x)); }
 function makeFakeData(core) {
     const db = {
         settings: { locFrom: '35', locTo: '99', fromName: 'Riverside', toName: 'Tippecanoe', target: '2026-11-15', start: '2026-10-01',
-            skip: [], labelCode: 'both', roster: ['Miguel'], maxPrint: 250, staleDays: 5, toStatus: 'B', activeBatch: 'B1' },
+            skip: [], labelCode: 'both', roster: ['Miguel'], maxPrint: 250, staleDays: 5, toStatus: 'B', activeBatch: 'B1', officeIfs: true, palletTare: 45 },
         items: [], stock: {}, configs: [], pallets: {}, loads: {}, scans: [], reqs: {}, tranids: {}, seq: 100
     };
     const nextId = () => ++db.seq;
