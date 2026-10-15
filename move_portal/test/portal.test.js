@@ -2953,3 +2953,9 @@ test('labels_preview checks rows against NetSuite stock and is managers only', (
     assert.throws(() => ctx.run('labels_preview', { rows: [] }, false), /Managers only/);
     assert.throws(() => ctx.run('labels_preview', { rows: new Array(501).fill({ sku: 'YSN201', pcs: 1, pallets: 1 }) }), /500 rows/);
 });
+
+test('labels_preview drops null sheet entries and keeps sheet row numbers', () => {
+    const ctx = setup();
+    const r = ctx.run('labels_preview', { rows: [null, { sku: 'YSN201', pcs: 120, pallets: 1, odd: 0 }] });
+    assert.deepEqual(r.rows.map(x => [x.n, x.status]), [[3, 'ok']]);
+});

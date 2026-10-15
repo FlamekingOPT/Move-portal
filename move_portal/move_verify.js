@@ -532,14 +532,19 @@ define([], function () {
     function labelRows(rows, ctx) {
         const out = [], used = {};
         let labels = 0;
-        const int = v => { const s = String(v == null ? '' : v).trim(); return s === '' ? 0 : Math.floor(Number(s)); };
+        const blank = v => v == null || String(v).trim() === '';
+        const whole = v => { const s = String(v).trim().replace(/,/g, ''); const x = /^\d+$/.test(s) ? Number(s) : NaN; return isFinite(x) ? x : NaN; };
         (rows || []).forEach((r, i) => {
+            if (r == null || typeof r !== 'object') return;                                  // a null sheet entry
             const n = i + 2, raw = String(r.sku == null ? '' : r.sku).trim();
-            const pcs = int(r.pcs), pallets = int(r.pallets), odd = int(r.odd);
-            if (!raw && !pcs && !pallets && !odd) return;                                    // a blank sheet row
+            if (!raw && blank(r.pcs) && blank(r.pallets) && blank(r.odd)) return;            // a blank sheet row
+            const pcs = blank(r.pcs) ? 0 : whole(r.pcs), pallets = blank(r.pallets) ? 0 : whole(r.pallets), odd = blank(r.odd) ? 0 : whole(r.odd);
             const item = (ctx.skuMap || {})[raw.toUpperCase()] || '', sku = item && ctx.items[item] ? ctx.items[item].sku : raw;
-            const row = { n: n, sku: sku, item: item, pcs: pcs, pallets: pallets, odd: odd > 0 ? odd : 0, total: 0, labels: 0, status: 'ok', msg: '', cfg: (ctx.cfg || {})[item] || '' };
+            const row = { n: n, sku: sku, item: item, pcs: isNaN(pcs) ? 0 : pcs, pallets: isNaN(pallets) ? 0 : pallets, odd: isNaN(odd) ? 0 : odd, total: 0, labels: 0, status: 'ok', msg: '', cfg: (ctx.cfg || {})[item] || '' };
             if (!item) { row.status = 'skip'; row.msg = 'Unknown SKU ' + (raw || '(blank)'); out.push(row); return; }
+            if (isNaN(pcs)) { row.status = 'skip'; row.msg = 'Pcs per pallet must be a whole number'; out.push(row); return; }
+            if (isNaN(pallets)) { row.status = 'skip'; row.msg = 'Pallets must be a whole number'; out.push(row); return; }
+            if (isNaN(odd)) { row.status = 'skip'; row.msg = 'Odd pallet pcs must be a whole number'; out.push(row); return; }
             if (!(pcs >= 1)) { row.status = 'skip'; row.msg = 'Pcs per pallet must be 1 or more'; out.push(row); return; }
             if (!(pallets >= 1) && !(odd >= 1)) { row.status = 'skip'; row.msg = 'Pallets must be 1 or more'; out.push(row); return; }
             row.labels = Math.max(0, pallets) + (row.odd ? 1 : 0);

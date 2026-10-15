@@ -559,7 +559,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('labels_preview', true, (a, c) => {
         const rows = Array.isArray(a.rows) ? a.rows : [];
         if (rows.length > 500) throw userErr('Too many rows (500 rows max per file)');
-        const skuMap = data.skuMap(), items = [...new Set(rows.map(r => skuMap[String(r.sku == null ? '' : r.sku).trim().toUpperCase()]).filter(Boolean))];
+        const skuMap = data.skuMap(), items = [...new Set(rows.filter(r => r && typeof r === 'object').map(r => skuMap[String(r.sku == null ? '' : r.sku).trim().toUpperCase()]).filter(Boolean))];
         const info = data.itemInfo(items), st = items.length ? data.locationStock(c.S.locFrom, items) : {}, avail = {}, cfg = {};
         const cs = data.configsByItem(c.S.activeBatch);
         items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; const d = (cs[k] || []).find(x => x.isDefault) || (cs[k] || [])[0]; if (d) cfg[k] = d.code; });

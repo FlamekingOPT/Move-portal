@@ -515,3 +515,20 @@ test('labelRows: ok / warn on a running total / skip, labels with odd pallets, c
     assert.deepEqual([r.rows[1].total, r.rows[1].cfg, r.labels, r.over], [306, 'A', 28, false]);
     assert.equal(v.labelRows([{ sku: 'YSN401', pcs: 1, pallets: 251 }], ctx).over, true);
 });
+
+test('labelRows: whole-number cells only; null entries dropped; blanks are 0', () => {
+    const ctx = { skuMap: { YSN201: '11', YSN401: '13' }, items: { '11': { sku: 'YSN201' }, '13': { sku: 'YSN401' } },
+        avail: { '11': 720, '13': 2000 }, labeled: { '11': 288 }, cfg: {}, maxPrint: 250 };
+    const bad = v.labelRows([{ sku: 'YSN201', pcs: 72, pallets: 'abc', odd: 5 }], ctx).rows[0];
+    assert.deepEqual([bad.status, bad.msg], ['skip', 'Pallets must be a whole number']);
+    assert.equal(typeof v.labelRows([{ sku: 'YSN201', pcs: 72, pallets: 'abc', odd: 5 }], ctx).labels, 'number');
+    assert.equal(v.labelRows([{ sku: 'YSN201', pcs: '36.5', pallets: 1 }], ctx).rows[0].msg, 'Pcs per pallet must be a whole number');
+    assert.equal(v.labelRows([{ sku: 'YSN201', pcs: 72, pallets: 1, odd: 'x' }], ctx).rows[0].msg, 'Odd pallet pcs must be a whole number');
+    assert.equal(v.labelRows([{ sku: 'YSN201', pcs: 72, pallets: '1e999' }], ctx).rows[0].status, 'skip');
+    const big = v.labelRows([{ sku: 'YSN401', pcs: 1, pallets: '1,000' }], ctx);
+    assert.deepEqual([big.rows[0].status, big.labels, big.over], ['ok', 1000, true]);
+    const nul = v.labelRows([{ sku: 'YSN201', pcs: 5, pallets: 1 }, null, { sku: 'YSN401', pcs: 1, pallets: 1 }], ctx);
+    assert.deepEqual(nul.rows.map(x => x.n), [2, 4]);
+    const oddOnly = v.labelRows([{ sku: 'YSN201', pcs: 72, pallets: '', odd: 18 }], ctx).rows[0];
+    assert.deepEqual([oddOnly.status, oddOnly.labels, oddOnly.total], ['ok', 1, 18]);
+});
