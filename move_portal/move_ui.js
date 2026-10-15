@@ -706,9 +706,10 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.tverify = async (el, shortNote) => {
             if (needWho()) return;
             busy(el, true);
+            const tid = S.truckId;
             const r = await api('truck_verify', shortNote ? { truckId: S.truckId, shortNote: shortNote } : { truckId: S.truckId });
             busy(el, false);
-            if (!$('scanres') || (r.view && String(r.view.truck.id) !== String(S.truckId))) return;     // left, or another truck is open now
+            if (!$('scanres') || String(tid) !== String(S.truckId)) return;     // left, or another truck is open now
             if (!r.ok && $('nmodal') && shortNote) { tone('bad'); $('n_msg').innerHTML = errBox(r.error); return; }
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
             if (r.needsNote) { tone('warn'); if (!(shortNote && $('nmodal'))) noteModal(r.diffs); return; }
@@ -716,8 +717,9 @@ h3{font-size:15px;margin:16px 0 8px}
             markSeen(r.view);
             tone(r.match ? 'ok' : 'warn');
             paintTruck(r.view, false);
-            $('scanres').innerHTML = r.match ? flash('green', '✅ Ready to ship', 'The load matches its IFs')
-                : flash('amber', '⚠ Needs IF fix', r.diffs.length + ' difference' + (r.diffs.length === 1 ? '' : 's') + ': see the card below');
+            const sc = !!(r.view && r.view.scan);
+            $('scanres').innerHTML = r.match ? (sc ? flash('green', '✅ Load checked', 'Check it against the trailer, then Finish → Shipments') : flash('green', '✅ Ready to ship', 'The load matches its IFs'))
+                : flash('amber', sc ? '⚠ Check the load' : '⚠ Needs IF fix', r.diffs.length + ' difference' + (r.diffs.length === 1 ? '' : 's') + ': see the card below');
         };
         ACT.taddif = async el => {
             if (needWho()) return;

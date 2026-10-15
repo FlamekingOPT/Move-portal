@@ -263,3 +263,11 @@ test('finishload delegates to tverify, which guards a stale truck', () => {
     const t = src.slice(src.indexOf('ACT.tverify ='));
     assert.ok(t.slice(0, 600).indexOf('S.truckId') !== -1 && t.slice(0, 900).indexOf("!$('scanres')") !== -1);
 });
+
+test('tverify captures the truck id before the await and words the flash for scan trucks', () => {
+    const src = ui._clientMain.toString();
+    const t = src.slice(src.indexOf('ACT.tverify ='), src.indexOf('ACT.taddif ='));
+    assert.ok(t.indexOf('const tid = S.truckId') !== -1 && t.indexOf('const tid') < t.indexOf("await api('truck_verify'"));
+    assert.ok(t.indexOf('String(tid) !== String(S.truckId)') !== -1);
+    assert.ok(src.indexOf('Load checked') !== -1);
+});
