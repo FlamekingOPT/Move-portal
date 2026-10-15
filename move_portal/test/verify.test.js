@@ -426,6 +426,17 @@ test('local snapshot_ns.applyOp: if_qty rewrites the line, if_create adds a Pack
     assert.equal(ns.plannedIfs().some(x => x.ifId === String(id)), false);
 });
 
+test('local snapshot_ns.applyOp: to_create returns a TO id; a Shipped if_create lands as status C on that TO', () => {
+    const { makeSnapshotNs } = require('../local/snapshot_ns');
+    const ns = makeSnapshotNs(v, JSON.parse(JSON.stringify(require('./fixtures/snapshot_sample.json'))));
+    const toId = ns.applyOp({ op: 'to_create', ref: '5', lines: { '11': 72 } });
+    assert.ok(Number(toId) > 0);
+    const ifId = ns.applyOp({ op: 'if_create', toId: toId, ship: true, lines: { '11': 72 }, memo: 'Truck 1 · 11/02 · [MV-5]' });
+    assert.ok(Number(ifId) > 0);
+    assert.equal(ns.ifInfo()[String(ifId)].status, 'C');
+    assert.equal(ns.plannedIfs().some(x => x.ifId === String(ifId)), false);
+});
+
 test('lbs converts NetSuite weight units by id or text; unknown is null', () => {
     assert.equal(v.lbs(20, '1'), 20);
     assert.equal(v.lbs(20, 'lb'), 20);
