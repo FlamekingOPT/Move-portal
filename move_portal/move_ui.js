@@ -555,8 +555,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (S.side !== 'out' || S.tab !== 'trucks') { S.side = 'out'; put('mv_side', 'out'); S.tab = 'trucks'; shell(); } else truckDetail();
         }
         ACT.backtruck = () => { S.truckId = null; truckList(); };
-        ACT.finishload = async el => { if (needWho()) return; busy(el, true); const r = await api('truck_verify', { truckId: S.truckId }); busy(el, false);
-            if (!r.ok) { $('scanres').innerHTML = errBox(r.error); return; } paintTruck(r.view, false); };
+        ACT.finishload = el => ACT.tverify(el);       // same verify path: tone, markSeen, note modal
         ACT.goship = () => { S.truckId = null; S.tab = 'ship'; renderNav(); };
         async function truckDetail(pre) {
             if (S.tmodeTruck !== S.truckId) { S.tmodeTruck = S.truckId; S.otherOpen = false; setMode('load'); }
@@ -709,7 +708,7 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, true);
             const r = await api('truck_verify', shortNote ? { truckId: S.truckId, shortNote: shortNote } : { truckId: S.truckId });
             busy(el, false);
-            if (!$('scanres')) return;
+            if (!$('scanres') || (r.view && String(r.view.truck.id) !== String(S.truckId))) return;     // left, or another truck is open now
             if (!r.ok && $('nmodal') && shortNote) { tone('bad'); $('n_msg').innerHTML = errBox(r.error); return; }
             if (!r.ok) { tone('bad'); $('scanres').innerHTML = errBox(r.error); return; }
             if (r.needsNote) { tone('warn'); if (!(shortNote && $('nmodal'))) noteModal(r.diffs); return; }

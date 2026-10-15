@@ -256,3 +256,10 @@ test('scan-built floor screens: no IF list when office IFs are off, Finish loadi
     ['function scanTable(', 'ACT.finishload', 'Finish loading', 'Finish → Shipments', 'r.officeIfs', 'Start Trailer', 'pallets × ', 'without weight', 'Approve will be blocked']
         .forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
+
+test('finishload delegates to tverify, which guards a stale truck', () => {
+    const src = ui._clientMain.toString();
+    assert.ok(/ACT\.finishload = [^\n]*ACT\.tverify\(/.test(src));
+    const t = src.slice(src.indexOf('ACT.tverify ='));
+    assert.ok(t.slice(0, 600).indexOf('S.truckId') !== -1 && t.slice(0, 900).indexOf("!$('scanres')") !== -1);
+});
