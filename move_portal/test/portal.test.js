@@ -2882,3 +2882,42 @@ test('scan-built: Release is refused once the IF exists, and the retries row say
     const r = ctx.run('approvals').retries.find(q => String(q.id) === String(t.id));
     assert.deepEqual([r.canRelease, r.toId, r.toNum], [false, '501', 'TO501']);
 });
+
+test('scan-built: a late pallet accepted after shipping gets a one-pallet TO + Shipped IF and a late receipt', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.run('ship_confirm', { truckId: t.id });
+    const late = printLabels(ctx, 1, 'Jlate')[0];
+    ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);           // never loaded → flagged
+    const n0 = ctx.tx._t.ops.length;
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: late.id });
+    assert.equal(r.outcome, 'accepted');
+    const [to, f] = ctx.tx._t.ops.slice(n0);
+    const ref = t.id + '-P' + late.id;
+    assert.deepEqual([to.op, to.ref, to.lines, f.op, f.ship, f.seal], ['to_create', ref, { '11': 120 }, 'if_create', true, 'S' + t.id]);
+    const x = ctx.data.getLoad(t.id);
+    assert.ok(x.data.writes['to_create:' + ref] && x.data.writes['if_create:new:to:' + ref]);
+    assert.equal(x.data.alloc.length, 2);
+    assert.equal(ctx.data.getPallet(late.id).status, 'received');
+});
+
+test('scan-built: a late pallet is refused when Riverside cannot cover it, and nothing is written', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 1);
+    ctx.run('ship_confirm', { truckId: t.id });
+    const late = printLabels(ctx, 1, 'Jlate2')[0];
+    ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);
+    ctx.data.db.stock['35']['11'].avail = 10;
+    const n0 = ctx.tx._t.ops.length;
+    const r = ctx.run('pallet_accept', { truckId: t.id, palletId: late.id });
+    assert.equal(r.outcome, 'refused');
+    assert.match(r.text, /YSN201 on truck 120, available 10/);
+    assert.equal(ctx.tx._t.ops.length, n0);
+});
+
+test('Dashboard lists a loading scan truck as one row with its SKUs', () => {
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 2);
+    const row = ctx.run('dashboard').rows.find(r => String(r.truckId) === String(t.id));
+    assert.deepEqual([row.ifNum, row.toNum, row.skus, row.pallets, row.pcs], ['—', '—', [{ sku: 'YSN201', qty: 240 }], 2, 240]);
+});

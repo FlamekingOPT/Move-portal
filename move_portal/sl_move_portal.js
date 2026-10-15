@@ -1350,12 +1350,44 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             throw e;
         }
     }
+    // Spec 2026-10-14 S13: a scan-built truck has no office TO to add to, so the pallet gets its own TO + Shipped IF, stamped like its truck.
+    function acceptScanPallet(x0, p0, item, sk, pcs, c) {
+        const st = data.locationStock(c.S.locFrom, [item]), shorts = verify.stockCheck({ [item]: pcs }, { [item]: st[item] ? Number(st[item].avail) || 0 : 0 });
+        if (shorts.length) return { outcome: 'refused', text: '⛔ Can\'t accept: ' + verify.stockText(shorts, { [item]: sk }), view: unloadView(x0, c) };
+        const cl = claimLoad(x0, null, 'accept', decideGuard, {});
+        const id = cl.Ld.id, claim = cl.claim, label = truckLabel(cl.Ld);
+        try { mustFlaggedOn(cl.Ld, p0.id); } catch (e) { dropClaim(id, claim); throw e; }
+        const dep = cl.Ld.data.depart || {}, ref = id + '-P' + p0.id;
+        const plan = verify.scanApprovePlan({ ref: ref, lines: { [item]: pcs }, stamp: { trailer: dep.trailer, seal: dep.seal, truckNo: dep.truckNo, dayIso: dep.day }, S: c.S });
+        const writes = Object.assign({}, cl.Ld.data.writes);
+        try {
+            verify.runOps(plan.ops, writeMode(c), o => { assertClaim(id, claim, label, 'accept'); return tx.apply(verify.resolveNew(o, writes)); }, writes,
+                (k, newId) => { writes[k] = String(newId); data.updateLoad(data.getLoad(id), { data: { writes: writes } }); });
+        } catch (e) {
+            if (e.user) throw e;
+            log.error({ title: 'move pallet_accept ' + id, details: (e && e.stack) || String(e) });
+            dropClaim(id, claim);
+            throw userErr('Accept refused: ' + (e.message || e) + ' — fix it in NetSuite and accept again');
+        }
+        try {
+            const toId = writes['to_create:' + ref], ifId = writes['if_create:new:to:' + ref];
+            const dec = { kind: 'accepted', ifId: ifId ? String(ifId) : 'new:' + ref, ifNum: ifId ? newIfNum(ifId) : '(plan)', toId: toId ? String(toId) : 'new:to:' + ref,
+                toNum: toId ? toNumOf(toId) : '(new TO)', item: item, sku: sk, pcs: pcs, by: c.user, at: c.now.stamp };
+            dec.text = acceptText(dec);
+            unloadFromOther(data.getPallet(p0.id), c);
+            completeAccept(id, data.getPallet(p0.id), dec, c);
+            assertClaim(id, claim, label, 'accept');
+            data.updateLoad(data.getLoad(id), { data: { claim: '', workingAt: 0, phase: '' } });
+            return { outcome: 'accepted', text: dec.text, view: unloadView(mustTruck(id), c) };
+        } catch (e) { dropClaim(id, claim); throw e; }
+    }
     act('pallet_accept', true, (a, c) => {
         const x0 = mustTruck(a.truckId);
         decideGuard(x0);
         const p0 = mustFlaggedOn(x0, a.palletId), item = String((p0.lines[0] || {}).item || ''), pcs = Number(p0.pieces) || 0;
         if (!item || !pcs || (p0.lines || []).length !== 1) throw userErr('Only a single-SKU pallet can be accepted here: reject it and call the office');
         const sk = skuNames([item])[item] || item;
+        if (isScan(x0)) return acceptScanPallet(x0, p0, item, sk, pcs, c);
         // The target is what the IF must read once every accepted pallet of this SKU on it is in: the truck's alloc plus the other pending accepts, plus this pallet.
         const planFor = (Ld, info) => {
             const target = ifForItem(Ld, item, info);
@@ -1752,6 +1784,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                         irs: irs.filter(r => r.ifId === String(al.ifId)).map(r => r.irNum) }));
                 });
             } else {
+                if (isScan(x)) {
+                    const ps = loadedAll[String(x.id)] || [], tl = verify.truckLines(ps), sk = skuNames(Object.keys(tl));
+                    rows.push(Object.assign({}, base, { ifId: '', ifNum: '—', toNum: '—', skus: Object.keys(tl).map(k => ({ sku: sk[k] || k, qty: tl[k].pcs })),
+                        pallets: ps.length, pcs: Object.keys(tl).reduce((s, k) => s + tl[k].pcs, 0), received: null }));
+                    return;
+                }
                 const live = verify.liveIfs(d.ifs), ps = loadedAll[String(x.id)] || [], fill = verify.fillExpected(live, verify.sumLines(ps));
                 live.forEach(f => {
                     const al = fill.alloc[String(f.ifId)] || {}, pcs = Object.keys(al).reduce((s, k) => s + Number(al[k] || 0), 0);
