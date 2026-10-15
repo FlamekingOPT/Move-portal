@@ -555,6 +555,17 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { created: createPalletsForJob(job, lines, a.upTo, src, c) };
     });
 
+    // Spec 2026-10-14 §6: one preview for the Excel upload and the single-SKU form. Nothing is created here (Print uses print_chunk).
+    act('labels_preview', true, (a, c) => {
+        const rows = Array.isArray(a.rows) ? a.rows : [];
+        if (rows.length > 500) throw userErr('Too many rows (500 rows max per file)');
+        const skuMap = data.skuMap(), items = [...new Set(rows.map(r => skuMap[String(r.sku == null ? '' : r.sku).trim().toUpperCase()]).filter(Boolean))];
+        const info = data.itemInfo(items), st = items.length ? data.locationStock(c.S.locFrom, items) : {}, avail = {}, cfg = {};
+        const cs = data.configsByItem(c.S.activeBatch);
+        items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; const d = (cs[k] || []).find(x => x.isDefault) || (cs[k] || [])[0]; if (d) cfg[k] = d.code; });
+        return verify.labelRows(rows, { skuMap: skuMap, items: info, avail: avail, labeled: data.labeledPiecesByItem(), cfg: cfg, maxPrint: Number(c.S.maxPrint) || 250 });
+    });
+
     function pubReq(q) {
         const d = q.data || {};
         return { id: q.id, status: q.status, requester: q.requester, summary: core.summarize(d.lines || []), count: d.count || 1,

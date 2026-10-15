@@ -495,3 +495,23 @@ test('the items query and reads carry weight and unit', () => {
     const r = v.buildReads({ items: [{ item: 11, sku: 'YSN201', descr: 'x', upc: '', weight: '20', wunit: '1' }] });
     assert.deepEqual(r.items()[0], { item: '11', sku: 'YSN201', desc: 'x', upc: '', weight: 20, wunit: '1' });
 });
+
+test('labelRows: ok / warn on a running total / skip, labels with odd pallets, cap', () => {
+    const ctx = { skuMap: { YSN201: '11', YSN401: '13', '201': '20' }, items: { '11': { sku: 'YSN201' }, '13': { sku: 'YSN401' }, '20': { sku: '201' } },
+        avail: { '11': 720, '13': 2000, '20': 5 }, labeled: { '11': 288 }, cfg: { '11': 'A' }, maxPrint: 250 };
+    const r = v.labelRows([
+        { sku: ' ysn401 ', pcs: '36', pallets: '20', odd: '' },
+        { sku: 'YSN201', pcs: 72, pallets: 4, odd: 18 },            // 306 of 432 left
+        { sku: 'YSN201', pcs: 72, pallets: 2, odd: '' },            // running 450 > 432 → warn
+        { sku: 'NOPE', pcs: 10, pallets: 1 },
+        { sku: 'YSN401', pcs: 36, pallets: 0 },
+        { sku: '', pcs: '', pallets: '' },
+        { sku: 201, pcs: 5, pallets: 1 }
+    ], ctx);
+    assert.deepEqual(r.rows.map(x => [x.n, x.status, x.labels]), [[2, 'ok', 20], [3, 'ok', 5], [4, 'warn', 2], [5, 'skip', 0], [6, 'skip', 0], [8, 'ok', 1]]);
+    assert.equal(r.rows[2].msg, 'YSN201: 450 pcs labeled after this, Riverside shows 432 unlabeled');
+    assert.equal(r.rows[3].msg, 'Unknown SKU NOPE');
+    assert.equal(r.rows[4].msg, 'Pallets must be 1 or more');
+    assert.deepEqual([r.rows[1].total, r.rows[1].cfg, r.labels, r.over], [306, 'A', 28, false]);
+    assert.equal(v.labelRows([{ sku: 'YSN401', pcs: 1, pallets: 251 }], ctx).over, true);
+});

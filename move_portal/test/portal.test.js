@@ -2944,3 +2944,12 @@ test('scan-built: a late-pallet Accept retried after a failed IF is not blocked 
     assert.equal(ops.filter(o => o.op === 'if_create').length, 1);
     assert.equal(ctx.data.getPallet(late.id).status, 'received');
 });
+
+test('labels_preview checks rows against NetSuite stock and is managers only', () => {
+    const ctx = setup();
+    printLabels(ctx, 2);                                   // 240 YSN201 labeled already; avail 1000
+    const r = ctx.run('labels_preview', { rows: [{ sku: 'YSN201', pcs: 120, pallets: 7, odd: 0 }] });
+    assert.deepEqual([r.rows[0].status, r.rows[0].total, r.labels], ['warn', 840, 7]);
+    assert.throws(() => ctx.run('labels_preview', { rows: [] }, false), /Managers only/);
+    assert.throws(() => ctx.run('labels_preview', { rows: new Array(501).fill({ sku: 'YSN201', pcs: 1, pallets: 1 }) }), /500 rows/);
+});

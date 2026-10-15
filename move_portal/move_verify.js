@@ -528,9 +528,34 @@ define([], function () {
         return ops;
     }
 
+    // Excel / single-SKU label preview (spec 2026-10-14 §6). Warnings never block; only an unmatched row is skipped.
+    function labelRows(rows, ctx) {
+        const out = [], used = {};
+        let labels = 0;
+        const int = v => { const s = String(v == null ? '' : v).trim(); return s === '' ? 0 : Math.floor(Number(s)); };
+        (rows || []).forEach((r, i) => {
+            const n = i + 2, raw = String(r.sku == null ? '' : r.sku).trim();
+            const pcs = int(r.pcs), pallets = int(r.pallets), odd = int(r.odd);
+            if (!raw && !pcs && !pallets && !odd) return;                                    // a blank sheet row
+            const item = (ctx.skuMap || {})[raw.toUpperCase()] || '', sku = item && ctx.items[item] ? ctx.items[item].sku : raw;
+            const row = { n: n, sku: sku, item: item, pcs: pcs, pallets: pallets, odd: odd > 0 ? odd : 0, total: 0, labels: 0, status: 'ok', msg: '', cfg: (ctx.cfg || {})[item] || '' };
+            if (!item) { row.status = 'skip'; row.msg = 'Unknown SKU ' + (raw || '(blank)'); out.push(row); return; }
+            if (!(pcs >= 1)) { row.status = 'skip'; row.msg = 'Pcs per pallet must be 1 or more'; out.push(row); return; }
+            if (!(pallets >= 1) && !(odd >= 1)) { row.status = 'skip'; row.msg = 'Pallets must be 1 or more'; out.push(row); return; }
+            row.labels = Math.max(0, pallets) + (row.odd ? 1 : 0);
+            row.total = Math.max(0, pallets) * pcs + row.odd;
+            used[item] = (used[item] || 0) + row.total;
+            const left = (Number((ctx.avail || {})[item]) || 0) - (Number((ctx.labeled || {})[item]) || 0);
+            if (used[item] > left) { row.status = 'warn'; row.msg = sku + ': ' + fmt(used[item]) + ' pcs labeled after this, Riverside shows ' + fmt(Math.max(0, left)) + ' unlabeled'; }
+            labels += row.labels;
+            out.push(row);
+        });
+        return { rows: out, labels: labels, over: labels > (Number(ctx.maxPrint) || 250) };
+    }
+
     return { _fmt: fmt, TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps, scanTag, scanApprovePlan,
         lbs, truckLines, linesPcs, truckWeight, stockCheck, stockText,
-        classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
+        classifyUnloadScan, planReceipts, labelRows, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });
