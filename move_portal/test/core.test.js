@@ -180,3 +180,11 @@ test('barcodePayload lists code then SKU and pieces per line, tab-separated', ()
     assert.equal(core.barcodePayload('PLT2', [{ sku: 'YSN330', pcs: 24 }, { sku: 'YSN10LB', pcs: 40 }]), 'PLT2\tYSN330\t24\tYSN10LB\t40');
     assert.equal(core.barcodePayload('PLT3', []), 'PLT3');
 });
+test('officeIfs is on only when set true; palletTare defaults to 45', () => {
+    assert.equal(core.officeIfs({}), false);
+    assert.equal(core.officeIfs({ officeIfs: 'true' }), false);
+    assert.equal(core.officeIfs({ officeIfs: true }), true);
+    assert.equal(core.palletTare({}), 45);
+    assert.equal(core.palletTare({ palletTare: 50 }), 50);
+    assert.equal(core.palletTare({ palletTare: 0 }), 45);
+});

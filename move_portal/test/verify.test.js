@@ -425,3 +425,32 @@ test('local snapshot_ns.applyOp: if_qty rewrites the line, if_create adds a Pack
     assert.equal(ns.ifInfo()[String(id)].status, 'C');
     assert.equal(ns.plannedIfs().some(x => x.ifId === String(id)), false);
 });
+
+test('lbs converts NetSuite weight units by id or text; unknown is null', () => {
+    assert.equal(v.lbs(20, '1'), 20);
+    assert.equal(v.lbs(20, 'lb'), 20);
+    assert.equal(v.lbs(32, '2'), 2);
+    assert.equal(v.lbs(32, 'oz'), 2);
+    assert.equal(v.lbs(10, 'kg'), 22.05);
+    assert.equal(v.lbs(1000, '4'), 2.2);
+    assert.equal(v.lbs(0, 'lb'), null);
+    assert.equal(v.lbs('', 'lb'), null);
+    assert.equal(v.lbs(20, 'stone'), null);
+    assert.equal(v.lbs(20, ''), 20);          // NetSuite leaves the unit blank for lb on some items
+});
+
+test('truckLines counts pallets and pieces per SKU; truckWeight adds tare and counts SKUs without weight', () => {
+    const ps = [{ lines: [{ item: '11', pcs: 72 }] }, { lines: [{ item: '11', pcs: 72 }] }, { lines: [{ item: '12', pcs: 36 }] }];
+    const tl = v.truckLines(ps);
+    assert.deepEqual(tl, { '11': { pallets: 2, pcs: 144 }, '12': { pallets: 1, pcs: 36 } });
+    assert.deepEqual(v.linesPcs(tl), { '11': 144, '12': 36 });
+    const w = v.truckWeight(tl, { '11': { weight: 10, wunit: 'lb' }, '12': { weight: 0, wunit: '' } }, 45, 3);
+    assert.deepEqual(w, { rows: { '11': 1440, '12': null }, tare: 135, total: 1575, noWeight: 1 });
+});
+
+test('stockCheck lists every SKU the truck needs more of than is available', () => {
+    const shorts = v.stockCheck({ '11': 504, '12': 36 }, { '11': 360, '12': 36 });
+    assert.deepEqual(shorts, [{ item: '11', need: 504, avail: 360 }]);
+    assert.deepEqual(v.stockCheck({ '13': 5 }, {}), [{ item: '13', need: 5, avail: 0 }]);
+    assert.equal(v.stockText(shorts, { '11': 'YSN201' }), 'YSN201 on truck 504, available 360');
+});

@@ -231,9 +231,14 @@ define([], function () {
         return out;
     }
 
+    // Settings switches for the scan-built flow (spec 2026-10-14). officeIfs: only an explicit true turns the office-IF screens on.
+    function officeIfs(S) { return !!S && S.officeIfs === true; }
+    function palletTare(S) { const n = Number(S && S.palletTare); return n > 0 ? n : 45; }
+
     return {
         PALLET, palletCode, parseScan, barcodePayload, totalPieces, summarize, headline,
         isEdited, validateLines, pcsMap, defaultPcs, parseCsv, buildConfigImport,
-        isoAddDays, moveDays, nthMoveDayFrom, parseNsStamp, estimateRemaining, trackerMetrics, suggestPlan
+        isoAddDays, moveDays, nthMoveDayFrom, parseNsStamp, estimateRemaining, trackerMetrics, suggestPlan,
+        officeIfs, palletTare
     };
 });

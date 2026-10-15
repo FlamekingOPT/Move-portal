@@ -19,6 +19,48 @@ define([], function () {
         (pallets || []).forEach(p => (p.lines || []).forEach(l => { const k = String(l.item); out[k] = (out[k] || 0) + (Number(l.pcs) || 0); }));
         return out;
     }
+    // ── scan-built trucks (spec 2026-10-14) ──────────────────────────────
+    // NetSuite weightunit: an id (1 lb, 2 oz, 3 kg, 4 g) or its text. Blank unit = lb. Anything else, or no weight, = null ("no weight").
+    const LB_PER = { '': 1, '1': 1, lb: 1, lbs: 1, '2': 1 / 16, oz: 1 / 16, '3': 2.20462, kg: 2.20462, '4': 0.00220462, g: 0.00220462 };
+    function lbs(weight, unit) {
+        const w = Number(weight), f = LB_PER[String(unit == null ? "" : unit).trim().toLowerCase()];
+        if (!(w > 0) || f == null) return null;
+        return Math.round(w * f * 100) / 100;
+    }
+    // Pallets and pieces per SKU. A mixed pallet counts once on each SKU it carries.
+    function truckLines(pallets) {
+        const out = {};
+        (pallets || []).forEach(p => {
+            const seen = {};
+            (p.lines || []).forEach(l => {
+                const k = String(l.item), r = (out[k] = out[k] || { pallets: 0, pcs: 0 });
+                r.pcs += Number(l.pcs) || 0;
+                if (!seen[k]) { r.pallets++; seen[k] = true; }
+            });
+        });
+        return out;
+    }
+    function linesPcs(tl) { const o = {}; Object.keys(tl || {}).forEach(k => { o[k] = tl[k].pcs; }); return o; }
+    // info: { item: { weight, wunit } }. Line weights are rounded to the pound; the tare is palletCount × tare.
+    function truckWeight(tl, info, tare, palletCount) {
+        const rows = {};
+        let total = 0, noWeight = 0;
+        Object.keys(tl || {}).forEach(k => {
+            const i = (info || {})[k] || {}, per = lbs(i.weight, i.wunit);
+            if (per == null) { rows[k] = null; noWeight++; return; }
+            rows[k] = Math.round(per * tl[k].pcs);
+            total += rows[k];
+        });
+        const t = Math.round((Number(tare) || 0) * (Number(palletCount) || 0));
+        return { rows: rows, tare: t, total: total + t, noWeight: noWeight };
+    }
+    function stockCheck(pcsByItem, avail) {
+        return Object.keys(pcsByItem || {}).filter(k => (Number(pcsByItem[k]) || 0) > (Number((avail || {})[k]) || 0))
+            .map(k => ({ item: k, need: Number(pcsByItem[k]) || 0, avail: Number((avail || {})[k]) || 0 }));
+    }
+    function stockText(shorts, sk) {
+        return (shorts || []).map(s => ((sk || {})[s.item] || s.item) + " on truck " + fmt(s.need) + ", available " + fmt(s.avail)).join("; ");
+    }
     // IFs flagged gone (no longer Picked/Packed in NetSuite) stay on a truck until a manager drops them, but cover nothing.
     function liveIfs(ifs) { return (ifs || []).filter(f => !f.gone); }
     function byIfOrder(ifs) { return (ifs || []).slice().sort((a, b) => Number(a.ifId) - Number(b.ifId)); }
@@ -465,5 +507,6 @@ define([], function () {
     return { _fmt: fmt, TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps,
+        lbs, truckLines, linesPcs, truckWeight, stockCheck, stockText,
         classifyUnloadScan, planReceipts, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
 });
