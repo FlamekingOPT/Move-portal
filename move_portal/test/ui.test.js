@@ -275,5 +275,32 @@ test('tverify captures the truck id before the await and words the flash for sca
 test('manager screens: plain Approve / Reject card, Excel label upload, odd pallet, over-stock warning', () => {
     const src = ui._clientMain.toString();
     ['✅ Approve', '↩ Reject', 'function labelUpload(', 'function readSheet(', 'xlsx/0.18.5/xlsx.full.min.js', "api('labels_preview'", 'Odd pallet', 'You can still print',
-        'Download template', 'Close ', 'pcs per pallet', 'odd pallet pcs'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
+        'Download template', 'Release (after you Close ', 'pcs per pallet', 'odd pallet pcs'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
+});
+
+// Pull a named client function (brace-counted) out of the serialized client and run it without a browser.
+function clientFn(src, name) {
+    const i = src.indexOf('function ' + name + '('), o = src.indexOf('{', src.indexOf(')', i));
+    let d = 0, j = o;
+    for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}' && --d === 0) break; }
+    return src.slice(i, j + 1);
+}
+function xlsxFns() {
+    const src = ui._clientMain.toString(), k = src.indexOf('const HEAD =');
+    const h = src.slice(k, src.indexOf(String.fromCharCode(10), k));
+    return new Function(h + String.fromCharCode(10) + ['mapRows', 'csvObjs', 'printSpecs'].map(n => clientFn(src, n)).join(String.fromCharCode(10)) + String.fromCharCode(10) + 'return { mapRows, csvObjs, printSpecs };')();
+}
+test('excel upload helpers: mapRows, csvObjs, printSpecs behave', () => {
+    const f = xlsxFns();
+    const rows = f.mapRows([{ ' SKU ': 'A', 'Pcs  per pallet': 72, PALLETS: 4, 'odd pallet pcs': 18 }]);
+    assert.deepStrictEqual(rows, [{ sku: 'A', pcs: 72, pallets: 4, odd: 18 }]);
+    assert.throws(() => f.mapRows([{ SKU: 'A', 'Pcs per pallet': 72 }]), /needs the columns/);
+    assert.strictEqual(f.mapRows([{ SKU: 'A', 'Pcs per pallet': 72, Pallets: 4 }])[0].odd, '');
+    assert.deepStrictEqual(f.csvObjs('SKU,Pallets\r\nA,4\r\n'), [{ SKU: 'A', Pallets: '4' }]);
+    assert.deepStrictEqual(f.csvObjs('SKU,Pallets\r\n'), []);
+    const specs = f.printSpecs({ rows: [{ status: 'ok', item: '11', sku: 'A', cfg: 'A', pcs: 72, pallets: 4, odd: 18 }, { status: 'skip', item: '9', sku: 'X', pcs: 1, pallets: 9, odd: 0 },
+        { status: 'warn', item: '12', sku: 'B', cfg: '', pcs: 36, pallets: 0, odd: 5 }] });
+    assert.strictEqual(specs.length, 3);
+    assert.strictEqual(specs.reduce((a, s) => a + s.n, 0), 6);
+    assert.strictEqual(specs[1].lines[0].pcs, 18);
 });

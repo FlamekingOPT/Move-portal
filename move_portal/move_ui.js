@@ -996,26 +996,30 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!f) return;
             let rows;
             try { rows = await readSheet(f); } catch (e) { out.innerHTML = errBox(e.message); return; }
+            if (!rows.length) { out.innerHTML = errBox('No data rows found'); return; }
             const pv = await api('labels_preview', { rows: rows });
             if (!pv.ok) { out.innerHTML = errBox(pv.error); return; }
             S.xlsx = pv;
             const pill = r => r.status === 'ok' ? '✅' : r.status === 'warn' ? '<span class="pill p-amber">⚠ ' + esc(r.msg) + '</span>' : '<span class="pill p-red">' + esc(r.msg) + ': skipped</span>';
             out.innerHTML = '<div class="muted"><b>' + esc(f.name) + '</b> · ' + pv.rows.length + ' rows read</div><table class="tbl"><tr><th>Row</th><th>SKU</th><th>Pcs/plt</th><th>Pallets</th><th>Odd</th><th>Pcs</th><th></th></tr>' +
                 pv.rows.map(r => '<tr><td>' + r.n + '</td><td>' + esc(r.sku) + '</td><td>' + num(r.pcs) + '</td><td>' + num(r.pallets) + '</td><td>' + (r.odd ? num(r.odd) : '—') + '</td><td>' + num(r.total) + '</td><td>' + pill(r) + '</td></tr>').join('') + '</table>' +
-                (pv.over ? errBox(pv.labels + ' labels: split the file (max ' + B.maxPrint + ' per print)') :
+                (!pv.labels ? '<div class="muted">Nothing to print</div>' : pv.over ? errBox(pv.labels + ' labels: split the file (max ' + B.maxPrint + ' per print)') :
                     '<div class="muted">Warnings don\'t stop printing.</div><div id="xlsx_msg"></div><button class="btn pri" data-act="xlsxprint">🖨 Print all · ' + pv.labels + ' labels</button>');
         };
-        ACT.xlsxprint = async el => {
-            const pv = S.xlsx;
-            if (!pv) return;
+        function printSpecs(pv) {
             const specs = [];
             pv.rows.filter(r => r.status !== 'skip').forEach(r => {
                 const line = { item: r.item, sku: r.sku, cfg: r.cfg, pcs: r.pcs };
                 if (r.pallets > 0) specs.push({ lines: [line], n: r.pallets });
                 if (r.odd > 0) specs.push({ lines: [Object.assign({}, line, { pcs: r.odd })], n: 1 });
             });
+            return specs;
+        }
+        ACT.xlsxprint = async el => {
+            const pv = S.xlsx;
+            if (!pv) return;
             busy(el, true);
-            await printMany(specs, 'office', $('xlsx_msg'));
+            await printMany(printSpecs(pv), 'office', $('xlsx_msg'));
             busy(el, false);
         };
         ACT.xlsxtemplate = async () => {
