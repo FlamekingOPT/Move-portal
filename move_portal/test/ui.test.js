@@ -250,3 +250,9 @@ test('2026-10-06 pm fix: the table toolbars are rendered once, so typing in the 
     assert.equal(src.slice(ri, rj === -1 ? undefined : rj).split('id="histtools"').length - 1, 1, 'report renders id="histtools" once');
     assert.ok(src.indexOf('HISTSORTS') !== -1 && src.indexOf("receivedAt || x.confirmedAt || x.markedAt || x.startedAt") !== -1, 'history sort fallbacks');
 });
+
+test('scan-built floor screens: no IF list when office IFs are off, Finish loading, weight on Verify, Finish → Shipments', () => {
+    const src = ui._clientMain.toString();
+    ['function scanTable(', 'ACT.finishload', 'Finish loading', 'Finish → Shipments', 'r.officeIfs', 'Start Trailer', 'pallets × ', 'without weight', 'Approve will be blocked']
+        .forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
+});

@@ -506,6 +506,18 @@ h3{font-size:15px;margin:16px 0 8px}
             return '<label class="it"><div>' + (pick ? '<input type="checkbox" data-if="' + esc(f.ifId) + '"> ' : '') + '<b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) +
                 ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</div><div class="muted">' + (f.estPallets ? '≈ ' + f.estPallets + ' pallets' : '') + '</div></label>';
         }
+        // Scan-built truck (spec 2026-10-14): SKU rows with pallets, pcs, weight and Riverside available.
+        function scanTable(sc, opt) {
+            opt = opt || {};
+            const lb = n => n == null ? '<span class="muted">no weight</span>' : num(n) + ' lb';
+            return '<table class="tbl"><tr><th>SKU</th><th>Pallets</th><th>Pcs</th>' + (opt.weight ? '<th>Weight</th>' : '') + (opt.avail ? '<th>Riverside avail.</th>' : '') + '</tr>' +
+                sc.rows.map(r => '<tr class="' + (r.short && opt.avail ? 'warnrow' : '') + '"><td>' + esc(r.sku) + '</td><td>' + num(r.pallets) + '</td><td>' + num(r.pcs) + '</td>' +
+                    (opt.weight ? '<td>' + lb(r.lbs) + '</td>' : '') + (opt.avail ? '<td>' + num(r.avail) + (r.short ? ' ⚠' : '') + '</td>' : '') + '</tr>').join('') +
+                (opt.weight ? '<tr><td class="muted">Pallets (tare)</td><td class="muted">' + num(sc.pallets) + ' pallets × ' + num(sc.pallets ? sc.tare / sc.pallets : 0) + '</td><td></td><td class="muted">' + num(sc.tare) + ' lb</td>' + (opt.avail ? '<td></td>' : '') + '</tr>' +
+                    '<tr><td><b>Total</b></td><td><b>' + num(sc.pallets) + '</b></td><td><b>' + num(sc.pcs) + '</b></td><td><b>' + num(sc.total) + ' lb</b>' +
+                    (sc.noWeight ? ' <span class="muted">+ ' + sc.noWeight + ' SKU' + (sc.noWeight > 1 ? 's' : '') + ' without weight</span>' : '') + '</td>' + (opt.avail ? '<td></td>' : '') + '</tr>' : '') +
+                '</table>' + (opt.avail && sc.short ? flash('amber', '⚠ More than Riverside has available', 'Approve will be blocked: take pallets off or call the office') : '');
+        }
         // Trailer #: the trailers no open truck has (r.trailers, from the settings), or "Other…" with a typed number.
         function trailerHtml(list) {
             return '<label class="f" for="t_trailer">Trailer #</label><select class="inp" id="t_trailer"><option value="">— pick the trailer —</option>' +
@@ -518,8 +530,8 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!r.ok) { main(errBox(r.error)); return; }
             main((r.open.length ? '<h3>Trucks loading</h3>' + r.open.map(t => '<div class="card bl" data-act="opentruck" data-id="' + esc(t.id) + '"><h4>' + esc(t.label) + ' ' +
                 statusPill(t.status) + (t.sentBack && t.status === 'loading' ? ' <span class="pill p-amber">↩ Sent back</span>' : '') + '</h4><div class="muted">' + t.pallets + ' pallets</div></div>').join('') : '') +
-                '<h3>Planned trucks · Picked/Packed IFs</h3><div class="card plist">' + (r.planned.map(f => ifRow(f, true)).join('') || '<div class="muted">No planned IFs. The office creates them in NetSuite.</div>') + '</div>' +
-                trailerHtml(r.trailers) + '<div id="tmsg"></div><button class="btn pri" data-act="starttruck">Start truck with selected IFs</button>' +
+                (r.officeIfs ? '<h3>Planned trucks · Picked/Packed IFs</h3><div class="card plist">' + (r.planned.map(f => ifRow(f, true)).join('') || '<div class="muted">No planned IFs. The office creates them in NetSuite.</div>') + '</div>' : '<h3>Start a truck</h3>') +
+                trailerHtml(r.trailers) + '<div id="tmsg"></div><button class="btn pri" data-act="starttruck">' + (r.officeIfs ? 'Start truck with selected IFs' : 'Start Trailer') + '</button>' +
                 (r.pulledAt ? '<div class="muted sm">Data from ' + esc(r.pulledAt) + '</div>' : ''));
             const ts = $('t_trailer'), to = $('t_trailer2');
             if (ts) ts.onchange = () => { to.style.display = ts.value === '__other' ? '' : 'none'; if (ts.value === '__other') to.focus(); };
@@ -528,7 +540,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (needWho()) return;
             const ids = Array.from(document.querySelectorAll('[data-if]:checked')).map(x => x.dataset.if);
             const ts = $('t_trailer'), trailer = (ts.value === '__other' ? $('t_trailer2').value : ts.value).trim();
-            if (!ids.length) { $('tmsg').innerHTML = errBox('Tick at least one IF'); return; }
+            if (B.officeIfs && !ids.length) { $('tmsg').innerHTML = errBox('Tick at least one IF'); return; }
             if (!trailer) { $('tmsg').innerHTML = errBox('Pick or type the trailer #'); return; }
             busy(el, true);
             const r = await api('truck_start', { ifIds: ids, trailer: trailer });
@@ -543,6 +555,8 @@ h3{font-size:15px;margin:16px 0 8px}
             if (S.side !== 'out' || S.tab !== 'trucks') { S.side = 'out'; put('mv_side', 'out'); S.tab = 'trucks'; shell(); } else truckDetail();
         }
         ACT.backtruck = () => { S.truckId = null; truckList(); };
+        ACT.finishload = async el => { if (needWho()) return; busy(el, true); const r = await api('truck_verify', { truckId: S.truckId }); busy(el, false);
+            if (!r.ok) { $('scanres').innerHTML = errBox(r.error); return; } paintTruck(r.view, false); };
         ACT.goship = () => { S.truckId = null; S.tab = 'ship'; renderNav(); };
         async function truckDetail(pre) {
             if (S.tmodeTruck !== S.truckId) { S.tmodeTruck = S.truckId; S.otherOpen = false; setMode('load'); }
@@ -589,6 +603,10 @@ h3{font-size:15px;margin:16px 0 8px}
             const undo = '<button class="btn ghost sm" data-act="tundo">↶ Undo last scan</button>';
             const when = vf.at ? '<div class="muted">Checked ' + esc(vf.at) + (vf.by ? ' by ' + esc(typeof vf.by === 'object' ? vf.by.name : vf.by) : '') + '</div>' : '';
             const err = st !== 'departing' && t.error ? errBox(t.error) : '';
+            if (v.scan && st === 'loading') return err + '<button class="btn pri" data-act="finishload">Finish loading</button>' + undo;
+            if (v.scan && st === 'ready') return err + '<div class="card greenc"><h4>Verify load</h4>' + when + scanTable(v.scan, { weight: true, avail: true }) +
+                '<div class="muted">Check this against the trailer. Scanning or taking a pallet off sends it back to loading.</div>' +
+                '<button class="btn go" data-act="goship">Finish → Shipments</button></div>' + undo;
             if (st === 'loading') return err + '<button class="btn pri" data-act="tverify">✔ Verify load</button>' + undo;
             if (st === 'needs_fix') return err + '<div class="card amberc"><h4>⚠ Needs IF fix</h4>' + when + diffList(vf.diffs) + noteHtml(v.shortNote) + sugHtml(v.suggestions, false, t.id) +
                 '<div class="muted">Keep loading or take pallets off, or wait for the office to fix the IF in NetSuite. A manager can correct it in Approvals.</div>' +
@@ -622,7 +640,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 $('tscan').innerHTML = open ? '<div id="tmodebox"></div>' + scanBox('scan') : '';
                 if (open) { wireScan('scan', doTruckScan, () => S.tmode); paintMode(); }
             }
-            $('tlines').innerHTML = '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' +
+            $('tlines').innerHTML = v.scan ? (v.scan.rows.length ? scanTable(v.scan) : '<div class="muted">Scan pallets to load them</div>') :
+                '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' +
                 v.lines.map(l => '<tr class="' + (l.scanned === l.expected ? 'okrow' : l.scanned > l.expected ? 'warnrow' : '') + '"><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) +
                     '</td><td><b>' + num(l.scanned) + '</b> / ' + num(l.expected) + (l.estPallets ? ' <span class="muted">(' + l.estPallets + ' plt)</span>' : '') + '</td></tr>').join('') +
                 v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td><b>' + num(x.scanned) + '</b> extra</td></tr>').join('') + '</table>';
@@ -783,12 +802,12 @@ h3{font-size:15px;margin:16px 0 8px}
             const ifs = v.lines.map(l => l.ifNum).filter((n, i, a) => a.indexOf(n) === i);
             const oth = (v.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
             return '<div class="card greenc"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4>' +
-                '<div class="muted">' + esc('Trailer ' + (v.trailer || '')) + ' · IFs ' + esc(ifs.join(', ')) + '</div>' +
+                '<div class="muted">' + esc('Trailer ' + (v.trailer || '')) + (v.scan ? ' · ' + num(v.scan.total) + ' lb' : ' · IFs ' + esc(ifs.join(', '))) + '</div>' +
                 '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
                 (v.trailer ? '' : '<label class="f" for="s_tr_' + id + '">Trailer #</label><input class="inp" id="s_tr_' + id + '" data-keep="1" maxlength="20" placeholder="Trailer #" autocomplete="off">') +
                 '<label class="f" for="s_seal_' + id + '">Seal #</label><input class="inp" id="s_seal_' + id + '" data-keep="1" maxlength="30" placeholder="Seal (tag) #" autocomplete="off">' +
                 '<label class="f" for="s_car_' + id + '">Carrier</label><input class="inp" id="s_car_' + id + '" data-keep="1" maxlength="60" value="' + esc(v.carrier || carrier) + '">' +
-                '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">🚚 Mark shipped</button></div>';
+                '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">' + (v.scan ? '🚚 Mark shipped · send for approval' : '🚚 Mark shipped') + '</button></div>';
         }
         // The re-check at Mark shipped no longer matches. "IF changed" only when an IF is gone or its qty differs from what the screen showed;
         // otherwise the load changed (a scan or take-off landed meanwhile).
