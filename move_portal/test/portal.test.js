@@ -2694,3 +2694,66 @@ test('2026-10-07: IR numbers on the approve result, Active loads, truck history;
     const dash = ctx.run('dashboard');
     assert.deepEqual(dash.rows.find(r => r.truckId === t.id).irs, [a.irs[0].irNum]);
 });
+
+function scanSetup() {
+    const ctx = setup();
+    ctx.data.db.settings.officeIfs = false;
+    ctx.data.db.items.find(i => i.item === '11').weight = 10;
+    ctx.data.db.items.find(i => i.item === '11').wunit = 'lb';
+    return ctx;
+}
+function scanTruck(ctx, n) {
+    const ps = printLabels(ctx, n || 2);
+    const v = ctx.run('truck_start', { trailer: tr() }, false).view;
+    ps.forEach(p => ctx.run('truck_scan', { truckId: v.truck.id, raw: p.code }, false));
+    return { id: v.truck.id, ps };
+}
+
+test('scan-built: start with only a trailer, load any labeled pallet, see SKU rows with weight and stock', () => {
+    const ctx = scanSetup();
+    assert.deepEqual(ctx.run('truck_planned', {}, false).planned, []);
+    assert.equal(ctx.run('truck_planned', {}, false).officeIfs, false);
+    const t = scanTruck(ctx, 2);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.kind, x.data.ifs], ['loading', 'scan', []]);
+    const v = ctx.run('truck_get', { truckId: t.id }, false).view;
+    assert.deepEqual(v.scan.rows, [{ item: '11', sku: 'YSN201', pallets: 2, pcs: 240, lbs: 2400, avail: 1000, short: false }]);
+    assert.deepEqual([v.scan.pallets, v.scan.pcs, v.scan.tare, v.scan.total, v.scan.noWeight, v.scan.short], [2, 240, 90, 2490, 0, false]);
+});
+
+test('scan-built: Verify always matches when something is loaded, and refuses an empty truck', () => {
+    const ctx = scanSetup();
+    const empty = ctx.run('truck_start', { trailer: tr() }, false).view.truck.id;
+    assert.throws(() => ctx.run('truck_verify', { truckId: empty }, false), /Nothing is loaded on this truck/);
+    const t = scanTruck(ctx, 1);
+    const r = ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.equal(r.match, true);
+    assert.equal(ctx.data.getLoad(t.id).status, 'ready');
+});
+
+test('scan-built: a ready scan truck goes back to loading when another pallet is scanned', () => {
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 1);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    assert.equal(ctx.data.getLoad(t.id).status, 'ready');
+    const more = printLabels(ctx, 1, 'Jtest2');
+    ctx.run('truck_scan', { truckId: t.id, raw: more[0].code }, false);
+    assert.equal(ctx.data.getLoad(t.id).status, 'loading');
+});
+
+test('scan-built: over Riverside available shows as short (a warning, not a block, on the floor)', () => {
+    const ctx = scanSetup();
+    ctx.data.db.stock['35']['11'].avail = 100;
+    const t = scanTruck(ctx, 1);
+    const v = ctx.run('truck_get', { truckId: t.id }, false).view;
+    assert.deepEqual([v.scan.rows[0].short, v.scan.short], [true, true]);
+    assert.equal(ctx.run('truck_verify', { truckId: t.id }, false).match, true);
+});
+
+test('office IFs on: a truck still needs an IF; off: office-IF actions refuse a scan truck', () => {
+    const on = setup();
+    assert.throws(() => on.run('truck_start', { trailer: tr() }, false), /Pick at least one IF/);
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 1);
+    assert.throws(() => ctx.run('truck_add_if', { truckId: t.id, ifId: '1' }), /no IFs/);
+});

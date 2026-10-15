@@ -212,7 +212,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
             trailers: c.S.trailers || DEFAULT_TRAILERS, carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
             trailer: d.trailer || '', otherItems: d.otherItems || [], shortNote: d.shortNote || null,
-            receipt: d.depart ? receiptView(x, ps) : null };
+            receipt: d.depart ? receiptView(x, ps) : null, scan: isScan(x) ? scanRows(x, ps, c) : null };
     }
     // After departure the truck pop-up shows what arrived, not what was loaded: received / shipped per IF, missing pallets, its IRs.
     function receiptView(x, ps) {
@@ -223,6 +223,19 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     // Stages where pallets may go on or off.
     const OPEN = [T.LOADING, T.NEEDS_FIX, T.READY];
+    // Scan-built truck (spec 2026-10-14): no IFs; Approve creates its TO + IF.
+    function isScan(x) { return !!(x && x.data && x.data.kind === 'scan'); }
+    // SKU rows for the floor's Load / Verify / Shipments: loaded pallets only, with weight and Riverside available.
+    function scanRows(x, ps, c) {
+        const loaded = ps.filter(p => p.status === VP.LOADED), tl = verify.truckLines(loaded), items = Object.keys(tl);
+        const info = data.itemInfo(items), avail = items.length ? data.locationStock(c.S.locFrom, items) : {};
+        const w = verify.truckWeight(tl, info, core.palletTare(c.S), loaded.length);
+        const rows = items.map(k => {
+            const av = avail[k] ? Number(avail[k].avail) || 0 : 0;
+            return { item: k, sku: info[k] ? info[k].sku : k, pallets: tl[k].pallets, pcs: tl[k].pcs, lbs: w.rows[k], avail: av, short: tl[k].pcs > av };
+        }).sort((p, q) => p.sku < q.sku ? -1 : p.sku > q.sku ? 1 : 0);
+        return { rows: rows, pallets: loaded.length, pcs: rows.reduce((s, r) => s + r.pcs, 0), tare: w.tare, total: w.total, noWeight: w.noWeight, short: rows.some(r => r.short) };
+    }
     function isOpen(x) { return OPEN.indexOf(x.status) !== -1 && !x.data.claim && !x.data.depart; }
     // After a pallet change: a fresh read, never written over a truck that closed meanwhile (the pallet update itself is
     // already done). A `ready` truck goes back to `loading` in the same write, so its old verify result can't be used.
@@ -281,6 +294,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return verify.reserveToLines(toLines, verify.reservationsFromTrucks({ trucks: trucks, loadedByTruck: byTruck, toLines: toLines, mode: writeMode(c), exceptId: exceptId }));
     }
     function scanCtx(x, c) {
+        if (isScan(x)) return { truckId: x.id, trucks: scanTruckMap(allTrucks()), scanBuilt: true };
         const trucks = allTrucks(), loadedAll = data.palletsByStatus([VP.LOADED]);
         return { truckId: x.id, trucks: scanTruckMap(trucks), ifs: verify.liveIfs(x.data.ifs), toLines: reservedToLines(x.id, trucks, loadedAll, c),
             loadedByItem: verify.sumLines(loadedAll.filter(p => p.loadId === String(x.id))) };
@@ -326,6 +340,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // The verify rule with no write: departure re-runs it from the claimed (frozen) truck.
     function checkTruck(x, c, opt) {
         opt = opt || {};
+        if (isScan(x)) {                                // the scans are the order: always a match (spec 2026-10-14 §4)
+            const ps = opt.loadedAll ? opt.loadedAll.filter(p => String(p.loadId) === String(x.id)) : data.palletsByLoad(x.id, [VP.LOADED]);
+            return { r: { match: true, keep: [], diffs: [], ifs: [] }, ps: ps, trucks: opt.trucks || allTrucks(), planned: [] };
+        }
         const trucks = opt.trucks || allTrucks(), planned = opt.planned || ns.plannedIfs();
         const ifs = opt.newIfs ? opt.newIfs(x, planned, trucks) : (x.data.ifs || []);
         const ps = opt.loadedAll ? opt.loadedAll.filter(p => String(p.loadId) === String(x.id)) : data.palletsByLoad(x.id, [VP.LOADED]);
@@ -344,6 +362,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         opt = opt || {};
         const x = opt.truck || mustTruck(id);
         if (!isOpen(x)) throw closedErr(x);
+        if (isScan(x) && !data.palletsByLoad(x.id, [VP.LOADED]).length) throw userErr('Nothing is loaded on this truck');
         const chk = checkTruck(x, c, opt), r = chk.r, ps = chk.ps, trucks = chk.trucks, planned = chk.planned;
         // A manual Verify that finds a short needs a note (once per truck); nothing is written without it.
         if (opt.needNote && !opt.note && !x.data.shortNote && r.diffs.some(d => d.kind === 'if_short')) return { needsNote: true, r: r, x: x, ps: ps };
@@ -637,8 +656,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const counts = data.palletStatusCounts(open.concat(shipped).map(x => x.id));
         const busy = {};
         trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
-        return { planned: ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)),
-            open: open.map(x => truckSummary(x, counts)), shippedToday: shipped.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt(),
+        return { planned: core.officeIfs(c.S) ? ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)) : [], officeIfs: core.officeIfs(c.S),
+                        open: open.map(x => truckSummary(x, counts)), shippedToday: shipped.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt(),
             trailers: (c.S.trailers || DEFAULT_TRAILERS).filter(t => !busy[normTrailer(t)]), carrier: c.S.defaultCarrier || 'Armstrong Group' };
     });
 
@@ -657,6 +676,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_start', false, (a, c) => {
         const ids = (a.ifIds || []).map(String);
         if (!String(a.trailer || '').trim()) throw userErr('Enter the trailer #');
+        if (!core.officeIfs(c.S)) {
+            const trailer = checkTrailer(a.trailer, null);
+            const id = data.createLoad({ number: 'Trailer ' + trailer, status: T.LOADING,
+                data: { v3: true, kind: 'scan', ifs: [], trailer: trailer, startedBy: c.actor, startedAt: c.now.stamp, stack: [], lastStep: stepOf('started', c) } });
+            return { view: truckView(mustTruck(id), c) };
+        }
         if (!ids.length) throw userErr('Pick at least one IF');
         const trailer = checkTrailer(a.trailer, null);
         const planned = ns.plannedIfs(), taken = {};
@@ -802,6 +827,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // Floor: only an IF the verify suggests. Manager: any Picked/Packed IF no truck has.
     act('truck_add_if', false, (a, c) => {
         const ifId = String(a.ifId || '');
+        if (isScan(mustTruck(a.truckId))) throw userErr('This truck has no IFs: it is built from its scans');
         const v = verifyTruck(a.truckId, c, { stepKind: 'if_added', newIfs: (x, planned, trucks) => {
             const f = planned.find(y => String(y.ifId) === ifId);
             if ((x.data.ifs || []).some(y => String(y.ifId) === ifId)) throw userErr((f ? f.ifNum : 'IF ' + ifId) + ' is already on this truck');
@@ -1810,7 +1836,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         ctx.response.write(ui.buildPage({   // the no-login floor deployment: API calls go to its external URL
             url: url.resolveScript(Object.assign({ scriptId: script.id, deploymentId: script.deploymentId }, external ? { returnExternalUrl: true } : {})),
             mode: !floor && isManager() ? 'manager' : 'floor', me: runtime.getCurrentUser().name, roster: S.roster || [],
-            fromName: S.fromName, toName: S.toName, maxPrint: Number(S.maxPrint) || 250
+            fromName: S.fromName, toName: S.toName, maxPrint: Number(S.maxPrint) || 250, officeIfs: core.officeIfs(S)
         }));
     }
 
