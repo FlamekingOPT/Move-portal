@@ -113,7 +113,52 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
             columns: ['internalid'] }).run().getRange({ start: 0, end: 1 });
         return r && r[0] ? String(r[0].id) : null;
     }
+    // A transaction the portal made earlier, found by the [MV-<ref>] tag in its memo (a request that died after the save, before it was recorded).
+    function findByToken(tok, typeCode, more) {
+        const r = search.create({ type: search.Type.TRANSACTION,
+            filters: [['memo', 'contains', tok], 'AND', ['mainline', 'is', 'T'], 'AND', ['type', 'anyof', typeCode]].concat(more || []),
+            columns: ['internalid'] }).run().getRange({ start: 0, end: 1 });
+        return r && r[0] ? String(r[0].id) : null;
+    }
+    function locationSubsidiary(locId) {
+        const f = search.lookupFields({ type: search.Type.LOCATION, id: locId, columns: ['subsidiary'] });
+        const s = f && f.subsidiary;
+        return Array.isArray(s) && s.length ? s[0].value : null;
+    }
+    // Scan-built truck (spec 2026-10-14 §3.1): an approved TO from Riverside to Tippecanoe, one line per item.
+    function createTransferOrder(op) {
+        const found = findByToken(op.token, 'TrnfrOrd');
+        if (found) return found;
+        const to = record.create({ type: record.Type.TRANSFER_ORDER, isDynamic: true });
+        const sub = locationSubsidiary(op.fromLoc);
+        if (sub) to.setValue({ fieldId: 'subsidiary', value: sub });
+        to.setValue({ fieldId: 'location', value: op.fromLoc });
+        to.setValue({ fieldId: 'transferlocation', value: op.toLoc });
+        to.setValue({ fieldId: 'orderstatus', value: op.orderStatus || 'B' });
+        to.setValue({ fieldId: 'memo', value: op.memo });
+        Object.keys(op.lines).forEach(item => {
+            to.selectNewLine({ sublistId: 'item' });
+            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'item', value: item });
+            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: op.lines[item] });
+            to.commitLine({ sublistId: 'item' });
+        });
+        return String(to.save({ enableSourcing: true, ignoreMandatoryFields: true }));
+    }
+    // Release check: a TO the manager closed (or deleted) in NetSuite. "no rec" is the test fake's not-found message.
+    function toClosed(toId) {
+        let to;
+        try { to = record.load({ type: record.Type.TRANSFER_ORDER, id: toId }); }
+        catch (e) { const m = String((e && (e.name || '')) + ' ' + (e && e.message || '')); if (/RCRD_DSNT_EXIST|no rec/.test(m)) return true; throw e; }
+        if (String(to.getValue({ fieldId: 'orderstatus' }) || '') === 'H') return true;
+        const n = to.getLineCount({ sublistId: 'item' });
+        for (let i = 0; i < n; i++) if (to.getSublistValue({ sublistId: 'item', fieldId: 'isclosed', line: i }) !== true) return false;
+        return n > 0;
+    }
     function createIf(op) {
+        if (op.ship === true && op.token) {           // scan-built: a Shipped IF an earlier request saved on this TO
+            const found = findByToken(op.token, 'ItemShip', ['AND', ['createdfrom', 'anyof', String(op.toId)], 'AND', ['status', 'anyof', ['ItemShip:C']]]);
+            if (found) return found;
+        }
         if (op.ship === false && op.token) {
             const found = findPackedByToken(op.token, op.toId);
             if (found) return found;
@@ -136,6 +181,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     }
     // if_qty / if_stamp re-read the IF and refuse if it changed; a Packed if_create is found by its memo token; receipt relies on runOps done-keys
     function apply(op) {
+        if (op.op === 'to_create') return createTransferOrder(op);
         if (op.op === 'if_qty') return setIfItemQty(op);
         if (op.op === 'if_stamp') return stampShip(op);
         if (op.op === 'if_create') return createIf(op);
@@ -146,12 +192,13 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     // Transaction numbers for internal ids: receipts (IR14494) by default, kind 'if' for fulfillments (IF53837).
     // An unreadable one is left out (the caller shows the id).
     function tranIds(ids, kind) {
-        const out = {}, isIf = kind === 'if', type = isIf ? search.Type.ITEM_FULFILLMENT : search.Type.ITEM_RECEIPT, pre = isIf ? 'IF' : 'IR';
+        const out = {}, isIf = kind === 'if', isTo = kind === 'to';
+        const type = isTo ? search.Type.TRANSFER_ORDER : isIf ? search.Type.ITEM_FULFILLMENT : search.Type.ITEM_RECEIPT, pre = isTo ? 'TO' : isIf ? 'IF' : 'IR';
         (ids || []).forEach(id => {
-            try { const v = search.lookupFields({ type: type, id: id, columns: ['tranid'] }).tranid; if (v) out[String(id)] = pre + String(v).replace(/^I[FR]/i, ''); } catch (e) { /* shown as the id */ }
+            try { const v = search.lookupFields({ type: type, id: id, columns: ['tranid'] }).tranid; if (v) out[String(id)] = pre + String(v).replace(/^(I[FR]|TO)/i, ''); } catch (e) { /* shown as the id */ }
         });
         return out;
     }
 
-    return { apply, tranIds };
+    return { apply, tranIds, toClosed };
 });

@@ -4,18 +4,19 @@ const { loadAmd } = require('./amd');
 const verify = loadAmd('move_verify.js', {});
 
 function makeFakeTx() {
-    const t = { seq: 900, ops: [], failOn: null };
+    const t = { seq: 900, ops: [], failOn: null, closed: {} };
     return {
         _t: t,
         apply: op => {
             const key = verify.opKey(op);
-            if (t.failOn === key) { t.failOn = null; throw new Error('IF changed in NetSuite (fake failure on ' + key + ')'); }
+            if (t.failOn && (typeof t.failOn === 'function' ? t.failOn(op) : t.failOn === key)) { t.failOn = null; throw new Error('IF changed in NetSuite (fake failure on ' + key + ')'); }
             t.ops.push(JSON.parse(JSON.stringify(op)));
             const hooked = t.onApply ? t.onApply(op) : undefined;
             if (hooked != null && hooked !== '') return String(hooked);
             return op.op === 'if_qty' || op.op === 'if_stamp' ? String(op.ifId) : String(++t.seq);
         },
-        tranIds: (ids, kind) => { const o = {}; (ids || []).forEach(id => { o[String(id)] = (kind === 'if' ? 'IF' : 'IR') + id; }); return o; }
+        toClosed: id => !!t.closed[String(id)],
+        tranIds: (ids, kind) => { const o = {}; (ids || []).forEach(id => { o[String(id)] = (kind === 'to' ? 'TO' : kind === 'if' ? 'IF' : 'IR') + id; }); return o; }
     };
 }
 

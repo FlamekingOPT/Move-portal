@@ -4,7 +4,7 @@ const { loadAmd } = require('./amd');
 
 // In-memory record: lines = [{item, quantity, quantityfulfilled, itemreceive}]
 function makeRec(values, lines, missing) {
-    const r = { values: Object.assign({}, values), lines: lines.map(l => Object.assign({ itemreceive: true }, l)), cur: -1, saved: 0 };
+    const r = { values: Object.assign({}, values), lines: (lines || []).map(l => Object.assign({ itemreceive: true }, l)), cur: -1, saved: 0 };
     if (missing) r.getField = o => (missing.indexOf(o.fieldId) !== -1 ? null : { id: o.fieldId });   // N/record: null for a field the account lacks
     r.getValue = o => r.values[o.fieldId];
     r.setValue = o => { r.values[o.fieldId] = o.value; };
@@ -23,6 +23,8 @@ function setup(spec) {
     const fakeRecord = {
         Type: { TRANSFER_ORDER: 'transferorder', ITEM_FULFILLMENT: 'itemfulfillment', ITEM_RECEIPT: 'itemreceipt' },
         load: o => { const r = recs[o.type + ':' + o.id]; if (!r) throw new Error('no rec ' + o.type + o.id); return r; },
+        create: o => { const r = makeRec({}, []); r.id = '650'; r.type = o.type; log.created = r;
+            r.selectNewLine = () => { r.lines.push({}); r.cur = r.lines.length - 1; }; return r; },
         transform: o => {
             log.transforms.push(o);
             const r = makeRec({}, spec.toLines || [{ item: '975', quantity: 24 }, { item: '111', quantity: 5 }], spec.missing);
@@ -33,8 +35,9 @@ function setup(spec) {
     recs['transferorder:600'] = makeRec({}, spec.to || [{ item: '975', quantity: 600, quantityfulfilled: 0 }]);
     log.searches = [];
     const fakeSearch = {
-        Type: { TRANSACTION: 'transaction' },
-        create: o => { log.searches.push(o); return { run: () => ({ getRange: () => (spec.found ? [{ id: spec.found }] : []) }) }; }
+        Type: { TRANSACTION: 'transaction', TRANSFER_ORDER: 'transferorder', LOCATION: 'location' },
+        create: o => { log.searches.push(o); return { run: () => ({ getRange: () => (spec.found ? [{ id: spec.found }] : []) }) }; },
+        lookupFields: o => (o.type === 'location' ? { subsidiary: [{ value: '2', text: 'Flame King' }] } : { tranid: 'TO8812' })
     };
     const tx = loadAmd('move_tx.js', { 'N/record': fakeRecord, 'N/search': fakeSearch, './move_verify': loadAmd('move_verify.js') });
     return { tx, f: recs['itemfulfillment:9'], log };
@@ -196,4 +199,43 @@ test('if_create ship:false finds an IF already made with its token instead of cr
     const shipped = setup({ ifLines: split(), found: '555' });     // a shipped add-on never searches
     assert.equal(shipped.tx.apply({ op: 'if_create', toId: '600', trailer: 'T5', seal: '1', memo: 'm', lines: { 975: 24 } }), '888');
     assert.equal(shipped.log.searches.length, 0);
+});
+
+const toOp = () => ({ op: 'to_create', ref: '12', token: '[MV-12]', fromLoc: '35', toLoc: '46', orderStatus: 'B', lines: { '975': 504, '111': 36 }, memo: '[MV-12] Trailer 537224 · Truck 3 · 11/02' });
+
+test('to_create makes an approved TO 35 → 46 with one line per item', () => {
+    const s = setup({});
+    assert.equal(s.tx.apply(toOp()), '650');
+    const r = s.log.created;
+    assert.deepEqual([r.values.subsidiary, r.values.location, r.values.transferlocation, r.values.orderstatus, r.values.memo], ['2', '35', '46', 'B', '[MV-12] Trailer 537224 · Truck 3 · 11/02']);
+    assert.deepEqual(r.lines.map(l => [l.item, l.quantity]), [['111', 36], ['975', 504]]);   // integer-like keys sort numerically
+    assert.equal(r.saved, 1);
+});
+
+test('to_create finds a TO an earlier request made, by its tag, and creates nothing', () => {
+    const s = setup({ found: '640' });
+    assert.equal(s.tx.apply(toOp()), '640');
+    assert.equal(s.log.created, undefined);
+    const f = JSON.stringify(s.log.searches[0].filters);
+    assert.ok(f.indexOf('[MV-12]') !== -1 && f.indexOf('TrnfrOrd') !== -1);
+});
+
+test('if_create Shipped with a token finds an earlier Shipped IF on that TO, else stamps a new one', () => {
+    let s = setup({ found: '901' });
+    const op = { op: 'if_create', ref: '12', toId: '600', ship: true, token: '[MV-12]', lines: { '975': 24 }, trailer: '537224', seal: '0048812', memo: 'Truck 3 · 11/02 · [MV-12]' };
+    assert.equal(s.tx.apply(op), '901');
+    assert.equal(s.log.transforms.length, 0);
+    assert.ok(JSON.stringify(s.log.searches[0].filters).indexOf('ItemShip:C') !== -1);
+    s = setup({ toLines: [{ item: '975', quantity: 24 }] });
+    assert.equal(s.tx.apply(op), '888');
+    assert.deepEqual([s.log.last.values.shipstatus, s.log.last.values.memo, s.log.last.values.custbody7], ['C', 'Truck 3 · 11/02 · [MV-12]', 'SEAL: 0048812']);
+});
+
+test('toClosed: Closed status, every line closed, or gone', () => {
+    const s = setup({ to: [{ item: '975', quantity: 600, isclosed: true }] });
+    assert.equal(s.tx.toClosed('600'), true);
+    const s2 = setup({ to: [{ item: '975', quantity: 600, isclosed: false }] });
+    assert.equal(s2.tx.toClosed('600'), false);
+    assert.equal(s2.tx.toClosed('999'), true);                     // no such TO (deleted)
+    assert.deepEqual(s2.tx.tranIds(['5'], 'to'), { '5': 'TO8812' });
 });
