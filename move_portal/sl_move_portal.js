@@ -207,7 +207,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const vd = d.verify ? pubDiffs(d.verify.diffs || [], ps.filter(p => p.status === VP.LOADED)) : null;
         return { stage: x.status, verify: d.verify ? Object.assign({}, d.verify, { diffs: vd }) : null,
             suggestions: x.status === T.NEEDS_FIX && d.verify ? suggestionsFor(x, d.ifs, d.verify.diffs || [], dp, (opt || {}).trucks, (opt || {}).planned) : [],   // only needs_fix reads NetSuite here
-            truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }, isScan(x) ? { toNum: d.toNum || '', ifNum: d.ifNum || '' } : {}), lines: lines,
+            truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }, isScan(x) ? { toNum: d.toNum || '', ifNum: d.ifNum || '', docsSync: d.docsSync || null, docLines: d.docLines || null } : {}), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
             trailers: c.S.trailers || DEFAULT_TRAILERS, carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
@@ -770,7 +770,112 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { result: result, raw: s.raw, tone: result === 'taken_off' ? 'warn' : 'bad', pallet: p ? pubPallet(data.getPallet(p.id)) : null, view: truckView(mustTruck(x.id), c) };
     }
 
+    // ── drop trailer at the dock (spec 2026-10-16 §4) ────────────────────
+    // At-dock edits write NetSuite one op at a time (writeMode on only): a raise writes the TO then the IF, a lower the IF then the TO.
+    // A failed op undoes what this edit already wrote; a failed undo marks Docs out of sync, and scans pause until a manager presses Retry.
+    function mustAtDock(cur) {
+        if (cur.status !== T.AT_DOCK) throw userErr('This truck is ' + cur.status + ', not at the dock');
+        if (cur.data.docsSync) throw userErr('Docs are out of sync on this truck: a manager must press Retry first');
+        if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
+    }
+    function itemsOfPallet(p) { return verify.sumLines([p]); }       // { item: pcs }
+    // Applies one pallet change at the dock. sign +1 = on, -1 = off. Returns a scan result.
+    function dockEdit(x, p, sign, s, c) {
+        const cl = claimLoad(x, null, 'dock', mustAtDock);
+        const release = patch => data.updateLoad(data.getLoad(x.id), { data: Object.assign({ claim: '', workingAt: 0, phase: '', docsSync: null }, patch || {}) });
+        const d = cl.Ld.data, delta = {}, pcs = itemsOfPallet(p);
+        Object.keys(pcs).forEach(k => { delta[k] = sign * pcs[k]; });
+        const palletOn = { status: VP.LOADED, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } };
+        const palletOff = { status: VP.LABELED, load: '', data: { takenOffAt: c.now.stamp, takenOffBy: c.actor, takenOffTruck: x.id } };
+        const result = (r, extra) => Object.assign({ result: r, raw: s.raw, tone: r === 'ok' ? 'ok' : r === 'taken_off' ? 'warn' : 'bad',
+            pallet: pubPallet(data.getPallet(p.id)), view: truckView(mustTruck(x.id), c) }, extra || {});
+        try {
+            if (sign < 0 && data.palletsByLoad(x.id, [VP.LOADED]).length <= 1) throw userErr('This is the last pallet: ask a manager to send the truck back instead');
+            if (sign > 0) {
+                const items = Object.keys(delta), st = data.locationStock(c.S.locFrom, items), avail = {};
+                items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; });
+                const shorts = verify.stockCheck(delta, avail);
+                if (shorts.length) { release(); return result('short', { message: 'Can\'t add: ' + verify.stockText(shorts, skuNames(items)) + '. Leave the pallet off and call the office.' }); }
+            }
+            const docLines = d.docLines || {}, extraIfs = {};
+            if (writeMode(c) === 'on') {
+                const ops = verify.dockOps({ toId: d.toId, primaryIfId: d.ifId, primaryIfNum: d.ifNum, docLines: docLines, delta: delta });
+                const done = [];
+                for (let i = 0; i < ops.length; i++) {
+                    const op = ops[i];
+                    try { tx.apply(op); done.push(op); }
+                    catch (e) {
+                        if (/^NO_IF_LINE/.test((e && e.message) || '') && op.newLine) {   // spec §4: the IF won't take a new line, so a one-line Picked add-on IF on the same TO
+                            const dep = d.depart || {}, tag = verify.scanTag((d.approveRef || x.id) + '-A' + op.item);
+                            const id = tx.apply({ op: 'if_create', ship: 'picked', toId: String(d.toId), token: tag, lines: { [op.item]: op.to }, trailer: dep.trailer, seal: dep.seal || '',
+                                memo: verify.memoFor(dep.truckNo, dep.day) + ' · ' + tag });
+                            extraIfs[op.item] = { ifId: String(id), ifNum: newIfNum(id) };
+                            done.push(Object.assign({}, op, { op: 'if_create' }));
+                            continue;
+                        }
+                        const undo = done.slice().reverse().map(verify.inverseOp);
+                        try {
+                            if (undo.some(u => u === null)) throw new Error('cannot undo an add-on IF');
+                            undo.forEach(u => tx.apply(u));
+                        } catch (e2) {
+                            // Every done op is still in place: the pallet counts as changed, and the forward remainder is what Retry applies.
+                            log.error({ title: 'move dock undo ' + x.id, details: 'edit: ' + ((e && e.message) || String(e)) + ' / undo: ' + ((e2 && e2.stack) || String(e2)) });
+                            data.updatePallet(p, sign > 0 ? palletOn : palletOff);
+                            const dl = verify.applyDelta(docLines, delta, d.ifId, d.ifNum);
+                            Object.keys(extraIfs).forEach(k => { if (dl[k]) Object.assign(dl[k], extraIfs[k]); });
+                            release({ docsSync: { error: (e && e.message) || String(e), pending: ops.slice(i), at: c.now.stamp, by: c.actor }, docLines: dl,
+                                alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
+                            return result('out_of_sync', { message: 'Docs are out of sync with the trailer. A manager must press Retry before more scans.' });
+                        }
+                        release();
+                        return result('refused', { message: 'NetSuite refused the change: ' + ((e && e.message) || e) + '. The pallet stays ' + (sign > 0 ? 'off' : 'on') + ' the truck.' });
+                    }
+                }
+            }
+            const dl = verify.applyDelta(docLines, delta, d.ifId, d.ifNum);
+            Object.keys(extraIfs).forEach(k => { if (dl[k]) Object.assign(dl[k], extraIfs[k]); });
+            data.updatePallet(p, sign > 0 ? palletOn : palletOff);
+            release({ docLines: dl, alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
+            return result(sign > 0 ? 'ok' : 'taken_off');
+        } catch (e) { const cur = data.getLoad(x.id); if (cur && cur.data.claim === cl.claim) release(); throw e; }
+    }
+    // Manager Retry for an out-of-sync truck: re-applies the pending ops (to_line is idempotent at its target; an IF qty already there is a no-op).
+    act('dock_resync', true, (a, c) => {
+        const x = mustTruck(a.truckId);
+        if (x.status !== T.AT_DOCK || !x.data.docsSync) throw userErr('Nothing to retry on this truck');
+        const cl = claimLoad(x, null, 'dock', cur => {
+            if (cur.status !== T.AT_DOCK || !cur.data.docsSync) throw userErr('Nothing to retry on this truck');
+            if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
+        });
+        const sync = cl.Ld.data.docsSync;
+        try { (sync.pending || []).forEach(op => tx.apply(op)); }
+        catch (e) {
+            data.updateLoad(data.getLoad(x.id), { data: { claim: '', workingAt: 0, phase: '', docsSync: Object.assign({}, sync, { error: (e && e.message) || String(e), at: c.now.stamp }) } });
+            throw userErr('Retry failed: ' + ((e && e.message) || e));
+        }
+        data.updateLoad(data.getLoad(x.id), { data: { claim: '', workingAt: 0, phase: '', docsSync: null, lastStep: stepOf('docs_resynced', c) } });
+        return { view: truckView(mustTruck(x.id), c) };
+    });
+    function isFlaggedTip(p) { return !!(p && ((p.data.decision && p.data.decision.kind === 'accepted_pending') || p.data.flag === 'never_loaded')); }
+    function dockScan(x, a, c) {
+        const s = core.parseScan(a.raw), p = s.palletId ? data.getPallet(s.palletId) : null;
+        let r;
+        if (a.mode === 'off') r = p && p.status === VP.LOADED && String(p.loadId) === String(x.id) ? dockEdit(x, p, -1, s, c)
+            : { result: 'not_on_truck', raw: s.raw, tone: 'bad', pallet: p ? pubPallet(p) : null, view: truckView(x, c) };
+        else if (isFlaggedTip(p)) r = { result: 'flagged_tippecanoe', raw: s.raw, tone: 'bad', pallet: pubPallet(p), view: truckView(x, c) };
+        else if (p && p.status === VP.LABELED) r = dockEdit(x, p, 1, s, c);
+        else {
+            const o = p && p.loadId ? data.getLoad(p.loadId) : null;
+            const c0 = verify.classifyLoadScan({ pallet: p, truckId: x.id, trucks: o ? scanTruckMap([o]) : {}, scanBuilt: true });
+            r = { result: c0.result, otherTruckId: c0.otherTruckId, otherLabel: c0.otherLabel, raw: s.raw, tone: verify.toneFor(c0.result), pallet: p ? pubPallet(p) : null, view: truckView(x, c) };
+        }
+        data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: a.mode === 'off' ? 'off' : 'load', actor: c.actor, at: c.now.stamp, dock: true } });
+        return r;
+    }
+
     act('truck_scan', false, (a, c) => {
+        const x0 = mustTruck(a.truckId);
+        if (x0.status === T.AT_DOCK) return dockScan(x0, a, c);
         const x = mustOpenTruck(a.truckId);
         const s = core.parseScan(a.raw);
         const p = s.palletId ? data.getPallet(s.palletId) : null;
@@ -809,6 +914,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     act('truck_remove', false, (a, c) => {
+        const x0 = mustTruck(a.truckId);
+        if (x0.status === T.AT_DOCK) {                // at the dock a removal changes the TO and IF too
+            const p0 = mustPallet(a.palletId);
+            if (p0.status !== VP.LOADED || String(p0.loadId) !== String(x0.id)) throw userErr('That pallet is not on this truck');
+            return dockEdit(x0, p0, -1, { raw: p0.code }, c);
+        }
         const x = mustOpenTruck(a.truckId), p = mustPallet(a.palletId);
         if (p.status !== VP.LOADED || p.loadId !== x.id) throw userErr('That pallet is not on this truck');
         data.updatePallet(p, { status: VP.LABELED, load: '' });
@@ -817,6 +928,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     act('truck_undo', false, (a, c) => {
+        if (mustTruck(a.truckId).status === T.AT_DOCK) throw userErr('At the dock, take a pallet off by scanning it in Take off mode');
         const x = mustOpenTruck(a.truckId), st = (x.data.stack || []).slice();
         let undone = false;
         while (st.length) {
@@ -832,9 +944,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     // Other (non-inventory) items: typed lines, not in NetSuite, ignored by Verify. An edit sends a ready truck back to loading.
     function editOther(id, fn) {
-        mustOpenTruck(id);
+        const x = mustTruck(id);
+        if (x.status !== T.AT_DOCK) mustOpenTruck(id);   // at the dock: portal only, the status stays
         const cur = data.getLoad(id);                 // fresh read right before the write
-        if (!cur || !isOpen(cur)) throw closedErr(cur);
+        if (!cur || (cur.status !== T.AT_DOCK && !isOpen(cur))) throw closedErr(cur);
         const patch = { data: { otherItems: fn((cur.data.otherItems || []).slice()) } };
         if (cur.status === T.READY) patch.status = T.LOADING;
         data.updateLoad(cur, patch);
@@ -1734,7 +1847,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
                 otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) });
         });
-        return {
+        // Drop trailer: at-dock trucks whose docs are out of sync (spec 2026-10-16 §4). The key appears only when one exists.
+        const outOfSync = trucks.filter(x => x.status === T.AT_DOCK && x.data.docsSync).map(x => Object.assign(sum(x), { error: x.data.docsSync.error, at: x.data.docsSync.at,
+            pending: (x.data.docsSync.pending || []).length }));
+        return Object.assign(outOfSync.length ? { outOfSync: outOfSync } : {}, {
             shipPending: shipPending,
             flagged: flagged,
             fixes: fixes,
@@ -1762,7 +1878,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                     return o;
                 }
             }).filter(Boolean)
-        };
+        });
     }
     act('approvals', true, (a, c) => approvalsView(c));
 

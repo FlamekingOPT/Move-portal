@@ -3152,3 +3152,123 @@ test('printed-only labels never count: the dashboard has no stale-label exceptio
     const exc = ctx.run('dashboard').exc;
     assert.equal('stale' in exc, false);
 });
+
+// ── drop trailer: editing at the dock (spec 2026-10-16 §4) ──────────────
+function atDock(ctx, n) {
+    const t = docsScan(ctx, n || 2);
+    ctx.run('ship_confirm', { truckId: t.id });
+    ctx.tx._t.ops = [];
+    return t;
+}
+
+test('at dock: scanning a pallet on raises the TO line then the IF line', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2), d0 = ctx.data.getLoad(t.id).data;
+    const p = printLabels(ctx, 1, 'Jdock1')[0];
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    assert.equal(r.result, 'ok');
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['to_line', 240, 360], ['if_qty', 240, 360]]);
+    const d = ctx.data.getLoad(t.id).data;
+    assert.deepEqual([ctx.data.getPallet(p.id).status, d.docLines['11'].qty, d.alloc[0].lines['11']], ['loaded', 360, 360]);
+    assert.equal(d.ifId, d0.ifId);
+});
+
+test('at dock: taking a pallet off lowers the IF then the TO', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false);
+    assert.equal(r.result, 'taken_off');
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['if_qty', 240, 120], ['to_line', 240, 120]]);
+    assert.equal(ctx.data.getPallet(t.ps[0].id).status, 'labeled');
+});
+
+test('at dock: the last pallet cannot be taken off', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false), /last pallet/i);
+    assert.equal(ctx.tx._t.ops.length, 0);
+});
+
+test('at dock: a new SKU adds a TO line and an IF line; NO_IF_LINE falls back to a Picked add-on IF', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    const p = printLabels(ctx, 1, 'Jdock2', [{ item: '12', sku: 'YSN301', cfg: 'A', pcs: 60 }])[0];
+    ctx.tx._t.failOn = op => op.op === 'if_qty' && op.newLine ? (() => { throw new Error('NO_IF_LINE IF has no line'); })() : false;
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    assert.equal(r.result, 'ok');
+    const ops = ctx.tx._t.ops.map(o => o.op + (o.ship ? ':' + o.ship : ''));
+    assert.deepEqual(ops, ['to_line', 'if_create:picked']);
+    const d = ctx.data.getLoad(t.id).data;
+    assert.equal(d.alloc.length, 2);
+    assert.equal(d.alloc[1].addOn, true);
+    assert.notEqual(d.docLines['12'].ifId, d.ifId);
+});
+
+test('at dock: a stock short refuses the scan and writes nothing', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.data.db.stock['35']['11'].avail = 50;
+    const p = printLabels(ctx, 1, 'Jdock3')[0];
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    assert.equal(r.result, 'short');
+    assert.match(r.message, /Can't add: YSN201/);
+    assert.equal(ctx.tx._t.ops.length, 0);
+    assert.equal(ctx.data.getPallet(p.id).status, 'labeled');
+});
+
+test('at dock: IF failure undoes the TO change and refuses the scan', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.tx._t.failOn = op => op.op === 'if_qty';
+    const p = printLabels(ctx, 1, 'Jdock4')[0];
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    assert.equal(r.result, 'refused');
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['to_line', 120, 240], ['to_line', 240, 120]]);
+    assert.equal(ctx.data.getPallet(p.id).status, 'labeled');
+    assert.equal(ctx.data.getLoad(t.id).data.docsSync, null);
+});
+
+test('at dock: a failed undo leaves Docs out of sync, pauses scans, and Retry finishes the edit', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    const orig = ctx.tx.apply;
+    let n = 0;
+    ctx.tx.apply = op => { n++; if (n === 2 || n === 3) throw new Error('boom ' + n); return orig(op); };   // the IF write fails, then the undo fails too
+    const p = printLabels(ctx, 2, 'Jdock5');
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p[0].code }, false);
+    assert.equal(r.result, 'out_of_sync');
+    const d = ctx.data.getLoad(t.id).data;
+    assert.ok(d.docsSync && d.docsSync.pending.length === 1);
+    assert.equal(ctx.data.getPallet(p[0].id).status, 'loaded');   // the TO already holds it: the pallet counts on the truck
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: p[1].code }, false), /out of sync/i);
+    assert.throws(() => ctx.run('dock_resync', { truckId: t.id }, false), /Managers only/);
+    assert.deepEqual(ctx.run('approvals').outOfSync.map(o => [o.id, o.pending]), [[t.id, 1]]);
+    assert.ok(ctx.run('truck_get', { truckId: t.id }, false).view.truck.docsSync);
+    ctx.tx.apply = orig;
+    ctx.run('dock_resync', { truckId: t.id });
+    assert.equal(ctx.data.getLoad(t.id).data.docsSync, null);
+    assert.equal(ctx.tx._t.ops[ctx.tx._t.ops.length - 1].op, 'if_qty');
+});
+
+test('at dock: other items are portal-only; off mode edits write nothing', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.run('truck_other_add', { truckId: t.id, desc: 'Pallet jack', qty: 1 }, false);
+    assert.equal(ctx.tx._t.ops.length, 0);
+    assert.equal(ctx.data.getLoad(t.id).data.otherItems.length, 1);
+    assert.equal(ctx.data.getLoad(t.id).status, 'at_dock');
+    const off = scanSetup();
+    const u = docsScan(off, 1, 'off');
+    off.run('ship_confirm', { truckId: u.id });
+    const p = printLabels(off, 1, 'Jdock6')[0];
+    assert.equal(off.run('truck_scan', { truckId: u.id, raw: p.code }, false).result, 'ok');
+    assert.equal(off.tx._t.ops.length, 0);
+    assert.equal(off.data.getLoad(u.id).data.docLines['11'].qty, 240);
+});
+
+test('at dock: a pallet on an at-dock truck cannot be scanned onto another truck', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    const other = ctx.run('truck_start', { trailer: tr() }, false).view.truck;
+    assert.equal(ctx.run('truck_scan', { truckId: other.id, raw: t.ps[0].code }, false).result, 'locked');
+});
