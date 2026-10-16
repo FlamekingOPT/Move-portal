@@ -437,6 +437,68 @@ test('local snapshot_ns.applyOp: to_create returns a TO id; a Shipped if_create 
     assert.equal(ns.plannedIfs().some(x => x.ifId === String(ifId)), false);
 });
 
+function dropNs() {
+    const { makeSnapshotNs } = require('../local/snapshot_ns');
+    const ns = makeSnapshotNs(v, JSON.parse(JSON.stringify(require('./fixtures/snapshot_sample.json'))));
+    const toId = ns.applyOp({ op: 'to_create', ref: '7', lines: { '11': 240 } });
+    return { ns, toId };
+}
+const toQ = (ns, toId, item) => ns._raw.toLines.filter(r => String(r.toid) === String(toId) && String(r.item) === String(item) && !r.closed).reduce((a, r) => a + r.qty, 0);
+
+test('local snapshot_ns.applyOp: to_line raises, adds a line, closes at 0, is idempotent at its target and refuses a stale from', () => {
+    const { ns, toId } = dropNs();
+    assert.equal(ns.applyOp({ op: 'to_line', toId, item: '11', from: 240, to: 360 }), undefined);
+    assert.equal(toQ(ns, toId, '11'), 360);
+    ns.applyOp({ op: 'to_line', toId, item: '11', from: 240, to: 360 });          // a retry that already landed: no-op
+    assert.equal(toQ(ns, toId, '11'), 360);
+    assert.throws(() => ns.applyOp({ op: 'to_line', toId, item: '11', from: 100, to: 120 }), /is 360, expected 100/);
+    ns.applyOp({ op: 'to_line', toId, item: '975', from: 0, to: 12 });
+    assert.equal(toQ(ns, toId, '975'), 12);
+    assert.equal(ns._raw.toLines.find(r => String(r.toid) === String(toId) && String(r.item) === '975').tonum, 'TO' + toId);
+    ns.applyOp({ op: 'to_line', toId, item: '975', from: 12, to: 0 });
+    assert.equal(toQ(ns, toId, '975'), 0);
+    assert.equal(ns.openToLines().some(r => r.toId === String(toId) && r.item === '975'), false);
+    ns.applyOp({ op: 'to_line', toId, item: '975', from: 0, to: 24 });             // a closed line reopens
+    assert.equal(toQ(ns, toId, '975'), 24);
+});
+
+test('local snapshot_ns.applyOp: Picked if_create (A), found again by its token in any status', () => {
+    const { ns, toId } = dropNs();
+    const op = { op: 'if_create', ship: 'picked', toId, token: '[MV-7]', lines: { '11': 240 }, memo: 'Truck 1 · 10/16 · [MV-7]', trailer: 'T1', seal: '' };
+    const id = ns.applyOp(op);
+    assert.equal(ns.ifInfo()[id].status, 'A');
+    assert.ok(ns.plannedIfs().some(f => f.ifId === id));
+    assert.equal(ns.applyOp(op), id);
+    ns.applyOp({ op: 'if_stamp', ifId: id, seal: '55', trailer: 'T1' });
+    assert.equal(ns.applyOp(op), id);                                              // a Shipped one is still found, never made twice
+    assert.equal(Object.keys(ns.ifInfo()).filter(k => ns.ifInfo()[k].toId === String(toId)).length, 1);
+});
+
+test('local snapshot_ns.applyOp: if_qty newLine adds the line; a stale from is refused', () => {
+    const { ns, toId } = dropNs();
+    const id = ns.applyOp({ op: 'if_create', ship: 'picked', toId, token: '[MV-7]', lines: { '11': 240 }, memo: '[MV-7]' });
+    ns.applyOp({ op: 'if_qty', ifId: id, ifNum: 'IF' + id, toId, item: '975', from: 0, to: 12, newLine: true });
+    assert.deepEqual(ns.ifInfo()[id].lines.map(l => [l.item, l.qty]), [['11', 240], ['975', 12]]);
+    assert.equal(ns.ifInfo()[id].status, 'A');
+    ns.applyOp({ op: 'if_qty', ifId: id, toId, item: '975', from: 12, to: 0 });   // the undo of a newLine add
+    assert.equal(ns.ifInfo()[id].lines.find(l => l.item === '975').qty, 0);
+    assert.throws(() => ns.applyOp({ op: 'if_qty', ifId: id, toId, item: '11', from: 120, to: 360 }), /is 240, expected 120/);
+    ns.applyOp({ op: 'if_qty', ifId: id, toId, item: '11', from: 240, to: 360 });
+    assert.equal(ns.ifInfo()[id].lines.find(l => l.item === '11').qty, 360);
+});
+
+test('local snapshot_ns.applyOp: if_seal stores the seal on a Picked IF; if_stamp ships an A IF; both refuse a shipped IF', () => {
+    const { ns, toId } = dropNs();
+    const id = ns.applyOp({ op: 'if_create', ship: 'picked', toId, token: '[MV-7]', lines: { '11': 240 }, memo: '[MV-7]' });
+    assert.equal(ns.applyOp({ op: 'if_seal', ifId: id, seal: '777' }), undefined);
+    assert.ok(ns._raw.ifLines.filter(r => String(r.ifid) === id).every(r => r.seal === '777'));
+    assert.throws(() => ns.applyOp({ op: 'if_seal', ifId: id, seal: ' ' }), /blank/);
+    ns.applyOp({ op: 'if_stamp', ifId: id, seal: '777', trailer: 'T9' });
+    assert.equal(ns.ifInfo()[id].status, 'C');
+    ns.applyOp({ op: 'if_stamp', ifId: id, seal: '777', trailer: 'T9' });           // already shipped: no-op
+    assert.throws(() => ns.applyOp({ op: 'if_seal', ifId: id, seal: '888' }), /no longer Picked\/Packed/);
+});
+
 test('lbs converts NetSuite weight units by id or text; unknown is null', () => {
     assert.equal(v.lbs(20, '1'), 20);
     assert.equal(v.lbs(20, 'lb'), 20);
