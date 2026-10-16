@@ -773,8 +773,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // ── drop trailer at the dock (spec 2026-10-16 §4) ────────────────────
     // At-dock edits write NetSuite one op at a time (writeMode on only): a raise writes the TO then the IF, a lower the IF then the TO.
     // A failed op undoes what this edit already wrote; a failed undo marks Docs out of sync, and scans pause until a manager presses Retry.
-    function mustAtDock(cur) {
+    // Picked up is half done once any IF stamp landed or any pallet already went in transit: only Picked up may touch the truck then.
+    // (data.error can't be the signal: claimLoad clears it.)
+    function stampsDone(cur) { return Object.keys((cur.data && cur.data.writes) || {}).some(k => /^if_stamp:/.test(k)); }
+    function pickupHalfDone(cur) { return stampsDone(cur) || data.palletsByLoad(cur.id, [VP.IN_TRANSIT]).length > 0; }
+    // forPickup: picked_up's own guard, the only action allowed on a half-done pickup.
+    function mustAtDock(cur, forPickup) {
         if (cur.status !== T.AT_DOCK) throw userErr('This truck is ' + cur.status + ', not at the dock');
+        if (!forPickup && pickupHalfDone(cur)) throw userErr('Picked up is half done: press Picked up again.');
         if (cur.data.docsSync) throw userErr('Docs are out of sync on this truck: a manager must press Retry first');
         if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
     }
@@ -903,7 +909,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustTruck(a.truckId);
         if (!isScan(x)) throw userErr('This truck takes its seal at Mark shipped');
         sealTaken(seal, x.id);
-        if (x.status === T.SHIP_PENDING && !x.data.claim && !x.data.depart && x.data.shipReq) {
+        if (x.status === T.SHIP_PENDING) {
+            mustPending(x);                           // someone processing it: "being processed", not "not at the dock"
             data.updateLoad(data.getLoad(x.id), { data: { shipReq: Object.assign({}, x.data.shipReq, { seal: seal }) } });
             return { view: truckView(mustTruck(x.id), c) };
         }
@@ -932,13 +939,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (x.status !== T.AT_DOCK) throw userErr('This truck is ' + x.status + ', not waiting at the dock');
         const seal = cleanSeal(a.seal || (x.data.depart && x.data.depart.seal));
         if (!seal) throw userErr('Enter the seal # before the carrier leaves');
+        // Once a stamp landed the seal is pinned: every IF on the truck must carry the same one.
+        const pinned = cur => {
+            const old = (cur.data.depart && cur.data.depart.seal) || '';
+            if (stampsDone(cur) && verify.sealKey(seal) !== verify.sealKey(old)) throw userErr('Seal ' + old + ' is already on the paperwork: use it, or ask the office');
+        };
+        pinned(x);
         sealTaken(seal, x.id);
         // In-transit pallets count too: a retry after the pallet step but before the truck step must still finish.
         if (!data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT]).length) throw userErr('Nothing is loaded on this truck');
-        const cl = claimLoad(x, null, 'pickup', mustAtDock);
+        const cl = claimLoad(x, null, 'pickup', cur => { mustAtDock(cur, true); pinned(cur); });
         const d = cl.Ld.data, dep = d.depart || {}, ref = d.approveRef || x.id;
+        const useSeal = stampsDone(cl.Ld) ? dep.seal : seal;      // pinned: the exact seal already on the paperwork
         const memo = verify.memoFor(dep.truckNo, dep.day) + ' · ' + verify.scanTag(ref);
-        const ops = (d.alloc || []).map(f => ({ op: 'if_stamp', ifId: f.ifId, ifNum: f.ifNum, trailer: dep.trailer || d.trailer, seal: seal, memo: memo, lines: f.lines }));
+        const ops = (d.alloc || []).map(f => ({ op: 'if_stamp', ifId: f.ifId, ifNum: f.ifNum, trailer: dep.trailer || d.trailer, seal: useSeal, memo: memo, lines: f.lines }));
         const writes = Object.assign({}, d.writes), day = c.now.dayIso;
         let res;
         try {
@@ -947,13 +961,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             assertClaim(x.id, cl.claim, truckLabel(x), 'pickup');
             shipPallets(mustTruck(x.id), c, null, day);
             data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { claim: '', workingAt: 0, phase: '', error: '', writes: writes,
-                depart: Object.assign({}, dep, { seal: seal, pickedUpAt: c.now.stamp, pickedUpBy: c.actor, shippedDay: day }), lastStep: stepOf('picked_up', c) } });
+                depart: Object.assign({}, dep, { seal: useSeal, pickedUpAt: c.now.stamp, pickedUpBy: c.actor, shippedDay: day }), lastStep: stepOf('picked_up', c) } });
         } catch (e) {
             const cur = data.getLoad(x.id);
             const ours = cur && cur.data.claim === cl.claim;
             if (e.user && !ours) throw e;               // claim lost: another request owns the truck now, leave its state alone
             log.error({ title: 'move pickup ' + x.id, details: (e && e.stack) || String(e) });
-            if (ours) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', error: (e && e.message) || String(e), writes: writes } });
+            // depart.seal pins the seal used, so a retry stamps the remaining IFs with the same one and sealTaken keeps protecting it.
+            if (ours) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', error: (e && e.message) || String(e), writes: writes,
+                depart: Object.assign({}, dep, { seal: useSeal }) } });
             if (e.user) throw e;
             throw userErr('Picked up was not saved: a NetSuite write failed (' + ((e && e.message) || e) + '). Press Picked up again.');
         }
