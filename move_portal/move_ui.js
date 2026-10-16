@@ -138,7 +138,8 @@ h3{font-size:15px;margin:16px 0 8px}
         // Scan-built (drop trailer) trucks: the floor sends a verified load for docs; the manager writes them; the carrier picks it up.
         const SCAN_PILL = { ready: ['✅ Ready for docs', 'p-green'], ship_pending: ['Waiting for docs', 'p-amber'], departing: ['Writing docs…', 'p-amber'] };
         // Dashboard "Last step" labels for the dock steps; other kinds show with "_" as spaces.
-        const STEP_LABEL = { docs_written: 'Docs written', picked_up: 'Picked up', dock_edit: 'Changed at the dock' };
+        const STEP_LABEL = { docs_written: 'Docs written', picked_up: 'Picked up', dock_edit: 'Changed at the dock', docs_resynced: 'Docs re-synced', dock_seal: 'Seal added',
+            picked_up_forced: 'Picked up (no NetSuite)' };
         function stepText(k) { return STEP_LABEL[k] || String(k || '').replace(/_/g, ' '); }
         // What Correct the IF does under each write mode (confirm text and card notes).
         const WM = { off: 'Plan only: fix in NetSuite', qty: 'Changes IF quantities in NetSuite (add-on IFs: office creates them)',
@@ -630,7 +631,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged');
             return err;
         }
-        // Other (non-inventory) items: typed lines, not on an IF; ✕ and + Add only while the truck is open.
+        // Other (non-inventory) items: typed lines, not on an IF; ✕ and + Add while the truck is open or at the dock (portal-only there too).
         function otherHtml(v, open) {
             const list = v.otherItems || [];
             return '<h4>Other items</h4>' + (list.map(o => '<div class="drow"><span>' + esc(o.desc) + ' × ' + num(o.qty) + '</span>' +
@@ -662,9 +663,9 @@ h3{font-size:15px;margin:16px 0 8px}
                     '</td><td><b>' + num(l.scanned) + '</b> / ' + num(l.expected) + (l.estPallets ? ' <span class="muted">(' + l.estPallets + ' plt)</span>' : '') + '</td></tr>').join('') +
                 v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td><b>' + num(x.scanned) + '</b> extra</td></tr>').join('') + '</table>';
             $('plist').innerHTML = v.pallets.slice().reverse().map(p => '<div class="it"><div><b>' + esc(p.code) + '</b> · ' + esc(p.summary) + '</div>' +
-                (open ? '<div class="ac"><button data-act="tremove" data-id="' + esc(p.id) + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
+                (open || dock ? '<div class="ac"><button data-act="tremove" data-id="' + esc(p.id) + '">✕</button></div>' : '') + '</div>').join('') || '<div class="muted">No pallets yet</div>';
             const keep = { d: ($('o_desc') || {}).value, q: ($('o_qty') || {}).value };
-            $('tother').innerHTML = otherHtml(v, open);
+            $('tother').innerHTML = otherHtml(v, open || dock);
             if ($('o_desc') && keep.d != null) { $('o_desc').value = keep.d; $('o_qty').value = keep.q; }
             $('tfoot').innerHTML = stageHtml(v);
         }
@@ -752,7 +753,15 @@ h3{font-size:15px;margin:16px 0 8px}
                 r.match ? 'The load matches its IFs: ready to ship' : 'Still needs an IF fix: see the card below');
         };
         ACT.tundo = async () => { const r = await api('truck_undo', { truckId: S.truckId }); if (!$('scanres')) return; if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
-        ACT.tremove = async el => { const r = await api('truck_remove', { truckId: S.truckId, palletId: el.dataset.id }); if (!$('scanres')) return; if (r.ok) paintTruck(r.view, false); else $('scanres').innerHTML = errBox(r.error); };
+        ACT.tremove = async el => {
+            const dock = S.tv && S.tv.scan && S.tv.truck.status === 'at_dock';
+            if (dock && !confirm('Take this pallet off the trailer? This lowers the TO and IF.')) return;
+            const r = await api('truck_remove', { truckId: S.truckId, palletId: el.dataset.id });
+            if (!$('scanres')) return;
+            if (!r.ok) { $('scanres').innerHTML = errBox(r.error); return; }
+            paintTruck(r.view, false);
+            if (r.message && r.result !== 'taken_off') { tone('bad'); $('scanres').innerHTML = errBox(r.message); }   // at the dock: refused / out of sync
+        };
         ACT.tmovehere = async el => { const r = await api('truck_move_here', { truckId: S.truckId, palletId: el.dataset.id }); if (!$('scanres')) return; $('scanres').innerHTML = r.ok ? flash('green', '✅ Moved here') : errBox(r.error); if (r.ok) paintTruck(r.view, false); };
         function truckResultHtml(r) {
             const p = r.pallet, line = p ? esc(p.code + ' · ' + p.summary) : '', raw = esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"');
@@ -895,8 +904,26 @@ h3{font-size:15px;margin:16px 0 8px}
                 (d.error ? errBox(d.error) : '') +
                 '<label class="f" for="d_seal_' + id + '">Seal #</label><input class="inp" id="d_seal_' + id + '" data-keep="1" maxlength="30" value="' + esc(dep.seal || '') + '" placeholder="Seal (tag) #" autocomplete="off">' +
                 '<div id="d_msg_' + id + '"></div><div class="row2"><button class="btn gh" data-act="dseal" data-id="' + id + '">Save seal</button>' +
-                '<button class="btn go" data-act="dpicked" data-id="' + id + '"' + (sync ? ' disabled' : '') + '>🚛 Picked up</button></div></div>';
+                '<button class="btn go" data-act="dpicked" data-id="' + id + '"' + (sync ? ' disabled' : '') + '>🚛 Picked up</button></div>' +
+                (isMgr ? forceBtn(t.id, t.label) : '') + '</div>';
         }
+        // Manager escape for a trailer stuck at the dock: departs it in the portal with no NetSuite writes (the office fixes the TO/IF by hand).
+        function forceBtn(id, label) {
+            return '<button class="btn ghost sm" data-act="dforce" data-id="' + esc(id) + '" data-label="' + esc(label || '') + '">Mark picked up without NetSuite</button>';
+        }
+        ACT.dforce = async el => {
+            const id = el.dataset.id, inp = $('d_seal_' + id), sv = inp ? inp.value.trim() : '';
+            if (!confirm('Mark this trailer picked up WITHOUT updating NetSuite? The office must fix the TO/IF by hand.')) return;
+            const note = prompt('Why is NetSuite skipped? (required, for the office)');
+            if (note == null) return;
+            const back = r => (S.tab === 'ship' && $('shipbox') ? shipList : SCREENS.approve)(r);
+            if (!note.trim()) { tone('bad'); back(errBox('Enter a note for the office')); return; }
+            busy(el, true);
+            const r = await api('picked_up_force', Object.assign({ truckId: id, note: note.trim() }, sv ? { seal: sv } : {}));
+            busy(el, false);
+            tone(r.ok ? 'ok' : 'bad');
+            back(r.ok ? flash('amber', '🚛 ' + esc(r.view.truck.label) + ' marked picked up (NetSuite not updated)', '', 'The office must fix the TO/IF by hand.') : errBox(r.error));
+        };
         ACT.dseal = async el => {
             const id = el.dataset.id, inp = $('d_seal_' + id), sv = inp ? inp.value.trim() : '';
             if (needWho() || !inp) return;
@@ -1341,7 +1368,7 @@ h3{font-size:15px;margin:16px 0 8px}
             // Drop trailer: an at-dock truck whose TO + IF edit failed. Scans are blocked until Retry finishes the pending edits.
             const oos = (r.outOfSync || []).length ? '<h3 id="ap_sync">Docs out of sync</h3>' + r.outOfSync.map(o => '<div class="card amberc"><h4>⚠ ' + esc(o.label) + ' · Docs out of sync</h4>' +
                 errBox(o.error || 'A dock edit did not reach NetSuite') + '<div class="muted">' + esc([o.at, o.pending ? o.pending + ' change' + (o.pending === 1 ? '' : 's') + ' waiting' : '', 'No scans on this trailer until Retry finishes'].filter(Boolean).join(' · ')) + '</div>' +
-                '<button class="btn pri" data-act="dresync" data-id="' + esc(o.id) + '" data-label="' + esc(o.label) + '">Retry</button></div>').join('') : '';
+                '<button class="btn pri" data-act="dresync" data-id="' + esc(o.id) + '" data-label="' + esc(o.label) + '">Retry</button>' + forceBtn(o.id, o.label) + '</div>').join('') : '';
             const flg = (r.flagged || []).length ? '<h3 id="ap_flag">Flagged pallets</h3>' + flaggedCard(r.flagged) : '';
             const ret = r.retries.map(t => '<div class="card"><h4>⚠ ' + esc(t.label) + '</h4>' + errBox(t.error || 'Departure stalled, press Retry') +
                 '<button class="btn pri" data-act="apretry" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">Retry</button>' +

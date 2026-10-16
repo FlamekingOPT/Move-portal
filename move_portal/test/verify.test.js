@@ -474,14 +474,12 @@ test('local snapshot_ns.applyOp: Picked if_create (A), found again by its token 
     assert.equal(Object.keys(ns.ifInfo()).filter(k => ns.ifInfo()[k].toId === String(toId)).length, 1);
 });
 
-test('local snapshot_ns.applyOp: if_qty newLine adds the line; a stale from is refused', () => {
+test('local snapshot_ns.applyOp: if_qty newLine on an IF without the item throws NO_IF_LINE like prod; a stale from is refused', () => {
     const { ns, toId } = dropNs();
     const id = ns.applyOp({ op: 'if_create', ship: 'picked', toId, token: '[MV-7]', lines: { '11': 240 }, memo: '[MV-7]' });
-    ns.applyOp({ op: 'if_qty', ifId: id, ifNum: 'IF' + id, toId, item: '975', from: 0, to: 12, newLine: true });
-    assert.deepEqual(ns.ifInfo()[id].lines.map(l => [l.item, l.qty]), [['11', 240], ['975', 12]]);
+    assert.throws(() => ns.applyOp({ op: 'if_qty', ifId: id, ifNum: 'IF' + id, toId, item: '975', from: 0, to: 12, newLine: true }), /^Error: NO_IF_LINE/);
+    assert.deepEqual(ns.ifInfo()[id].lines.map(l => [l.item, l.qty]), [['11', 240]]);   // nothing added: the caller makes an add-on IF
     assert.equal(ns.ifInfo()[id].status, 'A');
-    ns.applyOp({ op: 'if_qty', ifId: id, toId, item: '975', from: 12, to: 0 });   // the undo of a newLine add
-    assert.equal(ns.ifInfo()[id].lines.find(l => l.item === '975').qty, 0);
     assert.throws(() => ns.applyOp({ op: 'if_qty', ifId: id, toId, item: '11', from: 120, to: 360 }), /is 240, expected 120/);
     ns.applyOp({ op: 'if_qty', ifId: id, toId, item: '11', from: 240, to: 360 });
     assert.equal(ns.ifInfo()[id].lines.find(l => l.item === '11').qty, 360);

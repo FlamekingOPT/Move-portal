@@ -598,7 +598,7 @@ define([], function () {
         const out = {};
         (alloc || []).forEach(a => Object.keys(a.lines || {}).forEach(item => {
             const q = Number(a.lines[item]) || 0;
-            if (q > 0) out[item] = { qty: (out[item] ? out[item].qty : 0) + q, ifId: String(a.ifId), ifNum: a.ifNum };
+            if (q > 0) out[item] = Object.assign({ qty: (out[item] ? out[item].qty : 0) + q, ifId: String(a.ifId), ifNum: a.ifNum }, a.token ? { token: a.token } : {});
         }));
         return out;
     }
@@ -610,6 +610,7 @@ define([], function () {
             if (!(l.qty > 0)) return;
             const k = String(l.ifId);
             if (!byIf[k]) { byIf[k] = { ifId: k, ifNum: l.ifNum, toId: String(meta.toId), toNum: meta.toNum, lines: {}, addOn: order.length > 0 }; order.push(k); }
+            if (l.token && !byIf[k].token) byIf[k].token = l.token;     // an add-on IF's own memo token (Picked up stamps it)
             byIf[k].lines[item] = l.qty;
         });
         return order.map(k => byIf[k]);

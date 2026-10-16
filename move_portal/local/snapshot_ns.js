@@ -11,7 +11,7 @@ function makeSnapshotNs(verify, rawOrPath) {
     const changed = m => new Error('Changed in NetSuite: ' + m);
     // Local stand-in for a NetSuite write (the beta's `qty` / `on` modes): the op changes the snapshot in memory, so the re-check
     // reads NetSuite as it would after the real write. Mirrors move_tx.js closely enough for the beta:
-    //  if_qty      sets an IF item's qty (idempotent at op.to; refuses a stale op.from); newLine adds the line (the beta never needs the add-on fallback)
+    //  if_qty      sets an IF item's qty (idempotent at op.to; refuses a stale op.from); newLine on an IF without the item throws NO_IF_LINE like prod (the beta exercises the add-on IF)
     //  if_create   adds an IF (returns its id): Shipped (C) when op.ship === true, Picked (A) when 'picked' (an IF with op.token on this TO, any
     //              status, is returned instead of a second one), else Packed (B)
     //  to_create   adds an approved TO (returns its id)
@@ -36,9 +36,9 @@ function makeSnapshotNs(verify, rawOrPath) {
             if (!mine.length) {
                 if (Number(op.to) <= 0) return;
                 if (!op.newLine) throw new Error('IF ' + op.ifId + ' item ' + op.item + ' is not in the snapshot');
-                const head = liveIf(op.ifId, op.ifNum)[0];
-                rows.push({ ifid: head.ifid, ifnum: head.ifnum, status: head.status, trandate: head.trandate, toid: head.toid, item: Number(op.item),
-                    sku: skuOf(op.item), qty: Number(op.to), memo: head.memo || '', seal: head.seal || '', trailer: head.trailer || '' });
+                liveIf(op.ifId, op.ifNum);
+                // Like prod (move_tx): no insert on an existing IF until sandbox check S1 proves NetSuite allows it; the caller makes an add-on IF.
+                throw new Error('NO_IF_LINE ' + (op.ifNum || 'IF' + op.ifId) + ' has no line for item ' + op.item);
             } else {
                 const cur = mine.reduce((a, r) => a + Number(r.qty || 0), 0);
                 if (cur === Number(op.to)) return;

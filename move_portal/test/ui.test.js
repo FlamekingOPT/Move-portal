@@ -344,3 +344,21 @@ test('ui: at-dock lock copy (load and unload) and the scan box on a status chang
     [', at the dock waiting for pickup', 'That trailer has its paperwork. Leave this pallet on it.',
         '❌ Its trailer is still at Riverside waiting for pickup', 'Set it aside and tell the office.', 'S.tvStatus'].forEach(s => assert.ok(src.includes(s), s));
 });
+
+test('ui final I1: at the dock other items get + Add / ✕ and pallets get ✕ (truck_remove routes to a dock take-off)', () => {
+    const src = ui._clientMain.toString();
+    ['otherHtml(v, open || dock)', "(open || dock ? '<div class=\"ac\"><button data-act=\"tremove\""].forEach(s => assert.ok(src.includes(s), s));
+    assert.equal(src.includes('otherHtml(v, open);'), false);
+});
+
+test('ui final I2b: managers get "Mark picked up without NetSuite" on the at-dock card and the out-of-sync card', () => {
+    const src = ui._clientMain.toString();
+    ["api('picked_up_force'", 'Mark picked up without NetSuite', 'data-act="dforce"',
+        'Mark this trailer picked up WITHOUT updating NetSuite? The office must fix the TO/IF by hand.'].forEach(s => assert.ok(src.includes(s), s));
+    ["(isMgr ? forceBtn(t.id, t.label) : '')", "forceBtn(o.id, o.label)"].forEach(s => assert.ok(src.includes(s), 'button on both cards: ' + s));
+});
+
+test('ui final minor: step labels for the dock re-sync, the dock seal and the forced pickup', () => {
+    const src = ui._clientMain.toString();
+    ["docs_resynced: 'Docs re-synced'", "dock_seal: 'Seal added'", "picked_up_forced: 'Picked up (no NetSuite)'"].forEach(s => assert.ok(src.includes(s), s));
+});

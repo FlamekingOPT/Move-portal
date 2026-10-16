@@ -319,3 +319,22 @@ test('if_seal: blank refused, same seal is a no-op', () => {
     assert.equal(s.tx.apply({ op: 'if_seal', ifId: '9', ifNum: 'IF9', seal: '5249330' }), '9');
     assert.equal(s.f.saved, 0);
 });
+
+// ── final review I4: if_qty counts ticked lines only and re-ticks an unticked line on a raise ──
+test('if_qty final fix: an unticked line for the item at qty 24 is re-ticked and set on a raise from 0', () => {
+    const s = setup({ status: 'A', ifLines: [{ item: '975', quantity: 100 }, { item: '111', quantity: 24, itemreceive: false }],
+        to: [{ item: '975', quantity: 100, quantityfulfilled: 0 }, { item: '111', quantity: 12, quantityfulfilled: 0 }] });
+    s.tx.apply({ op: 'if_qty', ifId: '9', ifNum: 'IF9', toId: '600', item: '111', from: 0, to: 12, newLine: true });
+    assert.deepEqual([s.f.lines[1].itemreceive, s.f.lines[1].quantity, s.f.saved], [true, 12, 1]);
+    assert.deepEqual([s.f.lines[0].itemreceive, s.f.lines[0].quantity], [true, 100]);
+});
+
+test('if_qty final fix: ticked 100 plus unticked 50 counts as 100; the unticked line stays unticked', () => {
+    let s = setup({ status: 'A', ifLines: [{ item: '975', quantity: 100 }, { item: '975', quantity: 50, itemreceive: false }] });
+    s.tx.apply({ op: 'if_qty', ifId: '9', ifNum: 'IF9', toId: '600', item: '975', from: 100, to: 80 });
+    assert.deepEqual([s.f.lines[0].quantity, s.f.lines[1].itemreceive, s.f.saved], [80, false, 1]);
+    s = setup({ status: 'A', ifLines: [{ item: '975', quantity: 100 }, { item: '975', quantity: 50, itemreceive: false }] });
+    assert.equal(s.tx.apply({ op: 'if_qty', ifId: '9', ifNum: 'IF9', toId: '600', item: '975', from: 50, to: 100 }), '9');   // already 100: done
+    assert.equal(s.f.saved, 0);
+    assert.throws(() => s.tx.apply({ op: 'if_qty', ifId: '9', ifNum: 'IF9', toId: '600', item: '975', from: 150, to: 160 }), /is 100, expected 150/);
+});

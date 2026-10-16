@@ -700,8 +700,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const trucks = allTrucks(), taken = {}, dp = defPcs(c);
         trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
         const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING || x.status === T.AT_DOCK);
-        // Shipped today (Shipments tab): trucks that left with today's departure day.
-        const shipped = trucks.filter(x => x.status !== T.DEPARTING && x.status !== T.AT_DOCK && x.data.depart && x.data.depart.day === c.now.dayIso);
+        // Shipped today (Shipments tab): trucks that left today: a scan truck's pickup day (shippedDay), else the departure day.
+        const shipped = trucks.filter(x => x.status !== T.DEPARTING && x.status !== T.AT_DOCK && x.data.depart && (x.data.depart.shippedDay || x.data.depart.day) === c.now.dayIso);
         const counts = data.palletStatusCounts(open.concat(shipped).map(x => x.id));
         const busy = {};
         trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
@@ -796,10 +796,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             const dep = d.depart || {}, tag = verify.scanTag((d.approveRef || x.id) + '-A' + op.item + '-' + seq.n);
             const id = tx.apply({ op: 'if_create', ship: 'picked', toId: String(d.toId), token: tag, lines: { [op.item]: op.to }, trailer: dep.trailer, seal: dep.seal || '',
                 memo: verify.memoFor(dep.truckNo, dep.day) + ' · ' + tag });
-            return { item: String(op.item), ifId: String(id), ifNum: newIfNum(id) };
+            return { item: String(op.item), ifId: String(id), ifNum: newIfNum(id), token: tag };
         }
     }
-    function withAddOns(dl, addOns) { Object.keys(addOns).forEach(k => { if (dl[k]) Object.assign(dl[k], { ifId: addOns[k].ifId, ifNum: addOns[k].ifNum }); }); return dl; }
+    function withAddOns(dl, addOns) { Object.keys(addOns).forEach(k => { if (dl[k]) Object.assign(dl[k], { ifId: addOns[k].ifId, ifNum: addOns[k].ifNum, token: addOns[k].token }); }); return dl; }
+    // A truck approved in off / qty mode has no TO or IF: its dock edits, seal and Picked up stay portal-only even after writeMode flips to on.
+    function hasDocs(d) { return !!(d && d.toId); }
+    function docsLive(d, c) { return hasDocs(d) && writeMode(c) === 'on'; }
     // An item that would drop to 0 on its own one-line add-on IF: NetSuite won't empty an IF, so the office removes it.
     function addOnEmptied(d, delta) {
         const dl = d.docLines || {};
@@ -812,9 +815,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // Applies one pallet change at the dock. sign +1 = on, -1 = off. Returns a scan result.
     function dockEdit(x, p, sign, s, c) {
         const cl = claimLoad(x, null, 'dock', mustAtDock);
-        const d = cl.Ld.data, delta = {}, pcs = itemsOfPallet(p), seq = { n: Number(d.addOnSeq) || 0 };
+        const d = cl.Ld.data, seq = { n: Number(d.addOnSeq) || 0 };
         const release = patch => data.updateLoad(data.getLoad(x.id), { data: Object.assign({ claim: '', workingAt: 0, phase: '', docsSync: null },
             seq.n !== (Number(d.addOnSeq) || 0) ? { addOnSeq: seq.n } : {}, patch || {}) });
+        // Another request may have moved the pallet between the scan's read and this claim (scan-on: still labeled; take-off: still on this truck).
+        const p0 = p;
+        p = data.getPallet(p0.id);
+        const still = p && (sign > 0 ? p.status === VP.LABELED : p.status === VP.LOADED && String(p.loadId) === String(x.id));
+        if (!still) {
+            release();
+            return { result: 'refused', raw: s.raw, tone: 'bad', message: 'That pallet changed: scan it again.', pallet: p ? pubPallet(p) : pubPallet(p0), view: truckView(mustTruck(x.id), c) };
+        }
+        const delta = {}, pcs = itemsOfPallet(p);
         Object.keys(pcs).forEach(k => { delta[k] = sign * pcs[k]; });
         const palletOn = { status: VP.LOADED, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } };
         const palletOff = { status: VP.LABELED, load: '', data: { takenOffAt: c.now.stamp, takenOffBy: c.actor, takenOffTruck: x.id } };
@@ -837,7 +849,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 if (shorts.length) { release(); return result('short', { message: 'Can\'t add: ' + verify.stockText(shorts, skuNames(items)) + '. Leave the pallet off and call the office.' }); }
             }
             const docLines = d.docLines || {}, addOns = {};
-            if (writeMode(c) === 'on') {
+            if (docsLive(d, c)) {
                 const ops = verify.dockOps({ toId: d.toId, primaryIfId: d.ifId, primaryIfNum: d.ifNum, docLines: docLines, delta: delta });
                 const done = [];
                 for (let i = 0; i < ops.length; i++) {
@@ -847,15 +859,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                         if (ao) { addOns[ao.item] = ao; done.push(Object.assign({}, op, { op: 'if_create' })); } else done.push(op);
                     } catch (e) {
                         const undo = done.slice().reverse().map(verify.inverseOp);
+                        let undone = 0;                       // inverse ops that landed, newest done op first
                         try {
                             if (undo.some(u => u === null)) throw new Error('cannot undo an add-on IF');
-                            undo.forEach(u => tx.apply(u));
+                            undo.forEach(u => { tx.apply(u); undone++; });
                         } catch (e2) {
-                            // Every done op is still in place: the pallet counts as changed, and the forward remainder is what Retry applies.
+                            // The done ops not undone are still in place: the pallet counts as changed. Retry (a straight idempotent replay) re-applies
+                            // the forward ops of the steps the undo reverted, in their original order, then the forward remainder.
                             log.error({ title: 'move dock undo ' + x.id, details: 'edit: ' + ((e && e.message) || String(e)) + ' / undo: ' + ((e2 && e2.stack) || String(e2)) });
                             data.updatePallet(p, sign > 0 ? palletOn : palletOff);
                             const dl = withAddOns(verify.applyDelta(docLines, delta, d.ifId, d.ifNum), addOns);
-                            release({ docsSync: { error: (e && e.message) || String(e), pending: ops.slice(i), at: c.now.stamp, by: c.actor }, docLines: dl,
+                            const pending = ops.slice(i - undone, i).concat(ops.slice(i));
+                            release({ docsSync: { error: (e && e.message) || String(e), pending: pending, at: c.now.stamp, by: c.actor }, docLines: dl,
                                 alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
                             return result('out_of_sync', { message: 'Docs are out of sync with the trailer. A manager must press Retry before more scans.' });
                         }
@@ -885,7 +900,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             return { docLines: dl, alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), addOnSeq: seq.n };
         };
         let i = 0;
-        try { for (; i < pending.length; i++) { const ao = applyDockOp(x, d, pending[i], seq); if (ao) addOns[ao.item] = ao; } }
+        try { if (hasDocs(d)) for (; i < pending.length; i++) { const ao = applyDockOp(x, d, pending[i], seq); if (ao) addOns[ao.item] = ao; } }   // no docs: nothing to write
         catch (e) {
             data.updateLoad(data.getLoad(x.id), { data: Object.assign(docState(), { claim: '', workingAt: 0, phase: '',
                 docsSync: Object.assign({}, sync, { pending: pending.slice(i), error: (e && e.message) || String(e), at: c.now.stamp }) }) });
@@ -901,22 +916,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (seal.length > 30) throw userErr('The seal # is too long (30 characters max)');
         return seal;
     }
-    // The seal is optional until Picked up. Waiting for docs: it updates the requested seal. At the dock: it is saved on the truck
-    // and (writeMode on) stamped on each Picked IF, all before the truck record changes.
+    // The seal is optional until Picked up. Before docs it goes in at Send for docs. At the dock: it is saved on the truck
+    // and (writeMode on, docs written) stamped on each Picked IF, all before the truck record changes.
     act('dock_seal', false, (a, c) => {
         const seal = cleanSeal(a.seal);
         if (!seal) throw userErr('Enter the seal #');
         const x = mustTruck(a.truckId);
         if (!isScan(x)) throw userErr('This truck takes its seal at Mark shipped');
+        if (x.status !== T.AT_DOCK) throw userErr('Add the seal at Send for docs, or once the trailer is at the dock.');
         sealTaken(seal, x.id);
-        if (x.status === T.SHIP_PENDING) {
-            mustPending(x);                           // someone processing it: "being processed", not "not at the dock"
-            data.updateLoad(data.getLoad(x.id), { data: { shipReq: Object.assign({}, x.data.shipReq, { seal: seal }) } });
-            return { view: truckView(mustTruck(x.id), c) };
-        }
         const cl = claimLoad(x, null, 'dock', mustAtDock);
         try {
-            if (writeMode(c) === 'on') (cl.Ld.data.alloc || []).forEach(f => {
+            if (docsLive(cl.Ld.data, c)) (cl.Ld.data.alloc || []).forEach(f => {
                 assertClaim(x.id, cl.claim, truckLabel(x), 'dock');
                 tx.apply({ op: 'if_seal', ifId: f.ifId, ifNum: f.ifNum, seal: seal });
             });
@@ -951,12 +962,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const cl = claimLoad(x, null, 'pickup', cur => { mustAtDock(cur, true); pinned(cur); });
         const d = cl.Ld.data, dep = d.depart || {}, ref = d.approveRef || x.id;
         const useSeal = stampsDone(cl.Ld) ? dep.seal : seal;      // pinned: the exact seal already on the paperwork
-        const memo = verify.memoFor(dep.truckNo, dep.day) + ' · ' + verify.scanTag(ref);
-        const ops = (d.alloc || []).map(f => ({ op: 'if_stamp', ifId: f.ifId, ifNum: f.ifNum, trailer: dep.trailer || d.trailer, seal: useSeal, memo: memo, lines: f.lines }));
+        // Each IF keeps its own token: an add-on's is the tag it was created with (only add-ons carry one), else the truck tag.
+        const memo = f => verify.memoFor(dep.truckNo, dep.day) + ' · ' + (f.token || verify.scanTag(ref));
+        const ops = (d.alloc || []).map(f => ({ op: 'if_stamp', ifId: f.ifId, ifNum: f.ifNum, trailer: dep.trailer || d.trailer, seal: useSeal, memo: memo(f), lines: f.lines }));
         const writes = Object.assign({}, d.writes), day = c.now.dayIso;
         let res;
         try {
-            res = verify.runOps(ops, writeMode(c), op => { assertClaim(x.id, cl.claim, truckLabel(x), 'pickup'); return tx.apply(op); }, writes,
+            res = verify.runOps(ops, hasDocs(d) ? writeMode(c) : 'off', op => { assertClaim(x.id, cl.claim, truckLabel(x), 'pickup'); return tx.apply(op); }, writes,
                 (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });
             assertClaim(x.id, cl.claim, truckLabel(x), 'pickup');
             shipPallets(mustTruck(x.id), c, null, day);
@@ -974,6 +986,33 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             throw userErr('Picked up was not saved: a NetSuite write failed (' + ((e && e.message) || e) + '). Press Picked up again.');
         }
         return { written: res.written, planOnly: res.planOnly, view: truckView(mustTruck(x.id), c) };
+    });
+    // Manager escape for a trailer stuck at the dock (docs out of sync, a half-done Picked up, an IF the office changed): the truck departs
+    // in the portal with NO NetSuite writes. Who, when and why are recorded on depart.forced; the office fixes the TO/IF by hand.
+    act('picked_up_force', true, (a, c) => {
+        const note = String(a.note == null ? '' : a.note).trim();
+        if (!note) throw userErr('Enter a note: why NetSuite is skipped');
+        if (note.length > 300) throw userErr('The note is too long (300 characters max)');
+        const x = mustTruck(a.truckId);
+        if (x.status !== T.AT_DOCK) throw userErr('This truck is ' + x.status + ', not at the dock');
+        const seal = cleanSeal(a.seal);
+        if (seal) sealTaken(seal, x.id);
+        const cl = claimLoad(x, null, 'pickup', cur => {
+            if (cur.status !== T.AT_DOCK) throw userErr('This truck is ' + cur.status + ', not at the dock');
+            if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
+        });
+        const dep = cl.Ld.data.depart || {}, day = c.now.dayIso;
+        try {
+            shipPallets(mustTruck(x.id), c, null, day);
+            data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { claim: '', workingAt: 0, phase: '', error: '', docsSync: null,
+                depart: Object.assign({}, dep, { seal: seal || dep.seal || '', pickedUpAt: c.now.stamp, pickedUpBy: c.actor, shippedDay: day,
+                    forced: { by: c.actor, at: c.now.stamp, note: note } }), lastStep: stepOf('picked_up_forced', c) } });
+        } catch (e) {
+            const cur = data.getLoad(x.id);
+            if (cur && cur.data.claim === cl.claim) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '' } });
+            throw e;
+        }
+        return { view: truckView(mustTruck(x.id), c) };
     });
     function isFlaggedTip(p) { return !!(p && ((p.data.decision && p.data.decision.kind === 'accepted_pending') || p.data.flag === 'never_loaded')); }
     function dockScan(x, a, c) {

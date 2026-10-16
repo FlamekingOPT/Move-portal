@@ -53,18 +53,26 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         const f = record.load({ type: record.Type.ITEM_FULFILLMENT, id: op.ifId, isDynamic: true });
         const st = String(f.getValue({ fieldId: 'shipstatus' }));
         if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
-        const lines = itemLines(f, op.item);
-        if (!lines.length && op.newLine && Number(op.to) > 0) throw new Error('NO_IF_LINE ' + op.ifNum + ' has no line for item ' + op.item);
+        const all = itemLines(f, op.item);
+        if (!all.length && op.newLine && Number(op.to) > 0) throw new Error('NO_IF_LINE ' + op.ifNum + ' has no line for item ' + op.item);
+        // Only ticked lines ship (the same rule as tickedQty): an unticked line's quantity is not on the IF.
+        const isTicked = i => f.getSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i }) !== false;
+        let lines = all.filter(isTicked);
         const cur = lines.reduce((a, i) => a + (Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0), 0);
         if (cur === Number(op.to)) return String(op.ifId);   // an earlier write landed but the request died before it was recorded
         if (cur !== Number(op.from)) throw changed(op.ifNum + ' item ' + op.item + ' is ' + cur + ', expected ' + op.from);
         if (Number(op.to) > Number(op.from) && Number(op.to) - Number(op.from) > toRemaining(op.toId, op.item)) throw changed('TO ' + op.toId + ' has no room to raise ' + op.ifNum + ' to ' + op.to);
         if (Number(op.to) <= 0) {
-            const others = f.getLineCount({ sublistId: 'item' }) - lines.length;
-            const ticked = [];
-            for (let i = 0; i < f.getLineCount({ sublistId: 'item' }); i++)
-                if (lines.indexOf(i) === -1 && f.getSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i }) !== false) ticked.push(i);
-            if (!others || !ticked.length) throw changed(op.ifNum + ' would be emptied by taking item ' + op.item + ' to 0');
+            let others = 0;
+            for (let i = 0; i < f.getLineCount({ sublistId: 'item' }); i++) if (all.indexOf(i) === -1 && isTicked(i)) others++;
+            if (!others) throw changed(op.ifNum + ' would be emptied by taking item ' + op.item + ' to 0');
+        }
+        if (!lines.length && Number(op.to) > 0) {    // the item's only lines are unticked (taken to 0 earlier): re-tick the last one
+            const i = all[all.length - 1];
+            f.selectLine({ sublistId: 'item', line: i });
+            f.setCurrentSublistValue({ sublistId: 'item', fieldId: 'itemreceive', value: true });
+            f.commitLine({ sublistId: 'item' });
+            lines = [i];
         }
         let left = Number(op.to);
         const caps = lines.map(i => Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0);
