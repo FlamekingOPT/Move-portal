@@ -543,3 +543,49 @@ test('labelRows: whole-number cells only; null entries dropped; blanks are 0', (
     const oddOnly = v.labelRows([{ sku: 'YSN201', pcs: 72, pallets: '', odd: 18 }], ctx).rows[0];
     assert.deepEqual([oddOnly.status, oddOnly.labels, oddOnly.total], ['ok', 1, 18]);
 });
+
+
+test('dock: AT_DOCK state and picked IF in the scan approve plan', () => {
+    assert.equal(v.TRUCK.AT_DOCK, 'at_dock');
+    const p = v.scanApprovePlan({ ref: '7', lines: { '11': 240 }, stamp: { trailer: 'T1', seal: '', truckNo: 1, dayIso: '2026-10-16' }, S: { locFrom: 35, locTo: 46 }, picked: true });
+    assert.equal(p.ops[1].ship, 'picked');
+    const q = v.scanApprovePlan({ ref: '7', lines: { '11': 240 }, stamp: { trailer: 'T1', seal: 'S', truckNo: 1, dayIso: '2026-10-16' }, S: {} });
+    assert.equal(q.ops[1].ship, true);                     // late pallet / default unchanged
+});
+
+test('dockOps: raise = TO then IF; lower = IF then TO; new SKU = IF new line on the primary IF', () => {
+    const docLines = { '11': { qty: 240, ifId: '502', ifNum: 'IF502' } };
+    const base = { toId: '501', primaryIfId: '502', primaryIfNum: 'IF502', docLines };
+    assert.deepEqual(v.dockOps(Object.assign({ delta: { '11': 120 } }, base)), [
+        { op: 'to_line', toId: '501', item: '11', from: 240, to: 360 },
+        { op: 'if_qty', ifId: '502', ifNum: 'IF502', toId: '501', item: '11', from: 240, to: 360 }]);
+    assert.deepEqual(v.dockOps(Object.assign({ delta: { '11': -120 } }, base)), [
+        { op: 'if_qty', ifId: '502', ifNum: 'IF502', toId: '501', item: '11', from: 240, to: 120 },
+        { op: 'to_line', toId: '501', item: '11', from: 240, to: 120 }]);
+    assert.deepEqual(v.dockOps(Object.assign({ delta: { '12': 60 } }, base)), [
+        { op: 'to_line', toId: '501', item: '12', from: 0, to: 60 },
+        { op: 'if_qty', ifId: '502', ifNum: 'IF502', toId: '501', item: '12', from: 0, to: 60, newLine: true }]);
+    assert.throws(() => v.dockOps(Object.assign({ delta: { '11': -300 } }, base)), /below zero/);
+});
+
+test('dock: inverseOp swaps from/to; if_create cannot be undone', () => {
+    assert.deepEqual(v.inverseOp({ op: 'to_line', toId: '501', item: '11', from: 240, to: 360 }), { op: 'to_line', toId: '501', item: '11', from: 360, to: 240 });
+    assert.deepEqual(v.inverseOp({ op: 'if_qty', ifId: '5', ifNum: 'IF5', toId: '501', item: '12', from: 0, to: 60, newLine: true }),
+        { op: 'if_qty', ifId: '5', ifNum: 'IF5', toId: '501', item: '12', from: 60, to: 0 });
+    assert.equal(v.inverseOp({ op: 'if_create', toId: '501' }), null);
+});
+
+test('dock: applyDelta and alloc round trip', () => {
+    const d0 = v.docLinesFromAlloc([{ ifId: '502', ifNum: 'IF502', toId: '501', toNum: 'TO501', lines: { '11': 240 }, addOn: false }]);
+    assert.deepEqual(d0, { '11': { qty: 240, ifId: '502', ifNum: 'IF502' } });
+    const d1 = v.applyDelta(d0, { '11': -240, '12': 60 }, '502', 'IF502');
+    assert.deepEqual(d1, { '12': { qty: 60, ifId: '502', ifNum: 'IF502' } });
+    assert.deepEqual(v.allocFromDocLines(Object.assign({}, d1, { '13': { qty: 5, ifId: '600', ifNum: 'IF600' } }), { toId: '501', toNum: 'TO501' }), [
+        { ifId: '502', ifNum: 'IF502', toId: '501', toNum: 'TO501', lines: { '12': 60 }, addOn: false },
+        { ifId: '600', ifNum: 'IF600', toId: '501', toNum: 'TO501', lines: { '13': 5 }, addOn: true }]);
+});
+
+test('unload: a pallet still loaded on an at-dock truck is locked', () => {
+    const r = v.classifyUnloadScan({ truckId: '9', pallet: { status: 'loaded', loadId: '4' }, trucks: { '4': { status: 'at_dock', label: 'Trailer X' } } });
+    assert.equal(r.result, 'locked');
+});

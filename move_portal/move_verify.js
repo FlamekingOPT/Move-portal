@@ -8,7 +8,7 @@
 define([], function () {
     'use strict';
 
-    const TRUCK = { LOADING: 'loading', NEEDS_FIX: 'needs_fix', READY: 'ready', SHIP_PENDING: 'ship_pending', DEPARTING: 'departing', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
+    const TRUCK = { LOADING: 'loading', NEEDS_FIX: 'needs_fix', READY: 'ready', SHIP_PENDING: 'ship_pending', DEPARTING: 'departing', AT_DOCK: 'at_dock', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
     const VP = { LABELED: 'labeled', LOADED: 'loaded', IN_TRANSIT: 'in_transit', RECEIVED: 'received', MISSING: 'missing', VOID: 'void' };
     const PLANNED_IF_STATUS = ['A', 'B'];
     const OPEN_TO_STATUS = ['B', 'D', 'E'];
@@ -141,7 +141,7 @@ define([], function () {
         const lines = Object.assign({}, o.lines);
         const to = { op: 'to_create', ref: ref, token: tag, fromLoc: String(S.locFrom), toLoc: String(S.locTo), orderStatus: S.toStatus || 'B', lines: lines,
             memo: tag + ' Trailer ' + st.trailer + ' · ' + memo };
-        const f = { op: 'if_create', ref: ref, toId: 'new:to:' + ref, ship: true, token: tag, lines: Object.assign({}, lines), trailer: st.trailer, seal: st.seal,
+        const f = { op: 'if_create', ref: ref, toId: 'new:to:' + ref, ship: o.picked ? 'picked' : true, token: tag, lines: Object.assign({}, lines), trailer: st.trailer, seal: st.seal,
             memo: memo + ' · ' + tag };
         return { ops: [to, f], alloc: [{ ifId: 'new:' + ref, ifNum: '(new)', toId: 'new:to:' + ref, toNum: '(new TO)', lines: Object.assign({}, lines), addOn: false }],
             unplanned: [], corrections: [], bol: null };
@@ -289,6 +289,7 @@ define([], function () {
             case VP.MISSING: return pt === me ? { result: 'late', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
             case VP.RECEIVED: return pt === me ? { result: 'dup' } : Object.assign({ result: 'dup_other' }, ref);
             case VP.LOADED: if (other.status === TRUCK.SHIP_PENDING) return Object.assign({ result: 'locked', reason: 'ship_pending' }, ref);
+                if (other.status === TRUCK.AT_DOCK) return Object.assign({ result: 'locked', reason: 'at_dock' }, ref);
                 if (other.status === TRUCK.DEPARTING) return Object.assign({ result: 'locked' }, ref);
                 return { result: 'never_loaded' };
             default: return { result: 'never_loaded' };
@@ -559,9 +560,64 @@ define([], function () {
         return { rows: out, labels: labels, over: labels > (Number(ctx.maxPrint) || 250) };
     }
 
+    // ── drop trailer at the dock (spec 2026-10-16 §4) ────────────────────
+    // docLines: what NetSuite holds for this truck, per item: { qty, ifId, ifNum }. A raise writes the TO first, a lower the IF first,
+    // so the IF never asks for more than its TO line. A new SKU goes on the primary IF as a new line (newLine: tx may refuse → add-on IF).
+    function dockOps(o) {
+        const out = [], dl = o.docLines || {};
+        Object.keys(o.delta || {}).sort().forEach(item => {
+            const d = Number(o.delta[item]) || 0;
+            if (!d) return;
+            const cur = dl[item] ? Number(dl[item].qty) || 0 : 0, next = cur + d;
+            if (next < 0) throw new Error('Item ' + item + ' would go below zero on the TO');
+            const toOp = { op: 'to_line', toId: String(o.toId), item: String(item), from: cur, to: next };
+            const ifOp = dl[item]
+                ? { op: 'if_qty', ifId: String(dl[item].ifId), ifNum: dl[item].ifNum, toId: String(o.toId), item: String(item), from: cur, to: next }
+                : { op: 'if_qty', ifId: String(o.primaryIfId), ifNum: o.primaryIfNum, toId: String(o.toId), item: String(item), from: 0, to: next, newLine: true };
+            if (d > 0) out.push(toOp, ifOp); else out.push(ifOp, toOp);
+        });
+        return out;
+    }
+    function inverseOp(op) {
+        if (op.op !== 'to_line' && op.op !== 'if_qty') return null;
+        const inv = Object.assign({}, op, { from: op.to, to: op.from });
+        delete inv.newLine;
+        return inv;
+    }
+    function applyDelta(docLines, delta, primaryIfId, primaryIfNum) {
+        const out = JSON.parse(JSON.stringify(docLines || {}));
+        Object.keys(delta || {}).forEach(item => {
+            const cur = out[item] ? out[item].qty : 0, next = cur + (Number(delta[item]) || 0);
+            if (next <= 0) { delete out[item]; return; }
+            out[item] = out[item] ? Object.assign(out[item], { qty: next }) : { qty: next, ifId: String(primaryIfId || ''), ifNum: primaryIfNum || '' };
+        });
+        return out;
+    }
+    function docLinesFromAlloc(alloc) {
+        const out = {};
+        (alloc || []).forEach(a => Object.keys(a.lines || {}).forEach(item => {
+            const q = Number(a.lines[item]) || 0;
+            if (q > 0) out[item] = { qty: (out[item] ? out[item].qty : 0) + q, ifId: String(a.ifId), ifNum: a.ifNum };
+        }));
+        return out;
+    }
+    // The first IF seen (in item order) is the primary; any other IF on this TO is an add-on.
+    function allocFromDocLines(docLines, meta) {
+        const byIf = {}, order = [];
+        Object.keys(docLines || {}).sort().forEach(item => {
+            const l = docLines[item];
+            if (!(l.qty > 0)) return;
+            const k = String(l.ifId);
+            if (!byIf[k]) { byIf[k] = { ifId: k, ifNum: l.ifNum, toId: String(meta.toId), toNum: meta.toNum, lines: {}, addOn: order.length > 0 }; order.push(k); }
+            byIf[k].lines[item] = l.qty;
+        });
+        return order.map(k => byIf[k]);
+    }
+
     return { _fmt: fmt, TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps, scanTag, scanApprovePlan,
         lbs, truckLines, linesPcs, truckWeight, stockCheck, stockText,
-        classifyUnloadScan, planReceipts, labelRows, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads };
+        classifyUnloadScan, planReceipts, labelRows, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads,
+        dockOps, inverseOp, applyDelta, docLinesFromAlloc, allocFromDocLines };
 });
