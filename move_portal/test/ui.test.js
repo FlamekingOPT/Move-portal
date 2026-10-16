@@ -315,3 +315,26 @@ test('label counts: no stale-label row on the dashboard; the plan says "on truck
     assert.equal(src.indexOf('Labeled, never loaded (stale)'), -1);
     assert.ok(src.indexOf('already on trucks') !== -1);
 });
+
+// ── drop trailer docs (spec 2026-10-16 §3) ──
+test('ui: drop-trailer copy is present', () => {
+    const src = ui._clientMain.toString();
+    ['Ready for docs', '📄 Send for docs', 'Waiting for docs', 'At dock', '📄 Docs ready · at dock', '🚛 Picked up',
+        'Approve writes the TO + IF (Picked). Shipped happens at pickup.', 'Docs out of sync', 'Every scan updates the TO + IF',
+        'Writing docs…', 'Seal # (optional)', 'Send this trailer for docs? A manager approves them in Approvals.', 'Plan saved (writes are off)',
+        'No seal yet', 'Sent for docs by ', "api('dock_seal'", "api('picked_up'", "api('dock_resync'"].forEach(s => assert.ok(src.includes(s), s));
+});
+
+test('ui: Dashboard STAGES mirror the server STAGE_ORDER', () => {
+    const fs = require('fs'), path = require('path');
+    const server = fs.readFileSync(path.join(__dirname, '..', 'sl_move_portal.js'), 'utf8');
+    const sm = /const STAGE_ORDER = (\[[^\]]*\]);/.exec(server), cm = /const STAGES = (\[[^\]]*\]);/.exec(ui._clientMain.toString());
+    assert.ok(sm && cm);
+    assert.deepEqual(JSON.parse(cm[1].replace(/'/g, '"')), JSON.parse(sm[1].replace(/'/g, '"')));
+});
+
+test('ui: dock step kinds have human labels; at-dock scan results are handled', () => {
+    const src = ui._clientMain.toString();
+    ["docs_written: 'Docs written'", "picked_up: 'Picked up'", "dock_edit: 'Changed at the dock'",
+        "case 'short'", "case 'refused'", "case 'out_of_sync'", "at_dock: ['📄 Docs ready · at dock', 'p-green']"].forEach(s => assert.ok(src.includes(s), s));
+});
