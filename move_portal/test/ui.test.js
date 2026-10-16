@@ -362,3 +362,10 @@ test('ui final minor: step labels for the dock re-sync, the dock seal and the fo
     const src = ui._clientMain.toString();
     ["docs_resynced: 'Docs re-synced'", "dock_seal: 'Seal added'", "picked_up_forced: 'Picked up (no NetSuite)'"].forEach(s => assert.ok(src.includes(s), s));
 });
+
+test('Shipments cards each carry a View load button', () => {
+    const src = ui._clientMain.toString();
+    assert.ok(src.indexOf('📋 View load') !== -1);
+    assert.ok(src.indexOf('data-act="opentruck"') !== -1);
+    assert.ok(src.split('viewBtn(').length - 1 >= 7, 'every card builder uses viewBtn');
+});

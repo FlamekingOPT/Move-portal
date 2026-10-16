@@ -227,7 +227,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function isScan(x) { return !!(x && x.data && x.data.kind === 'scan'); }
     // SKU rows for the floor's Load / Verify / Shipments: loaded pallets only, with weight and Riverside available.
     function scanRows(x, ps, c) {
-        const loaded = ps.filter(p => p.status === VP.LOADED), tl = verify.truckLines(loaded), items = Object.keys(tl);
+        // Past loading (shipped, receiving, received...) the table is the whole load: loaded, in transit, received or missing.
+        const loaded = [T.LOADING, T.NEEDS_FIX, T.READY, T.AT_DOCK].indexOf(x.status) === -1 ? ps : ps.filter(p => p.status === VP.LOADED), tl = verify.truckLines(loaded), items = Object.keys(tl);
         const info = data.itemInfo(items), avail = items.length ? data.locationStock(c.S.locFrom, items) : {};
         const w = verify.truckWeight(tl, info, core.palletTare(c.S), loaded.length);
         const rows = items.map(k => {

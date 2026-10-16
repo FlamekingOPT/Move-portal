@@ -3705,3 +3705,17 @@ test('final minor: dock_seal refuses a truck that is not at the dock', () => {
     assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: '888' }, false), /Add the seal at Send for docs, or once the trailer is at the dock\./);
     assert.equal(ctx.data.getLoad(t.id).data.shipReq.seal, '');
 });
+
+test('truck_get: a shipped scan truck lists its full load; an at-dock truck is unchanged', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2);
+    const dock = ctx.run('truck_get', { truckId: t.id }, false).view;
+    assert.equal(dock.truck.status, 'at_dock');
+    assert.deepEqual([dock.scan.rows.length, dock.scan.pallets, dock.scan.rows[0].pcs], [1, 2, 240]);
+    ctx.run('picked_up', { truckId: t.id, seal: 'S' + t.id }, false);
+    const v = ctx.run('truck_get', { truckId: t.id }, false).view;
+    assert.equal(v.truck.status, 'departed');
+    assert.deepEqual([v.scan.rows.length, v.scan.rows[0].item, v.scan.rows[0].pcs, v.scan.rows[0].pallets, v.scan.pallets], [1, '11', 240, 2, 2]);
+    assert.equal(v.pallets.length, 2);
+    assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'in_transit'));
+});

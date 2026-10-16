@@ -646,6 +646,7 @@ h3{font-size:15px;margin:16px 0 8px}
             $('thead').innerHTML = esc(t.label) + ' ' + statusPill(t.status, t.scan) + (open ? ' <button class="dbtn gh sm" data-act="ttrailer" aria-label="Edit trailer">✎ trailer</button>' : '');
             $('tsub').textContent = t.depart ? (v.scan ? [t.depart.carrier, 'Trailer ' + t.depart.trailer, t.depart.seal ? 'Seal ' + t.depart.seal : 'No seal yet'].filter(Boolean)
                 : [t.depart.carrier, 'Trailer ' + t.depart.trailer, 'Seal ' + t.depart.seal]).join(' · ') : v.totals.pallets + ' pallets · ' + num(v.totals.pieces) + ' pcs';
+            if (v.scan && !dock && t.toNum) $('tsub').textContent += ' · ' + [t.toNum, t.ifNum].filter(Boolean).join(' · ');     // a closed truck shows its documents
             const sb = t.sentBack;
             $('tsent').innerHTML = dock ? flash('green', '📄 Docs ready · at dock', esc([t.toNum, t.ifNum].filter(Boolean).join(' · ')), 'Every scan updates the TO + IF') :
                 sb && open ? '<div class="card amberc"><h4>↩ Sent back by ' + esc(whoName(sb.by)) + ': ' + esc(sb.note) + '</h4><div class="muted">' + esc(sb.at) +
@@ -823,26 +824,28 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<h3>Waiting for manager</h3>' + (wait.map(t => {
                     const q = t.shipReq || {};
                     return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' + esc(['Seal ' + (q.seal || ''), q.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) +
-                        '</div><div class="muted">Marked shipped by ' + esc(whoName(q.by) || '?') + ' · ' + esc(q.at || '') + '</div></div>';
+                        '</div><div class="muted">Marked shipped by ' + esc(whoName(q.by) || '?') + ' · ' + esc(q.at || '') + '</div>' + viewBtn(t.id) + '</div>';
                 }).join('') || '<div class="muted">None</div>')) +
                 (!showScn ? '' : '<h3>Ready for docs</h3>' + (sReady.map(t => shipCard(t, S.shipViews[String(t.id)], carrier)).join('') ||
                     '<div class="muted">No trailer is ready. Finish loading on Load out first.</div>') +
                 '<h3>Waiting for docs</h3>' + (sWait.map(t => {
                     const q = t.shipReq || {};
                     return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status, true) + '</h4><div class="muted">' + esc([q.seal ? 'Seal ' + q.seal : '', q.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) +
-                        '</div><div class="muted">' + esc('Sent for docs by ' + (whoName(q.by) || '?') + ' · ' + (q.at || '')) + '</div></div>';
+                        '</div><div class="muted">' + esc('Sent for docs by ' + (whoName(q.by) || '?') + ' · ' + (q.at || '')) + '</div>' + viewBtn(t.id) + '</div>';
                 }).join('') || '<div class="muted">None</div>') +
                 '<h3>At dock</h3>' + (sDock.map(t => dockCard(t, S.shipViews[String(t.id)])).join('') || '<div class="muted">None</div>')) +
                 '<h3>Shipped today</h3>' + ((r.shippedToday || []).map(t => {
                     const d = t.depart || {};
                     return '<div class="card"><h4>🚚 ' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4><div class="muted">' +
-                        esc([d.seal ? 'Seal ' + d.seal : '', 'Trailer ' + d.trailer, d.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) + '</div></div>';
+                        esc([d.seal ? 'Seal ' + d.seal : '', 'Trailer ' + d.trailer, d.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) + '</div>' + viewBtn(t.id) + '</div>';
                 }).join('') || '<div class="muted">None yet today</div>');
             Object.keys(keep).forEach(id => { const i = $(id); if (i && keep[id] != null) i.value = keep[id]; });
         }
+        // Every Shipments card can open its truck read-only (the floor's own truck screen).
+        function viewBtn(id) { return '<button class="btn ghost sm" data-act="opentruck" data-id="' + esc(id) + '">📋 View load</button>'; }
         function shipCard(t, v, carrier) {
             const id = esc(t.id);
-            if (!v) return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4>' + errBox('Could not read this truck. Open Shipments again.') + '</div>';
+            if (!v) return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4>' + errBox('Could not read this truck. Open Shipments again.') + viewBtn(t.id) + '</div>';
             const ifs = v.lines.map(l => l.ifNum).filter((n, i, a) => a.indexOf(n) === i);
             const oth = (v.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
             return '<div class="card greenc"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4>' +
@@ -851,7 +854,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 (v.trailer ? '' : '<label class="f" for="s_tr_' + id + '">Trailer #</label><input class="inp" id="s_tr_' + id + '" data-keep="1" maxlength="20" placeholder="Trailer #" autocomplete="off">') +
                 '<label class="f" for="s_seal_' + id + '">' + (v.scan ? 'Seal # (optional)' : 'Seal #') + '</label><input class="inp" id="s_seal_' + id + '" data-keep="1" maxlength="30" placeholder="Seal (tag) #" autocomplete="off">' +
                 '<label class="f" for="s_car_' + id + '">Carrier</label><input class="inp" id="s_car_' + id + '" data-keep="1" maxlength="60" value="' + esc(v.carrier || carrier) + '">' +
-                '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">' + (v.scan ? '📄 Send for docs' : '🚚 Mark shipped') + '</button></div>';
+                '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">' + (v.scan ? '📄 Send for docs' : '🚚 Mark shipped') + '</button>' + viewBtn(id) + '</div>';
         }
         // The re-check at Mark shipped no longer matches. "IF changed" only when an IF is gone or its qty differs from what the screen showed;
         // otherwise the load changed (a scan or take-off landed meanwhile).
@@ -903,7 +906,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 (sync ? flash('amber', '⚠ Docs out of sync', '', 'A manager must press Retry in Approvals before more scans.') : '') +
                 (d.error ? errBox(d.error) : '') +
                 '<label class="f" for="d_seal_' + id + '">Seal #</label><input class="inp" id="d_seal_' + id + '" data-keep="1" maxlength="30" value="' + esc(dep.seal || '') + '" placeholder="Seal (tag) #" autocomplete="off">' +
-                '<div id="d_msg_' + id + '"></div><div class="row2"><button class="btn gh" data-act="dseal" data-id="' + id + '">Save seal</button>' +
+                '<div id="d_msg_' + id + '"></div>' + viewBtn(id) + '<div class="row2"><button class="btn gh" data-act="dseal" data-id="' + id + '">Save seal</button>' +
                 '<button class="btn go" data-act="dpicked" data-id="' + id + '"' + (sync ? ' disabled' : '') + '>🚛 Picked up</button></div>' +
                 (isMgr ? forceBtn(t.id, t.label) : '') + '</div>';
         }
