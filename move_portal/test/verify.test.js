@@ -589,3 +589,10 @@ test('unload: a pallet still loaded on an at-dock truck is locked', () => {
     const r = v.classifyUnloadScan({ truckId: '9', pallet: { status: 'loaded', loadId: '4' }, trucks: { '4': { status: 'at_dock', label: 'Trailer X' } } });
     assert.equal(r.result, 'locked');
 });
+
+test('classifyLoadScan: a pallet loaded on an at-dock truck is locked with reason at_dock', () => {
+    const c = ctx(pal(5, VP.LOADED, '4'));
+    c.trucks = Object.assign({}, c.trucks, { 4: { status: T.AT_DOCK, label: 'Trailer 9' } });
+    assert.deepEqual(v.classifyLoadScan(c), { result: 'locked', otherTruckId: '4', otherLabel: 'Trailer 9', reason: 'at_dock' });
+    assert.equal(v.classifyLoadScan(ctx(pal(5, VP.LOADED, '3'))).reason, undefined);
+});

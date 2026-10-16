@@ -3442,7 +3442,8 @@ test('at dock: a pallet on an at-dock truck cannot be scanned onto another truck
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     const other = ctx.run('truck_start', { trailer: tr() }, false).view.truck;
-    assert.equal(ctx.run('truck_scan', { truckId: other.id, raw: t.ps[0].code }, false).result, 'locked');
+    const r = ctx.run('truck_scan', { truckId: other.id, raw: t.ps[0].code }, false);
+    assert.deepEqual([r.result, r.reason], ['locked', 'at_dock']);
 });
 
 // ── at dock: fix round 1 (add-on IF failure, add-on last pallet, resync fallback, remove/undo, claim) ──

@@ -986,7 +986,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         else {
             const o = p && p.loadId ? data.getLoad(p.loadId) : null;
             const c0 = verify.classifyLoadScan({ pallet: p, truckId: x.id, trucks: o ? scanTruckMap([o]) : {}, scanBuilt: true });
-            r = { result: c0.result, otherTruckId: c0.otherTruckId, otherLabel: c0.otherLabel, raw: s.raw, tone: verify.toneFor(c0.result), pallet: p ? pubPallet(p) : null, view: truckView(x, c) };
+            r = { result: c0.result, otherTruckId: c0.otherTruckId, otherLabel: c0.otherLabel, reason: c0.reason, raw: s.raw, tone: verify.toneFor(c0.result), pallet: p ? pubPallet(p) : null, view: truckView(x, c) };
         }
         data.logScan({ pallet: p ? p.id : '', load: x.id, result: r.result, data: { raw: s.raw, mode: a.mode === 'off' ? 'off' : 'load', actor: c.actor, at: c.now.stamp, dock: true } });
         return r;

@@ -649,7 +649,10 @@ h3{font-size:15px;margin:16px 0 8px}
             $('tsent').innerHTML = dock ? flash('green', '📄 Docs ready · at dock', esc([t.toNum, t.ifNum].filter(Boolean).join(' · ')), 'Every scan updates the TO + IF') :
                 sb && open ? '<div class="card amberc"><h4>↩ Sent back by ' + esc(whoName(sb.by)) + ': ' + esc(sb.note) + '</h4><div class="muted">' + esc(sb.at) +
                 ' · fix it, verify again, then mark it shipped again on the Shipments tab</div></div>' : '';
-            if (first) {
+            // A truck already open on this screen that turns at_dock (docs approved) needs its scan box built now.
+            const toDock = dock && S.tvStatus !== 'at_dock';
+            S.tvStatus = t.status;
+            if (first || toDock) {
                 $('tscan').innerHTML = open || dock ? '<div id="tmodebox"></div>' + scanBox('scan') : '';
                 if (open || dock) { wireScan('scan', doTruckScan, () => S.tmode); paintMode(); }
             }
@@ -762,7 +765,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'no_to': return flash('red', '❌ No open TO for ' + esc(r.sku), line, 'Set it aside and call the office.');
                 case 'dup': return flash('amber', '🟡 Already on this truck', line, 'No change.');
                 case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + esc(p.id) + '">Move here</button><button data-act="clearres">Leave it</button>');
-                case 'locked': return flash('red', '❌ On ' + esc(r.otherLabel) + (r.reason === 'ship_pending' ? ', marked shipped' : ', departing'), line, 'Check with the supervisor.');
+                case 'locked': return r.reason === 'at_dock' ? flash('red', '❌ On ' + esc(r.otherLabel) + ', at the dock waiting for pickup', line, 'That trailer has its paperwork. Leave this pallet on it.')
+                    : flash('red', '❌ On ' + esc(r.otherLabel) + (r.reason === 'ship_pending' ? ', marked shipped' : ', departing'), line, 'Check with the supervisor.');
                 case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
                 case 'flagged_tippecanoe': return flash('red', '❌ Flagged at Tippecanoe', line, 'A manager is deciding this pallet in Approvals. Set it aside.');
@@ -1215,6 +1219,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'other_truck': return flash('amber', '🟡 Belongs to ' + esc(r.otherLabel), line, '', '<button data-act="uother" data-id="' + esc(p.id) + '">Receive it there</button><button data-act="clearres">Set aside</button>');
                 case 'never_loaded': return flash('amber', '🟠 Never loaded on a truck', line, 'Flagged for the manager. Set it aside.');
                 case 'locked': return r.reason === 'ship_pending' ? flash('red', '❌ ' + esc(r.otherLabel) + ' is waiting for a manager to confirm shipping', line, 'Ask a manager to confirm it in Approvals, then scan again.')
+                    : r.reason === 'at_dock' ? flash('red', '❌ Its trailer is still at Riverside waiting for pickup', line, 'Set it aside and tell the office.')
                     : flash('red', '❌ Its truck is still departing', line, 'Wait a minute and scan again.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Set aside and call the supervisor.');
                 default: return flash('red', '❌ Unknown label', esc('"' + String(r.raw).replace(/\t/g, ' ⇥ ') + '"'), '');

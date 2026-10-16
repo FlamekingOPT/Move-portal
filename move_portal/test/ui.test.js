@@ -338,3 +338,9 @@ test('ui: dock step kinds have human labels; at-dock scan results are handled', 
     ["docs_written: 'Docs written'", "picked_up: 'Picked up'", "dock_edit: 'Changed at the dock'",
         "case 'short'", "case 'refused'", "case 'out_of_sync'", "at_dock: ['📄 Docs ready · at dock', 'p-green']"].forEach(s => assert.ok(src.includes(s), s));
 });
+
+test('ui: at-dock lock copy (load and unload) and the scan box on a status change', () => {
+    const src = ui._clientMain.toString();
+    [', at the dock waiting for pickup', 'That trailer has its paperwork. Leave this pallet on it.',
+        '❌ Its trailer is still at Riverside waiting for pickup', 'Set it aside and tell the office.', 'S.tvStatus'].forEach(s => assert.ok(src.includes(s), s));
+});

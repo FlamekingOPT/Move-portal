@@ -122,7 +122,7 @@ define([], function () {
         if (p.status === VP.LOADED) {
             if (pt === me) return { result: 'dup' };
             if (other.status === TRUCK.LOADING) return { result: 'other_truck', otherTruckId: pt, otherLabel: other.label || '' };
-            return { result: 'locked', otherTruckId: pt, otherLabel: other.label || '' };
+            return Object.assign({ result: 'locked', otherTruckId: pt, otherLabel: other.label || '' }, other.status === TRUCK.AT_DOCK ? { reason: 'at_dock' } : {});
         }
         if (p.status !== VP.LABELED) return { result: 'shipped', otherTruckId: pt, otherLabel: other.label || '' };
         if (o.scanBuilt) return { result: 'ok', set: { status: VP.LOADED, loadId: String(o.truckId) } };   // the scans are the order: no TO to fit
