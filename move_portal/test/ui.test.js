@@ -16,24 +16,24 @@ test('buildPage embeds boot data safely and the client script parses', () => {
 });
 
 test('client code never contains a closing script tag', () => {
-    assert.equal(ui._clientMain.toString().toLowerCase().indexOf('</script'), -1);
+    assert.equal(ui._clientMain.toString().replace(/\r/g, '').toLowerCase().indexOf('</script'), -1);
 });
 
 test('v3 screens exist and old ones are gone', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['SCREENS.trucks', "api('truck_scan'", "api('ship_mark'", "api('truck_planned'"].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
     ['SCREENS.load ', "api('scan_load'"].forEach(s => assert.equal(src.indexOf(s), -1, 'still has ' + s));
 });
 
 test('v3 inbound/approval/report screens exist', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['SCREENS.unload', 'SCREENS.approve', 'SCREENS.report', "api('unload_scan'", "api('receipt_approve'", "api('report'"].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
     ['SCREENS.recv ', 'SCREENS.toreceive', "api('scan_recv'", 'SCREENS.catchup'].forEach(s => assert.equal(src.indexOf(s), -1, 'still has ' + s));
 });
 
 test('every client api() action exists on the server and every data-act has an ACT handler', () => {
     const fs = require('fs'), path = require('path');
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     const server = fs.readFileSync(path.join(__dirname, '..', 'sl_move_portal.js'), 'utf8');
     const apis = new Set(); let m;
     const reApi = /api\('([a-z_]+)'/g;
@@ -48,7 +48,7 @@ test('every client api() action exists on the server and every data-act has an A
 });
 
 test('departing state, confirm prompts, null-screen guards', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf("t.status === 'departed'") !== -1);
     assert.ok(src.indexOf('Departing… a NetSuite write is pending') !== -1);
     ['apretry', 'aprecv', 'dmark'].forEach(n => {
@@ -59,27 +59,27 @@ test('departing state, confirm prompts, null-screen guards', () => {
 });
 
 test('removed: no pending, cancel or skip-write paths; a departure that needs a fix again repaints', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['depart_cancel', 'depart_skip_write', 'apskip', 'apdepart', 'dcancel', 't.pending', 'r.departures'].forEach(k => assert.equal(src.indexOf(k), -1, k));
     assert.ok(src.indexOf('IF changed in NetSuite: needs a fix again') !== -1);
 });
 
 test('fix11: mark-shipped confirm text, stuck receipt button, scrollable report', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Mark this truck shipped? A manager confirms it in Approvals.', 'overflow-x:auto']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.split("x.stuck ? 'Re-approve receipt'").length - 1, 2);
 });
 
 test('manager page uses the NetSuite login, no "I am" picker; floor keeps it', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf('if (isMgr) { S.who = B.me;') !== -1, 'manager who defaults to the NetSuite user');
     assert.ok(/const whoCtl = isMgr \? ''/.test(src), 'no picker on the manager page');
     assert.ok(src.indexOf("if (w) w.onchange") !== -1, 'picker wiring guarded');
 });
 
 test('verify-load UI: verify, take-off, stages, recheck alert, manager correct', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["api('truck_verify'", "api('trucks_recheck'", "api('truck_add_if'", "api('truck_drop_if'", "api('truck_correct'", 'Needs IF fix', 'Ready to ship',
         'Take off', 'back to Riverside', 'now matches its IF', 'mv_alerted', 'document.hidden']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
@@ -87,7 +87,7 @@ test('verify-load UI: verify, take-off, stages, recheck alert, manager correct',
 });
 
 test('verify-load UI: take-off mode, stage buttons, scan modes', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['data-act="tverify"', 'data-act="taddif"', "api('truck_scan', { truckId: S.truckId, raw: v, mode: mode })", "wireScan('scan', doTruckScan, () => S.tmode)", "'takeoff'", '120000', "case 'taken_off'", "case 'not_on_truck'", 'Not on this truck',
         'Verify again', '← Other trucks', 'Mark shipped', "api('ship_mark'"]
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
@@ -96,13 +96,13 @@ test('verify-load UI: take-off mode, stage buttons, scan modes', () => {
 });
 
 test('verify-load UI: needs-fix message depends on what changed', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['IF changed in NetSuite: needs a fix again', 'The load changed: verify again', "'if_gone'", "'if_short'", "'if_over'"]
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
 });
 
 test('verify-load UI: approvals needs-fix cards, write-mode wording, release, skipped and orphans', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Plan only: fix in NetSuite', 'Changes IF quantities in NetSuite (add-on IFs: office creates them)', 'Changes IF quantities and creates add-on IFs in NetSuite',
         'Release to Needs IF fix', 'n.verifiedBy', 'n.verifiedAt', "api('depart_release'", 'canRelease', 'r.needsFix', '.orphans', '.skipped', 'correctError', 'data-act="apcorrect"', 'data-act="apdrop"']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
@@ -113,7 +113,7 @@ test('verify-load UI: approvals needs-fix cards, write-mode wording, release, sk
 });
 
 test('review fixes: ready alert per ready event on every device; confirm and banner wording', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["r.ready", "t.id + '|' + t.at", 'No stamp is recorded for this truck', 'off the truck (portal only)'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.indexOf('Nothing was stamped'), -1);
     const css = ui.buildPage({ url: '/x?a=1', mode: 'floor', me: 'X', roster: [], fromName: 'R', toName: 'T', maxPrint: 1 });
@@ -121,7 +121,7 @@ test('review fixes: ready alert per ready event on every device; confirm and ban
 });
 
 test('polish: no self-alert after Verify; banner pads main so it cannot cover controls', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["view.truck.id + '|' + view.verify.at", 'markSeen(r.view)', 'paddingBottom'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     ['ACT.tverify =', 'ACT.taddif =', 'ACT.dmark ='].forEach(n => {
         const i = src.indexOf(n);
@@ -130,14 +130,14 @@ test('polish: no self-alert after Verify; banner pads main so it cannot cover co
 });
 
 test('final fixes: manager add-any-IF picker on the needs-fix card; ids escaped; verify by may be an object', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['r.freeIfs', 'data-act="apaddany"', "api('truck_add_if'"].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     ['data-id="\' + p.id + \'"', 'data-id="\' + x.truck.id + \'"'].forEach(t => assert.equal(src.indexOf(t), -1, 'unescaped ' + t));
     assert.ok(src.indexOf("typeof vf.by === 'object'") !== -1, 'verify by object shown by name');
 });
 
 test('a refused mark shipped reloads Shipments, error on top', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf('The truck changed on another device: verify again') !== -1);
     const i = src.indexOf('ACT.dmark =');
     assert.ok(i !== -1 && src.slice(i, i + 900).indexOf('departRefused(r') !== -1, 'no departRefused in dmark');
@@ -146,14 +146,14 @@ test('a refused mark shipped reloads Shipments, error on top', () => {
 });
 
 test('floor rework: Load out default, no Void, Shipments, trailer, short note, other items', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["['ship', 'Shipments']", "api('ship_mark'", "api('truck_other_add'", "api('unload_other_tick'", 'Why is it short?', 'shortNote', 'Trailer #', 'go to Shipments', 'Sent back by']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     ["['void', 'Void']", "api('depart_preview'", "api('depart_confirm'"].forEach(t => assert.equal(src.indexOf(t), -1, 'still has ' + t));
 });
 
 test('floor rework: tab order, shipped today, other-item remove, ship-pending unload lock', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']]", 'SCREENS.ship', 'r.shippedToday', 'Waiting for manager', 'Shipped today',
         "api('truck_other_remove'", 'Armstrong Group', 'waiting for a manager to confirm shipping', 'r.trailers']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
@@ -162,14 +162,14 @@ test('floor rework: tab order, shipped today, other-item remove, ship-pending un
 });
 
 test('manager rework: 4 tabs, no toggle, merged Labels, approvals hierarchy', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["['labels', 'Labels']", "['approve', 'Approvals']", "['dash', 'Dashboard']", "['report', 'Report']", 'SCREENS.labels', "api('ship_confirm'", "api('ship_sendback'",
         'btn-correct', 'btn-addif', 'Add an IF to this truck', 'Ship confirmations'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.indexOf("['queue', 'Print queue']"), -1, 'old label tabs removed');
 });
 
 test('manager rework: default Approvals, late badge, otherDiffs, Drop calls drop_if, CSS hierarchy, note modal kept on error', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["mgr: 'dash'", 'LATE_MIN = 30', "waiting ' + x.ageMin + ' min", 'S.lateShips', 'n.otherDiffs', "api('truck_drop_if'", 'class="btn-correct" data-act="apcorrect"',
         'class="dbtn btn-addif" data-act="apaddopen"', 'labelQueue(', 'labelSku(', 'labelPlan(', 'labelReprint(', 'labelConfigs(', "S.poll = setInterval(loadQueue, 15000)",
         "String(r.view.truck.id) !== String(S.truckId)"].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
@@ -186,18 +186,18 @@ test('manager rework: default Approvals, late badge, otherDiffs, Drop calls drop
 });
 
 test('final fixes: trailer edit on the truck header; ship_mark sends a trailer when the truck has none', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['data-act="ttrailer"', '✎ trailer', "api('truck_set_trailer'", 's_tr_', 'trl ? { trailer: tv } : {}'].forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
 });
 
 test('final fixes: manager Open truck shows the error in its modal when truck_get fails', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     const i = src.indexOf('ACT.opentruck ='), j = src.indexOf('const v = r.view', i);
     assert.ok(i !== -1 && j !== -1 && src.slice(i, j).indexOf('errBox(r.error)') !== -1, 'Open truck error not shown');
 });
 
 test('final fixes: a stalled correction on a truck with no fix card gets a truck-level free button', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Free the stuck correction', 'n.stuck && !hasFix', 'truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     const i = src.indexOf('Free the stuck correction'), b = src.lastIndexOf('<button', i);
@@ -205,14 +205,14 @@ test('final fixes: a stalled correction on a truck with no fix card gets a truck
 });
 
 test('2026-10-06 pm: Dashboard first and default; Labels start with Print a SKU', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf("mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]") !== -1, 'tab order');
     assert.ok(src.indexOf("mgr: 'dash'") !== -1, 'default tab');
     assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
 });
 
 test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject; Approve waits; anchors for the dashboard links', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Flagged pallets', 'data-act="apaccept"', 'data-act="apreject"', "api('pallet_accept'", "api('pallet_reject'", 'Accept onto this truck', 'x.blockReason', 'x.canApprove', 'r.flagged', 'x.pending', 'x.decided',
         'id="ap_ship"', 'id="ap_fix"', 'id="ap_trucks"', 'id="ap_flag"', 'id="ap_retry"', 'id="ap_rec"', 'ACT.goapprove =', 'decide now, or later on the receipt card', 'waiting for the manager', 'v.decided', 'Flagged at Tippecanoe', "case 'flagged_tippecanoe'"]
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
@@ -224,7 +224,7 @@ test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject;
 });
 
 test('2026-10-06 pm: Dashboard shows waiting queues, truck tiles, Active loads with search/filter/sort; Report has the history table', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Waiting for approval', 'Nothing waiting for approval', 'Trucks shipped today', 'Trucks per day · 7-day avg', 'Trucks shipped · total', 'In transit', 'see Move Tracker', 'Active loads',
         'Trucks shipped per day', 'Flagged, waiting on manager', 'Search IF, TO, trailer, seal, Truck # or SKU', 'furthest along', 'oldest step', 'data-act="dashsort"', 'data-act="dashrow"', 'data-act="goapprove"',
         'r.waiting', 'r.tiles', 'r.rows', 'Truck history', 'r.history', 'function tableTools(']
@@ -235,7 +235,7 @@ test('2026-10-06 pm: Dashboard shows waiting queues, truck tiles, Active loads w
 });
 
 test('2026-10-06 pm fix: the table toolbars are rendered once, so typing in the search box keeps focus', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['paintLoads', 'paintHist'].forEach(n => {
         const i = src.indexOf('function ' + n);
         assert.ok(i !== -1, 'no ' + n);
@@ -252,20 +252,20 @@ test('2026-10-06 pm fix: the table toolbars are rendered once, so typing in the 
 });
 
 test('scan-built floor screens: no IF list when office IFs are off, Finish loading, weight on Verify, Finish → Shipments', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['function scanTable(', 'ACT.finishload', 'Finish loading', 'Finish → Shipments', 'r.officeIfs', 'Start Trailer', 'pallets × ', 'without weight', 'Approve will be blocked']
         .forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
 
 test('finishload delegates to tverify, which guards a stale truck', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(/ACT\.finishload = [^\n]*ACT\.tverify\(/.test(src));
     const t = src.slice(src.indexOf('ACT.tverify ='));
     assert.ok(t.slice(0, 600).indexOf('S.truckId') !== -1 && t.slice(0, 900).indexOf("!$('scanres')") !== -1);
 });
 
 test('tverify captures the truck id before the await and words the flash for scan trucks', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     const t = src.slice(src.indexOf('ACT.tverify ='), src.indexOf('ACT.taddif ='));
     assert.ok(t.indexOf('const tid = S.truckId') !== -1 && t.indexOf('const tid') < t.indexOf("await api('truck_verify'"));
     assert.ok(t.indexOf('String(tid) !== String(S.truckId)') !== -1);
@@ -273,7 +273,7 @@ test('tverify captures the truck id before the await and words the flash for sca
 });
 
 test('manager screens: plain Approve / Reject card, Excel label upload, odd pallet, over-stock warning', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['✅ Approve', '↩ Reject', 'function labelUpload(', 'function readSheet(', 'xlsx/0.18.5/xlsx.full.min.js', "api('labels_preview'", 'Odd pallet', 'You can still print',
         'Download template', 'Release (after you Close ', 'pcs per pallet', 'odd pallet pcs'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
@@ -286,7 +286,7 @@ function clientFn(src, name) {
     return src.slice(i, j + 1);
 }
 function xlsxFns() {
-    const src = ui._clientMain.toString(), k = src.indexOf('const HEAD =');
+    const src = ui._clientMain.toString().replace(/\r/g, ''), k = src.indexOf('const HEAD =');
     const h = src.slice(k, src.indexOf(String.fromCharCode(10), k));
     return new Function(h + String.fromCharCode(10) + ['mapRows', 'csvObjs', 'printSpecs'].map(n => clientFn(src, n)).join(String.fromCharCode(10)) + String.fromCharCode(10) + 'return { mapRows, csvObjs, printSpecs };')();
 }
@@ -306,19 +306,19 @@ test('excel upload helpers: mapRows, csvObjs, printSpecs behave', () => {
 });
 
 test('scan truck ship messages: Plan saved in off/qty, TO + IF numbers in on', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Plan saved (writeMode ', ' written to NetSuite', 'shipped in the portal'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
 
 test('label counts: no stale-label row on the dashboard; the plan says "on trucks"', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.equal(src.indexOf('Labeled, never loaded (stale)'), -1);
     assert.ok(src.indexOf('already on trucks') !== -1);
 });
 
 // ── drop trailer docs (spec 2026-10-16 §3) ──
 test('ui: drop-trailer copy is present', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Ready for docs', '📄 Send for docs', 'Waiting for docs', 'At dock', '📄 Docs ready · at dock', '🚛 Picked up',
         'Approve writes the TO + IF (Picked). Shipped happens at pickup.', 'Docs out of sync', 'Every scan updates the TO + IF',
         'Writing docs…', 'Seal # (optional)', 'Send this trailer for docs? A manager approves them in Approvals.', 'Plan saved (writes are off)',
@@ -328,43 +328,43 @@ test('ui: drop-trailer copy is present', () => {
 test('ui: Dashboard STAGES mirror the server STAGE_ORDER', () => {
     const fs = require('fs'), path = require('path');
     const server = fs.readFileSync(path.join(__dirname, '..', 'sl_move_portal.js'), 'utf8');
-    const sm = /const STAGE_ORDER = (\[[^\]]*\]);/.exec(server), cm = /const STAGES = (\[[^\]]*\]);/.exec(ui._clientMain.toString());
+    const sm = /const STAGE_ORDER = (\[[^\]]*\]);/.exec(server), cm = /const STAGES = (\[[^\]]*\]);/.exec(ui._clientMain.toString().replace(/\r/g, ''));
     assert.ok(sm && cm);
     assert.deepEqual(JSON.parse(cm[1].replace(/'/g, '"')), JSON.parse(sm[1].replace(/'/g, '"')));
 });
 
 test('ui: dock step kinds have human labels; at-dock scan results are handled', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["docs_written: 'Docs written'", "picked_up: 'Picked up'", "dock_edit: 'Changed at the dock'",
         "case 'short'", "case 'refused'", "case 'out_of_sync'", "at_dock: ['📄 Docs ready · at dock', 'p-green']"].forEach(s => assert.ok(src.includes(s), s));
 });
 
 test('ui: at-dock lock copy (load and unload) and the scan box on a status change', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     [', at the dock waiting for pickup', 'That trailer has its paperwork. Leave this pallet on it.',
         '❌ Its trailer is still at Riverside waiting for pickup', 'Set it aside and tell the office.', 'S.tvStatus'].forEach(s => assert.ok(src.includes(s), s));
 });
 
 test('ui final I1: at the dock other items get + Add / ✕ and pallets get ✕ (truck_remove routes to a dock take-off)', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ['otherHtml(v, open || dock)', "(open || dock ? '<div class=\"ac\"><button data-act=\"tremove\""].forEach(s => assert.ok(src.includes(s), s));
     assert.equal(src.includes('otherHtml(v, open);'), false);
 });
 
 test('ui final I2b: managers get "Mark picked up without NetSuite" on the at-dock card and the out-of-sync card', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["api('picked_up_force'", 'Mark picked up without NetSuite', 'data-act="dforce"',
         'Mark this trailer picked up WITHOUT updating NetSuite? The office must fix the TO/IF by hand.'].forEach(s => assert.ok(src.includes(s), s));
     ["(isMgr ? forceBtn(t.id, t.label) : '')", "forceBtn(o.id, o.label)"].forEach(s => assert.ok(src.includes(s), 'button on both cards: ' + s));
 });
 
 test('ui final minor: step labels for the dock re-sync, the dock seal and the forced pickup', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     ["docs_resynced: 'Docs re-synced'", "dock_seal: 'Seal added'", "picked_up_forced: 'Picked up (no NetSuite)'"].forEach(s => assert.ok(src.includes(s), s));
 });
 
 test('Shipments cards each carry a View load button', () => {
-    const src = ui._clientMain.toString();
+    const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf('📋 View load') !== -1);
     assert.ok(src.indexOf('data-act="opentruck"') !== -1);
     assert.ok(src.split('viewBtn(').length - 1 >= 7, 'every card builder uses viewBtn');
