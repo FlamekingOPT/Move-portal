@@ -888,6 +888,77 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         data.updateLoad(data.getLoad(x.id), { data: Object.assign(docState(), { claim: '', workingAt: 0, phase: '', docsSync: null, lastStep: stepOf('docs_resynced', c) }) });
         return { view: truckView(mustTruck(x.id), c) };
     });
+
+    // ── seal at the dock + Picked up (spec 2026-10-16 §3) ────────────────
+    function cleanSeal(raw) {
+        const seal = String(raw || '').trim();
+        if (seal.length > 30) throw userErr('The seal # is too long (30 characters max)');
+        return seal;
+    }
+    // The seal is optional until Picked up. Waiting for docs: it updates the requested seal. At the dock: it is saved on the truck
+    // and (writeMode on) stamped on each Picked IF, all before the truck record changes.
+    act('dock_seal', false, (a, c) => {
+        const seal = cleanSeal(a.seal);
+        if (!seal) throw userErr('Enter the seal #');
+        const x = mustTruck(a.truckId);
+        if (!isScan(x)) throw userErr('This truck takes its seal at Mark shipped');
+        sealTaken(seal, x.id);
+        if (x.status === T.SHIP_PENDING && !x.data.claim && !x.data.depart && x.data.shipReq) {
+            data.updateLoad(data.getLoad(x.id), { data: { shipReq: Object.assign({}, x.data.shipReq, { seal: seal }) } });
+            return { view: truckView(mustTruck(x.id), c) };
+        }
+        const cl = claimLoad(x, null, 'dock', mustAtDock);
+        try {
+            if (writeMode(c) === 'on') (cl.Ld.data.alloc || []).forEach(f => {
+                assertClaim(x.id, cl.claim, truckLabel(x), 'dock');
+                tx.apply({ op: 'if_seal', ifId: f.ifId, ifNum: f.ifNum, seal: seal });
+            });
+        } catch (e) {
+            const cur = data.getLoad(x.id);
+            if (cur && cur.data.claim === cl.claim) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '' } });
+            if (e.user) throw e;
+            log.error({ title: 'move dock seal ' + x.id, details: (e && e.stack) || String(e) });
+            throw userErr('The seal was not saved: NetSuite refused it (' + ((e && e.message) || e) + ')');
+        }
+        data.updateLoad(data.getLoad(x.id), { data: { claim: '', workingAt: 0, phase: '', depart: Object.assign({}, cl.Ld.data.depart, { seal: seal }), lastStep: stepOf('dock_seal', c) } });
+        return { view: truckView(mustTruck(x.id), c) };
+    });
+
+    // The carrier took the trailer: each IF on the truck is stamped Shipped with the seal (writeMode on), then the loaded pallets go
+    // in transit (shippedDay = the pickup day), then the truck departs. depart.day stays the docs day (it carries the Truck #).
+    // Any failure leaves the truck at the dock with data.error and the claim released; pressing again skips the stamps already done.
+    act('picked_up', false, (a, c) => {
+        const x = mustTruck(a.truckId);
+        if (x.status !== T.AT_DOCK) throw userErr('This truck is ' + x.status + ', not waiting at the dock');
+        const seal = cleanSeal(a.seal || (x.data.depart && x.data.depart.seal));
+        if (!seal) throw userErr('Enter the seal # before the carrier leaves');
+        sealTaken(seal, x.id);
+        // In-transit pallets count too: a retry after the pallet step but before the truck step must still finish.
+        if (!data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT]).length) throw userErr('Nothing is loaded on this truck');
+        const cl = claimLoad(x, null, 'pickup', mustAtDock);
+        const d = cl.Ld.data, dep = d.depart || {}, ref = d.approveRef || x.id;
+        const memo = verify.memoFor(dep.truckNo, dep.day) + ' · ' + verify.scanTag(ref);
+        const ops = (d.alloc || []).map(f => ({ op: 'if_stamp', ifId: f.ifId, ifNum: f.ifNum, trailer: dep.trailer || d.trailer, seal: seal, memo: memo, lines: f.lines }));
+        const writes = Object.assign({}, d.writes), day = c.now.dayIso;
+        let res;
+        try {
+            res = verify.runOps(ops, writeMode(c), op => { assertClaim(x.id, cl.claim, truckLabel(x), 'pickup'); return tx.apply(op); }, writes,
+                (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });
+            assertClaim(x.id, cl.claim, truckLabel(x), 'pickup');
+            shipPallets(mustTruck(x.id), c, null, day);
+            data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { claim: '', workingAt: 0, phase: '', error: '', writes: writes,
+                depart: Object.assign({}, dep, { seal: seal, pickedUpAt: c.now.stamp, pickedUpBy: c.actor, shippedDay: day }), lastStep: stepOf('picked_up', c) } });
+        } catch (e) {
+            const cur = data.getLoad(x.id);
+            const ours = cur && cur.data.claim === cl.claim;
+            if (e.user && !ours) throw e;               // claim lost: another request owns the truck now, leave its state alone
+            log.error({ title: 'move pickup ' + x.id, details: (e && e.stack) || String(e) });
+            if (ours) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', error: (e && e.message) || String(e), writes: writes } });
+            if (e.user) throw e;
+            throw userErr('Picked up was not saved: a NetSuite write failed (' + ((e && e.message) || e) + '). Press Picked up again.');
+        }
+        return { written: res.written, planOnly: res.planOnly, view: truckView(mustTruck(x.id), c) };
+    });
     function isFlaggedTip(p) { return !!(p && ((p.data.decision && p.data.decision.kind === 'accepted_pending') || p.data.flag === 'never_loaded')); }
     function dockScan(x, a, c) {
         const s = core.parseScan(a.raw), p = s.palletId ? data.getPallet(s.palletId) : null;
