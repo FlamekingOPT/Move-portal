@@ -779,11 +779,36 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
     }
     function itemsOfPallet(p) { return verify.sumLines([p]); }       // { item: pcs }
+    // One at-dock op. A new SKU the IF won't take as a line (NO_IF_LINE) becomes a one-line Picked add-on IF on the same TO (spec §4).
+    // seq: { n } the truck's add-on counter (data.addOnSeq), bumped per add-on so a re-add never matches an old add-on IF's token.
+    // Returns the add-on { item, ifId, ifNum } or null. Any failure (the add-on create included) throws to the caller.
+    function applyDockOp(x, d, op, seq) {
+        try { tx.apply(op); return null; }
+        catch (e) {
+            if (!(/^NO_IF_LINE/.test((e && e.message) || '') && op.newLine)) throw e;
+            seq.n++;
+            const dep = d.depart || {}, tag = verify.scanTag((d.approveRef || x.id) + '-A' + op.item + '-' + seq.n);
+            const id = tx.apply({ op: 'if_create', ship: 'picked', toId: String(d.toId), token: tag, lines: { [op.item]: op.to }, trailer: dep.trailer, seal: dep.seal || '',
+                memo: verify.memoFor(dep.truckNo, dep.day) + ' · ' + tag });
+            return { item: String(op.item), ifId: String(id), ifNum: newIfNum(id) };
+        }
+    }
+    function withAddOns(dl, addOns) { Object.keys(addOns).forEach(k => { if (dl[k]) Object.assign(dl[k], { ifId: addOns[k].ifId, ifNum: addOns[k].ifNum }); }); return dl; }
+    // An item that would drop to 0 on its own one-line add-on IF: NetSuite won't empty an IF, so the office removes it.
+    function addOnEmptied(d, delta) {
+        const dl = d.docLines || {};
+        return Object.keys(delta).filter(k => {
+            const l = dl[k];
+            if (!l || delta[k] >= 0 || Number(l.qty) + delta[k] > 0 || String(l.ifId) === String(d.ifId)) return false;
+            return !Object.keys(dl).some(o => o !== k && String(dl[o].ifId) === String(l.ifId) && Number(dl[o].qty) > 0);
+        });
+    }
     // Applies one pallet change at the dock. sign +1 = on, -1 = off. Returns a scan result.
     function dockEdit(x, p, sign, s, c) {
         const cl = claimLoad(x, null, 'dock', mustAtDock);
-        const release = patch => data.updateLoad(data.getLoad(x.id), { data: Object.assign({ claim: '', workingAt: 0, phase: '', docsSync: null }, patch || {}) });
-        const d = cl.Ld.data, delta = {}, pcs = itemsOfPallet(p);
+        const d = cl.Ld.data, delta = {}, pcs = itemsOfPallet(p), seq = { n: Number(d.addOnSeq) || 0 };
+        const release = patch => data.updateLoad(data.getLoad(x.id), { data: Object.assign({ claim: '', workingAt: 0, phase: '', docsSync: null },
+            seq.n !== (Number(d.addOnSeq) || 0) ? { addOnSeq: seq.n } : {}, patch || {}) });
         Object.keys(pcs).forEach(k => { delta[k] = sign * pcs[k]; });
         const palletOn = { status: VP.LOADED, load: x.id, data: { loadedAt: c.now.stamp, loadedBy: c.actor } };
         const palletOff = { status: VP.LABELED, load: '', data: { takenOffAt: c.now.stamp, takenOffBy: c.actor, takenOffTruck: x.id } };
@@ -791,28 +816,30 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             pallet: pubPallet(data.getPallet(p.id)), view: truckView(mustTruck(x.id), c) }, extra || {});
         try {
             if (sign < 0 && data.palletsByLoad(x.id, [VP.LOADED]).length <= 1) throw userErr('This is the last pallet: ask a manager to send the truck back instead');
+            if (sign < 0) {
+                const solo = addOnEmptied(d, delta);
+                if (solo.length) {
+                    const sk = skuNames(solo), l = d.docLines[solo[0]];
+                    release();
+                    return result('refused', { message: sk[solo[0]] + ' is on its own add-on IF ' + l.ifNum + ': ask the office to remove it.' });
+                }
+            }
             if (sign > 0) {
                 const items = Object.keys(delta), st = data.locationStock(c.S.locFrom, items), avail = {};
                 items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; });
                 const shorts = verify.stockCheck(delta, avail);
                 if (shorts.length) { release(); return result('short', { message: 'Can\'t add: ' + verify.stockText(shorts, skuNames(items)) + '. Leave the pallet off and call the office.' }); }
             }
-            const docLines = d.docLines || {}, extraIfs = {};
+            const docLines = d.docLines || {}, addOns = {};
             if (writeMode(c) === 'on') {
                 const ops = verify.dockOps({ toId: d.toId, primaryIfId: d.ifId, primaryIfNum: d.ifNum, docLines: docLines, delta: delta });
                 const done = [];
                 for (let i = 0; i < ops.length; i++) {
                     const op = ops[i];
-                    try { tx.apply(op); done.push(op); }
-                    catch (e) {
-                        if (/^NO_IF_LINE/.test((e && e.message) || '') && op.newLine) {   // spec §4: the IF won't take a new line, so a one-line Picked add-on IF on the same TO
-                            const dep = d.depart || {}, tag = verify.scanTag((d.approveRef || x.id) + '-A' + op.item);
-                            const id = tx.apply({ op: 'if_create', ship: 'picked', toId: String(d.toId), token: tag, lines: { [op.item]: op.to }, trailer: dep.trailer, seal: dep.seal || '',
-                                memo: verify.memoFor(dep.truckNo, dep.day) + ' · ' + tag });
-                            extraIfs[op.item] = { ifId: String(id), ifNum: newIfNum(id) };
-                            done.push(Object.assign({}, op, { op: 'if_create' }));
-                            continue;
-                        }
+                    try {
+                        const ao = applyDockOp(x, d, op, seq);
+                        if (ao) { addOns[ao.item] = ao; done.push(Object.assign({}, op, { op: 'if_create' })); } else done.push(op);
+                    } catch (e) {
                         const undo = done.slice().reverse().map(verify.inverseOp);
                         try {
                             if (undo.some(u => u === null)) throw new Error('cannot undo an add-on IF');
@@ -821,8 +848,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                             // Every done op is still in place: the pallet counts as changed, and the forward remainder is what Retry applies.
                             log.error({ title: 'move dock undo ' + x.id, details: 'edit: ' + ((e && e.message) || String(e)) + ' / undo: ' + ((e2 && e2.stack) || String(e2)) });
                             data.updatePallet(p, sign > 0 ? palletOn : palletOff);
-                            const dl = verify.applyDelta(docLines, delta, d.ifId, d.ifNum);
-                            Object.keys(extraIfs).forEach(k => { if (dl[k]) Object.assign(dl[k], extraIfs[k]); });
+                            const dl = withAddOns(verify.applyDelta(docLines, delta, d.ifId, d.ifNum), addOns);
                             release({ docsSync: { error: (e && e.message) || String(e), pending: ops.slice(i), at: c.now.stamp, by: c.actor }, docLines: dl,
                                 alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
                             return result('out_of_sync', { message: 'Docs are out of sync with the trailer. A manager must press Retry before more scans.' });
@@ -832,14 +858,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                     }
                 }
             }
-            const dl = verify.applyDelta(docLines, delta, d.ifId, d.ifNum);
-            Object.keys(extraIfs).forEach(k => { if (dl[k]) Object.assign(dl[k], extraIfs[k]); });
+            const dl = withAddOns(verify.applyDelta(docLines, delta, d.ifId, d.ifNum), addOns);
             data.updatePallet(p, sign > 0 ? palletOn : palletOff);
             release({ docLines: dl, alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
             return result(sign > 0 ? 'ok' : 'taken_off');
         } catch (e) { const cur = data.getLoad(x.id); if (cur && cur.data.claim === cl.claim) release(); throw e; }
     }
     // Manager Retry for an out-of-sync truck: re-applies the pending ops (to_line is idempotent at its target; an IF qty already there is a no-op).
+    // A pending new line the IF won't take becomes a Picked add-on IF, recorded in docLines and alloc. A failure keeps the remainder pending.
     act('dock_resync', true, (a, c) => {
         const x = mustTruck(a.truckId);
         if (x.status !== T.AT_DOCK || !x.data.docsSync) throw userErr('Nothing to retry on this truck');
@@ -847,13 +873,19 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (cur.status !== T.AT_DOCK || !cur.data.docsSync) throw userErr('Nothing to retry on this truck');
             if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
         });
-        const sync = cl.Ld.data.docsSync;
-        try { (sync.pending || []).forEach(op => tx.apply(op)); }
+        const d = cl.Ld.data, sync = d.docsSync, pending = sync.pending || [], seq = { n: Number(d.addOnSeq) || 0 }, addOns = {};
+        const docState = () => {
+            const dl = withAddOns(JSON.parse(JSON.stringify(d.docLines || {})), addOns);
+            return { docLines: dl, alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), addOnSeq: seq.n };
+        };
+        let i = 0;
+        try { for (; i < pending.length; i++) { const ao = applyDockOp(x, d, pending[i], seq); if (ao) addOns[ao.item] = ao; } }
         catch (e) {
-            data.updateLoad(data.getLoad(x.id), { data: { claim: '', workingAt: 0, phase: '', docsSync: Object.assign({}, sync, { error: (e && e.message) || String(e), at: c.now.stamp }) } });
+            data.updateLoad(data.getLoad(x.id), { data: Object.assign(docState(), { claim: '', workingAt: 0, phase: '',
+                docsSync: Object.assign({}, sync, { pending: pending.slice(i), error: (e && e.message) || String(e), at: c.now.stamp }) }) });
             throw userErr('Retry failed: ' + ((e && e.message) || e));
         }
-        data.updateLoad(data.getLoad(x.id), { data: { claim: '', workingAt: 0, phase: '', docsSync: null, lastStep: stepOf('docs_resynced', c) } });
+        data.updateLoad(data.getLoad(x.id), { data: Object.assign(docState(), { claim: '', workingAt: 0, phase: '', docsSync: null, lastStep: stepOf('docs_resynced', c) }) });
         return { view: truckView(mustTruck(x.id), c) };
     });
     function isFlaggedTip(p) { return !!(p && ((p.data.decision && p.data.decision.kind === 'accepted_pending') || p.data.flag === 'never_loaded')); }
