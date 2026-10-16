@@ -13,10 +13,10 @@ function makeFakeTx() {
             t.ops.push(JSON.parse(JSON.stringify(op)));
             const hooked = t.onApply ? t.onApply(op) : undefined;
             if (hooked != null && hooked !== '') return String(hooked);
-            return op.op === 'if_qty' || op.op === 'if_stamp' ? String(op.ifId) : String(++t.seq);
+            return op.op === 'if_qty' || op.op === 'if_stamp' || op.op === 'if_seal' ? String(op.ifId) : op.op === 'to_line' ? String(op.toId) : String(++t.seq);
         },
         findTo: tok => t.tags[tok] || null,
-        findIf: (tok, toId) => t.ifTags[tok + '|' + toId] || null,
+        findIf: (tok, toId, statuses) => t.ifTags[tok + '|' + toId] || null,
         toClosed: id => !!t.closed[String(id)],
         tranIds: (ids, kind) => { const o = {}; (ids || []).forEach(id => { o[String(id)] = (kind === 'to' ? 'TO' : kind === 'if' ? 'IF' : 'IR') + id; }); return o; }
     };

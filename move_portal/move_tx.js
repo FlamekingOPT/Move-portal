@@ -32,7 +32,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     const TRAILER_FLD = 'custbody_rsm_container_no', SEAL_FLD = 'custbody7';
     function stampOn(rec, op) {
         if (hasField(rec, TRAILER_FLD)) rec.setValue({ fieldId: TRAILER_FLD, value: op.trailer });
-        if (hasField(rec, SEAL_FLD)) rec.setValue({ fieldId: SEAL_FLD, value: 'SEAL: ' + op.seal });
+        if (hasField(rec, SEAL_FLD) && String(op.seal || '').trim()) rec.setValue({ fieldId: SEAL_FLD, value: 'SEAL: ' + op.seal });
         rec.setValue({ fieldId: 'memo', value: op.memo });
     }
     function itemLines(rec, item) {
@@ -54,6 +54,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         const st = String(f.getValue({ fieldId: 'shipstatus' }));
         if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
         const lines = itemLines(f, op.item);
+        if (!lines.length && op.newLine && Number(op.to) > 0) throw new Error('NO_IF_LINE ' + op.ifNum + ' has no line for item ' + op.item);
         const cur = lines.reduce((a, i) => a + (Number(f.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0), 0);
         if (cur === Number(op.to)) return String(op.ifId);   // an earlier write landed but the request died before it was recorded
         if (cur !== Number(op.from)) throw changed(op.ifNum + ' item ' + op.item + ' is ' + cur + ', expected ' + op.from);
@@ -154,7 +155,44 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         for (let i = 0; i < n; i++) if (to.getSublistValue({ sublistId: 'item', fieldId: 'isclosed', line: i }) !== true) return false;
         return n > 0;
     }
+    // Drop trailer at the dock (spec 2026-10-16 4): one TO line to an exact qty. 0 closes the line (no removeLine on a TO with an IF).
+    function setToLine(op) {
+        const to = record.load({ type: record.Type.TRANSFER_ORDER, id: op.toId, isDynamic: true });
+        const lines = itemLines(to, op.item);
+        const open = lines.filter(i => to.getSublistValue({ sublistId: 'item', fieldId: 'isclosed', line: i }) !== true);
+        const cur = open.reduce((a, i) => a + (Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0), 0);
+        if (cur === Number(op.to)) return String(op.toId);
+        if (cur !== Number(op.from)) throw changed('TO ' + op.toId + ' item ' + op.item + ' is ' + cur + ', expected ' + op.from);
+        if (Number(op.to) <= 0) {
+            open.forEach(i => { to.selectLine({ sublistId: 'item', line: i }); to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'isclosed', value: true }); to.commitLine({ sublistId: 'item' }); });
+        } else if (lines.length) {
+            const i = open.length ? open[open.length - 1] : lines[lines.length - 1];
+            const others = open.filter(j => j !== i).reduce((a, j) => a + (Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: j })) || 0), 0);
+            to.selectLine({ sublistId: 'item', line: i });
+            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'isclosed', value: false });
+            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: Number(op.to) - others });
+            to.commitLine({ sublistId: 'item' });
+        } else {
+            to.selectNewLine({ sublistId: 'item' });
+            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'item', value: op.item });
+            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: Number(op.to) });
+            to.commitLine({ sublistId: 'item' });
+        }
+        return String(to.save({ enableSourcing: true, ignoreMandatoryFields: true }));
+    }
+    function stampSeal(op) {
+        const f = record.load({ type: record.Type.ITEM_FULFILLMENT, id: op.ifId, isDynamic: true });
+        const st = String(f.getValue({ fieldId: 'shipstatus' }));
+        if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
+        if (!hasField(f, SEAL_FLD)) return String(op.ifId);
+        f.setValue({ fieldId: SEAL_FLD, value: 'SEAL: ' + op.seal });
+        return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
+    }
     function createIf(op) {
+        if (op.ship === 'picked' && op.token) {       // drop trailer: a Picked IF an earlier request saved on this TO (any status)
+            const found = findIf(op.token, op.toId, ['ItemShip:A', 'ItemShip:B', 'ItemShip:C']);
+            if (found) return found;
+        }
         if (op.ship === true && op.token) {           // scan-built: a Shipped IF an earlier request saved on this TO
             const found = findIf(op.token, op.toId);
             if (found) return found;
@@ -168,6 +206,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
             f.setValue({ fieldId: 'shipstatus', value: 'B' });
             if (op.token) f.setValue({ fieldId: 'memo', value: op.token });
         }
+        else if (op.ship === 'picked') { f.setValue({ fieldId: 'shipstatus', value: 'A' }); stampOn(f, op); }
         else { f.setValue({ fieldId: 'shipstatus', value: 'C' }); stampOn(f, op); }
         setLines(f, op.lines);
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
@@ -186,6 +225,8 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         if (op.op === 'if_stamp') return stampShip(op);
         if (op.op === 'if_create') return createIf(op);
         if (op.op === 'receipt') return createReceipt(op);
+        if (op.op === 'to_line') return setToLine(op);
+        if (op.op === 'if_seal') return stampSeal(op);
         throw new Error('Unknown op ' + op.op);
     }
 
@@ -202,6 +243,6 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
 
     function findTo(token) { const f = findByToken(token, 'TrnfrOrd'); return f ? String(f) : null; }
     // A Shipped IF on this TO tagged with the token (a scan-built truck's or late pallet's).
-    function findIf(token, toId) { return findByToken(token, 'ItemShip', ['AND', ['createdfrom', 'anyof', String(toId)], 'AND', ['status', 'anyof', ['ItemShip:C']]]); }
+    function findIf(token, toId, statuses) { return findByToken(token, 'ItemShip', ['AND', ['createdfrom', 'anyof', String(toId)], 'AND', ['status', 'anyof', statuses || ['ItemShip:C']]]); }
     return { apply, tranIds, toClosed, findTo, findIf };
 });

@@ -33,6 +33,8 @@ function setup(spec) {
     };
     recs['itemfulfillment:9'] = makeRec({ shipstatus: spec.status || 'B' }, spec.ifLines, spec.missing);
     recs['transferorder:600'] = makeRec({}, spec.to || [{ item: '975', quantity: 600, quantityfulfilled: 0 }]);
+    recs['transferorder:600'].selectNewLine = () => { const r = recs['transferorder:600']; r.lines.push({ itemreceive: true }); r.cur = r.lines.length - 1; };
+    log.toRec = recs['transferorder:600'];
     log.searches = [];
     const fakeSearch = {
         Type: { TRANSACTION: 'transaction', TRANSFER_ORDER: 'transferorder', LOCATION: 'location' },
@@ -246,4 +248,49 @@ test('toClosed: Closed status, every line closed, or gone', () => {
     assert.equal(s2.tx.toClosed('600'), false);
     assert.equal(s2.tx.toClosed('999'), true);                     // no such TO (deleted)
     assert.deepEqual(s2.tx.tranIds(['5'], 'to'), { '5': 'TO8812' });
+});
+
+test('if_create ship:picked saves Picked (A), stamps trailer + memo, skips a blank seal', () => {
+    const s = setup({});
+    s.tx.apply({ op: 'if_create', ship: 'picked', toId: '600', token: '[MV-7]', lines: { '975': 24 }, trailer: 'T1', seal: '', memo: 'Truck 1 · 10/16 · [MV-7]' });
+    const r = s.log.last;
+    assert.deepEqual([r.values.shipstatus, r.values.custbody_rsm_container_no, r.values.memo, 'custbody7' in r.values], ['A', 'T1', 'Truck 1 · 10/16 · [MV-7]', false]);
+});
+
+test('if_create ship:picked finds an earlier IF by token (A/B/C) and creates nothing', () => {
+    const s = setup({ found: '4242' });
+    assert.equal(s.tx.apply({ op: 'if_create', ship: 'picked', toId: '600', token: '[MV-7]', lines: { '975': 24 }, trailer: 'T1', memo: 'm' }), '4242');
+    assert.equal(s.log.transforms.length, 0);
+    assert.deepEqual(JSON.stringify(s.log.searches[0].filters).includes('ItemShip:A'), true);
+});
+
+test('to_line raises, adds, closes at 0, reopens, and refuses a stale from', () => {
+    let s = setup({ to: [{ item: '975', quantity: 240, quantityfulfilled: 0 }] });
+    s.tx.apply({ op: 'to_line', toId: '600', item: '975', from: 240, to: 360 });
+    const rec = s.log.toRec;
+    assert.equal(rec.lines[0].quantity, 360);
+    s.tx.apply({ op: 'to_line', toId: '600', item: '111', from: 0, to: 60 });
+    assert.deepEqual([rec.lines[1].item, rec.lines[1].quantity], ['111', 60]);
+    s.tx.apply({ op: 'to_line', toId: '600', item: '111', from: 60, to: 0 });
+    assert.equal(rec.lines[1].isclosed, true);
+    s.tx.apply({ op: 'to_line', toId: '600', item: '111', from: 0, to: 12 });
+    assert.deepEqual([rec.lines[1].isclosed, rec.lines[1].quantity], [false, 12]);
+    const saves = rec.saved;
+    s.tx.apply({ op: 'to_line', toId: '600', item: '111', from: 0, to: 12 });   // already at target: done, no save
+    assert.equal(rec.saved, saves);
+    assert.throws(() => s.tx.apply({ op: 'to_line', toId: '600', item: '975', from: 100, to: 200 }), /^Error: IF changed in NetSuite/);
+});
+
+test('if_qty newLine on an IF without that item throws NO_IF_LINE and saves nothing', () => {
+    const s = setup({ status: 'A', ifLines: [{ item: '975', quantity: 24 }] });
+    assert.throws(() => s.tx.apply({ op: 'if_qty', ifId: '9', ifNum: 'IF9', toId: '600', item: '111', from: 0, to: 5, newLine: true }), /^Error: NO_IF_LINE/);
+    assert.equal(s.f.saved, 0);
+});
+
+test('if_seal sets only the seal on a Picked IF; refuses a Shipped one', () => {
+    let s = setup({ status: 'A', ifLines: [{ item: '975', quantity: 24 }] });
+    s.tx.apply({ op: 'if_seal', ifId: '9', ifNum: 'IF9', seal: '5249330' });
+    assert.deepEqual([s.f.values.custbody7, s.f.values.shipstatus, s.f.saved], ['SEAL: 5249330', 'A', 1]);
+    s = setup({ status: 'C', ifLines: [{ item: '975', quantity: 24 }] });
+    assert.throws(() => s.tx.apply({ op: 'if_seal', ifId: '9', ifNum: 'IF9', seal: 'x' }), /no longer Picked/);
 });

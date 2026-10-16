@@ -324,6 +324,7 @@ define([], function () {
         if (op.op === 'to_create') return 'to_create:' + op.ref;
         if (op.op === 'if_create') return 'if_create:' + op.toId;
         if (op.op === 'receipt') return 'receipt:' + op.ifId + ':' + op.seq;
+        if (op.op === 'to_line') return 'to_line:' + op.toId + ':' + op.item;
         return op.op + ':' + op.ifId;
     }
     function normMode(m) { return m === 'qty' || m === 'on' ? m : 'off'; }
