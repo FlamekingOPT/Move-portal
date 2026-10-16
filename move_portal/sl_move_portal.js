@@ -164,7 +164,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function truckSummary(x, counts) {
         const k = counts || data.palletStatusCounts([x.id]), n = st => cnt(k, x.id, st);
         return { id: x.id, label: truckLabel(x), status: x.status, depart: x.data.depart || null, shipReq: x.data.shipReq || null, sentBack: x.data.sentBack || null,
-            error: x.data.error || '', pallets: n(VP.LOADED) + n(VP.IN_TRANSIT) + n(VP.RECEIVED) + n(VP.MISSING), received: n(VP.RECEIVED),
+            scan: isScan(x), error: x.data.error || '', pallets: n(VP.LOADED) + n(VP.IN_TRANSIT) + n(VP.RECEIVED) + n(VP.MISSING), received: n(VP.RECEIVED),
             missing: n(VP.MISSING) + (x.status === T.RECEIVED ? n(VP.IN_TRANSIT) : 0) };
     }
     // Received pallets not yet in an approved receipt. Kept on the truck (data.unposted); a pre-flag truck falls back to a search.
@@ -418,8 +418,8 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const truckNo = verify.truckNoForDay(chk.trucks, c.now.dayIso, x.id), ps = chk.ps;
         if (!ps.length) throw userErr('Nothing is loaded on this truck');
         if (isScan(x)) {
-            const plan = verify.scanApprovePlan({ ref: x.data.approveRef || x.id, lines: verify.linesPcs(verify.truckLines(ps)),
-                stamp: { trailer: inp.trailer, seal: inp.seal, truckNo: truckNo, dayIso: c.now.dayIso }, S: c.S });
+            const plan = verify.scanApprovePlan({ ref: x.data.approveRef || x.id, lines: verify.linesPcs(verify.truckLines(ps)), picked: true,
+                stamp: { trailer: inp.trailer, seal: inp.seal || '', truckNo: truckNo, dayIso: c.now.dayIso }, S: c.S });
             return { truckNo: truckNo, approveRef: x.data.approveRef || String(x.id), palletKey: palletKey(ps), plan: plan, ifs: [], otherItems: x.data.otherItems || [] };
         }
         let plan;
@@ -450,6 +450,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x = mustTruck(id), view = truckView(x, c);
         return { needsFix: true, match: false, diffs: pubDiffs(m.diffs, m.ps), suggestions: view.suggestions, view: view };
     }
+    // The loaded pallets leave: planned = the pallet ids the plan was built from (null = every loaded pallet); a pallet that
+    // slipped on after the plan goes back to labeled. day = the shipped day (default the departure day).
+    function shipPallets(x, c, planned, day) {
+        data.palletsByLoad(x.id, [VP.LOADED]).forEach(p => {
+            if (!planned || planned.indexOf(String(p.id)) !== -1) data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: day || x.data.depart.day });
+            else data.updatePallet(p, { status: VP.LABELED, load: '', data: { flag: 'left_at_dock', leftAt: (c.now || {}).stamp || '', leftTruck: x.id } });
+        });
+    }
     function finishDepart(x, c, claim) {
         const writes = Object.assign({}, x.data.writes);
         let res;
@@ -468,10 +476,6 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         assertClaim(x.id, claim, truckLabel(x), 'depart');
         // Only the pallets the plan was built from leave; one that slipped on after the plan stays at the dock.
         const planned = x.data.departPallets == null ? null : String(x.data.departPallets).split(',').filter(Boolean);
-        data.palletsByLoad(x.id, [VP.LOADED]).forEach(p => {
-            if (!planned || planned.indexOf(String(p.id)) !== -1) data.updatePallet(p, { status: VP.IN_TRANSIT, shippedDay: x.data.depart.day });
-            else data.updatePallet(p, { status: VP.LABELED, load: '', data: { flag: 'left_at_dock', leftAt: (c.now || {}).stamp || '', leftTruck: x.id } });
-        });
         let ids = {};
         const ref = x.data.approveRef || x.id;
         if (isScan(x) && writes['to_create:' + ref] && writes['if_create:new:to:' + ref]) {   // on mode: the TO and IF exist now
@@ -482,6 +486,14 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             ids = { toId: toId, toNum: toNum, ifId: ifId, ifNum: ifNum,
                 alloc: (x.data.alloc || []).map(a => Object.assign({}, a, { ifId: ifId, ifNum: ifNum, toId: toId, toNum: toNum })) };
         }
+        // Drop trailer: a scan truck parks at the dock with its docs (TO + Picked IF). Its pallets stay loaded until Picked up.
+        if (isScan(x)) {
+            const docIds = ids.toId ? ids : { toId: '', toNum: '', ifId: '', ifNum: '', alloc: (x.data.alloc || []).map(a => Object.assign({}, a, { ifId: '', ifNum: '' })) };
+            data.updateLoad(data.getLoad(x.id), Object.assign({ status: T.AT_DOCK, data: Object.assign({ error: '', writes: writes, workingAt: 0, claim: '', phase: '', shortNote: null,
+                departPallets: null, docLines: verify.docLinesFromAlloc(docIds.alloc), lastStep: stepOf('docs_written', c) }, docIds) }, ids.toId ? { to: ids.toId, if: ids.ifId } : {}));
+            return Object.assign({ atDock: true, written: res.written, planOnly: res.planOnly, view: truckView(mustTruck(x.id), c) }, ids.toId ? { toNum: ids.toNum, ifNum: ids.ifNum } : {});
+        }
+        shipPallets(x, c, planned, null);
         data.updateLoad(data.getLoad(x.id), Object.assign({ status: T.DEPARTED, data: Object.assign({ error: '', writes: writes, workingAt: 0, claim: '', phase: '', shortNote: null }, ids) },
             ids.toId ? { to: ids.toId, if: ids.ifId } : {}));   // the note lives until the truck leaves
         // What this attempt wrote, and what stayed a plan (writeMode): the manager's Approve message says which.
@@ -687,9 +699,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_planned', false, (a, c) => {
         const trucks = allTrucks(), taken = {}, dp = defPcs(c);
         trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
-        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING);
+        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING || x.status === T.AT_DOCK);
         // Shipped today (Shipments tab): trucks that left with today's departure day.
-        const shipped = trucks.filter(x => x.status !== T.DEPARTING && x.data.depart && x.data.depart.day === c.now.dayIso);
+        const shipped = trucks.filter(x => x.status !== T.DEPARTING && x.status !== T.AT_DOCK && x.data.depart && x.data.depart.day === c.now.dayIso);
         const counts = data.palletStatusCounts(open.concat(shipped).map(x => x.id));
         const busy = {};
         trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
@@ -699,7 +711,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     // A trailer is on one truck at a time until it leaves.
-    const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.DEPARTING];
+    const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.DEPARTING, T.AT_DOCK];
     const normTrailer = t => String(t || '').trim().toUpperCase();
     // A trailer # entered on the floor: trimmed, 1-20 chars, not on another open truck (exceptId = the truck it goes on).
     function checkTrailer(raw, exceptId) {
@@ -1026,10 +1038,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const own = String(x.data.trailer || '').trim();
         // A truck with no trailer (started before the rework) takes the one entered at the mark.
         const inp = { trailer: own || checkTrailer(a.trailer, x.id), seal: String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
-        if (!inp.seal) throw userErr('Enter the seal #');
+        if (!inp.seal && !isScan(x)) throw userErr('Enter the seal #');     // drop trailer: a scan truck's seal can come at Picked up
         if (inp.seal.length > 30) throw userErr('The seal # is too long (30 characters max)');
         if (inp.carrier.length > 60) throw userErr('The carrier is too long (60 characters max)');
-        sealTaken(inp.seal, x.id);
+        if (inp.seal) sealTaken(inp.seal, x.id);
         const v = verifyTruck(x.id, c, { truck: x, poll: true });    // an unchanged load keeps verify at/by
         if (!v.r.match) return Object.assign({ needsFix: true }, verifyOut(v, c));
         const d = departPlan(v.x, inp, c, v), pm = planMismatch(d.plan);
@@ -1055,7 +1067,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const x0 = mustTruck(a.truckId);
         mustPending(x0);
         const inp = shipInput(x0), mc = markCtx(x0, c);
-        sealTaken(inp.seal, x0.id);
+        if (inp.seal) sealTaken(inp.seal, x0.id);
         if (isScan(x0)) {                                // spec 2026-10-14 S4: blocked before anything is claimed or written
             const tl = verify.linesPcs(verify.truckLines(data.palletsByLoad(x0.id, [VP.LOADED]))), items = Object.keys(tl);
             const st = data.locationStock(c.S.locFrom, items), avail = {};
@@ -1106,7 +1118,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 if (w['if_create:new:to:' + ref]) throw userErr('This truck is already in NetSuite. Press Retry to finish the departure.');
                 const tag = verify.scanTag(ref), toId = w['to_create:' + ref] || (tx.findTo ? tx.findTo(tag) : null);   // a TO that saved but was never recorded
                 // A Shipped IF that saved but was never recorded: releasing would ship the truck twice.
-                if (toId && tx.findIf && tx.findIf(tag, toId)) throw userErr('This truck is already in NetSuite (IF found). Press Retry to finish the departure.');
+                if (toId && tx.findIf && tx.findIf(tag, toId, ['ItemShip:A', 'ItemShip:B', 'ItemShip:C'])) throw userErr('This truck is already in NetSuite (IF found). Press Retry to finish the departure.');
                 if (toId && !tx.toClosed(toId)) throw userErr('Close ' + toNumOf(toId) + ' in NetSuite first (it has no IF yet), then Release.');
             } else if (stampWritten(cur)) throw userErr('This truck is already stamped in NetSuite. Press Retry to finish the departure.');
             if (!cur.data.error && !stale(cur)) throw userErr('This departure is still running. Wait a minute, then try again.');
@@ -1755,8 +1767,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('approvals', true, (a, c) => approvalsView(c));
 
     // ── dashboard (spec 2026-10-06 pm §3): trucks, approvals waiting, Active loads ──
-    const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
+    const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
     function stageOf(x) {
+        if (x.status === T.AT_DOCK) return 'At dock';
+        if (isScan(x) && (x.status === T.SHIP_PENDING || x.status === T.DEPARTING)) return 'Waiting for docs';
+        if (isScan(x) && x.status === T.READY) return 'Ready for docs';
         if (x.status === T.RECEIVED) return 'Received';
         if (x.status === T.APPROVING || (x.status === T.RECEIVING && x.data.recvRequested)) return 'Receipt pending';
         if (x.status === T.RECEIVING) return 'Unloading';
@@ -1811,7 +1826,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 truckNo: dep ? dep.truckNo : null, status: x.status, stage: stage, lastKind: ls.kind, lastBy: whoName(ls.by), lastAt: ls.at, lastMin: ls.at ? minutesSince(ls.at, c) : null,
                 flagged: stillFlagged(d.flagged).filter(p => p.data.flaggedTruck === x.id).length };
             if (dep) {
-                const ps = shippedAll[String(x.id)] || [];
+                const ps = (x.status === T.AT_DOCK ? loadedAll : shippedAll)[String(x.id)] || [];   // at the dock: still loaded
                 const rp = verify.planReceipts({ alloc: d.alloc || [], pallets: ps, received: d.received || {}, stamp: dep, seq: 0 }), got = cnt(counts, x.id, VP.RECEIVED) > 0;
                 const sk = skuNames([...new Set((d.alloc || []).reduce((s, al) => s.concat(Object.keys(al.lines)), []))]), irs = irsOf(x);
                 (d.alloc || []).forEach(al => {
