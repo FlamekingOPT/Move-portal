@@ -20,7 +20,11 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
 ## 🧭 READ FIRST — DROP-TRAILER DOCS FLOW BUILT (2026-10-16) · ⏭ NEXT = SANDBOX S1–S5
-**State:** branch `feat/v3-verification`, code **781e7f6..HEAD** (Tasks 1–7 of `docs/superpowers/plans/2026-10-16-move-portal-drop-trailer-docs.md`, each reviewed, then a final-review fix wave), tests **415/415**. Spec `docs/superpowers/specs/2026-10-16-move-portal-drop-trailer-docs-design.md` (amends the 2026-10-14 scan-built spec). **Not uploaded to the sandbox yet; not in prod.** Only scan-built trucks (`officeIfs: false`) changed; the office-IF flow is untouched.
+**State:** branch `feat/v3-verification`, code **781e7f6..HEAD** (Tasks 1–7 of `docs/superpowers/plans/2026-10-16-move-portal-drop-trailer-docs.md`, each reviewed, then a final-review fix wave), tests **417/417**. Spec `docs/superpowers/specs/2026-10-16-move-portal-drop-trailer-docs-design.md` (amends the 2026-10-14 scan-built spec). **Not uploaded to the sandbox yet; not in prod.** Only scan-built trucks (`officeIfs: false`) changed; the office-IF flow is untouched.
+
+**Also 2026-10-16:**
+- **Floor View load:** every Shipments card (Ready for docs, Waiting for docs, At dock, Shipped today, and the office cards) has a 📋 View load button. It opens the read-only floor truck screen. A shipped truck's SKU table now counts all its pallets (`bd83cc4`).
+- **Sandbox seal field:** the sandbox's orphan `custbody7` ("Warehouse Portal Link", Hyperlink, inactive) was repurposed to match prod: **Seal #**, Free-Form Text, active, on Item Fulfillment and Item Receipt. The portal now stamps `SEAL: <n>` there. Before this, the sandbox silently skipped the seal.
 
 **Why:** move trucks are drop trailers. They're loaded at the Riverside dock and wait there, sometimes for hours, before the carrier hooks them. So the paperwork has to exist while the trailer is parked, and stock should leave Riverside only at pickup.
 
