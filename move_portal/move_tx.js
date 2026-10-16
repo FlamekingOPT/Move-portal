@@ -163,15 +163,27 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         const cur = open.reduce((a, i) => a + (Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0), 0);
         if (cur === Number(op.to)) return String(op.toId);
         if (cur !== Number(op.from)) throw changed('TO ' + op.toId + ' item ' + op.item + ' is ' + cur + ', expected ' + op.from);
-        if (Number(op.to) <= 0) {
-            open.forEach(i => { to.selectLine({ sublistId: 'item', line: i }); to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'isclosed', value: true }); to.commitLine({ sublistId: 'item' }); });
-        } else if (lines.length) {
-            const i = open.length ? open[open.length - 1] : lines[lines.length - 1];
-            const others = open.filter(j => j !== i).reduce((a, j) => a + (Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: j })) || 0), 0);
+        const fulfilled = lines.reduce((a, i) => a + (Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantityfulfilled', line: i })) || 0), 0);
+        if (Number(op.to) < fulfilled) throw changed('TO ' + op.toId + ' item ' + op.item + ' already has ' + fulfilled + ' fulfilled, cannot set to ' + op.to);
+        const setLine = (i, q) => {
             to.selectLine({ sublistId: 'item', line: i });
-            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'isclosed', value: false });
-            to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: Number(op.to) - others });
+            if (q > 0) { to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'isclosed', value: false }); to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: q }); }
+            else to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'isclosed', value: true });
             to.commitLine({ sublistId: 'item' });
+        };
+        if (Number(op.to) <= 0) {
+            open.forEach(i => setLine(i, 0));
+        } else if (lines.length) {
+            if (!open.length) setLine(lines[lines.length - 1], Number(op.to));
+            else {                                    // fill each open line up to its quantity in order; any increase lands on the last
+                let left = Number(op.to);
+                open.forEach((i, n) => {
+                    const cap = Number(to.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0;
+                    const g = n === open.length - 1 ? left : Math.min(left, cap);
+                    left -= g;
+                    setLine(i, g);
+                });
+            }
         } else {
             to.selectNewLine({ sublistId: 'item' });
             to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'item', value: op.item });
@@ -184,7 +196,9 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         const f = record.load({ type: record.Type.ITEM_FULFILLMENT, id: op.ifId, isDynamic: true });
         const st = String(f.getValue({ fieldId: 'shipstatus' }));
         if (st !== 'A' && st !== 'B') throw changed(op.ifNum + ' is no longer Picked/Packed (status ' + st + ')');
+        if (!String(op.seal || '').trim()) throw new Error('Seal is blank');
         if (!hasField(f, SEAL_FLD)) return String(op.ifId);
+        if (verify.sealKey(f.getValue({ fieldId: SEAL_FLD })) === verify.sealKey(op.seal)) return String(op.ifId);   // already holds it
         f.setValue({ fieldId: SEAL_FLD, value: 'SEAL: ' + op.seal });
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }

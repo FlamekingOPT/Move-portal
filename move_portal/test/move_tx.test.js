@@ -294,3 +294,28 @@ test('if_seal sets only the seal on a Picked IF; refuses a Shipped one', () => {
     s = setup({ status: 'C', ifLines: [{ item: '975', quantity: 24 }] });
     assert.throws(() => s.tx.apply({ op: 'if_seal', ifId: '9', ifNum: 'IF9', seal: 'x' }), /no longer Picked/);
 });
+
+test('to_line distributes across two open lines of one item', () => {
+    let s = setup({ to: [{ item: '975', quantity: 300, quantityfulfilled: 0 }, { item: '975', quantity: 204, quantityfulfilled: 0 }] });
+    s.tx.apply({ op: 'to_line', toId: '600', item: '975', from: 504, to: 100 });
+    let r = s.log.toRec;
+    assert.equal(r.lines[0].quantity, 100); assert.equal(r.lines[1].isclosed, true); assert.equal(r.lines[1].quantity, 204);
+    s = setup({ to: [{ item: '975', quantity: 300, quantityfulfilled: 0 }, { item: '975', quantity: 204, quantityfulfilled: 0 }] });
+    s.tx.apply({ op: 'to_line', toId: '600', item: '975', from: 504, to: 600 });
+    r = s.log.toRec;
+    assert.deepEqual([r.lines[0].quantity, r.lines[1].quantity], [300, 300]);
+});
+
+test('to_line refuses to go below what is already fulfilled', () => {
+    const s = setup({ to: [{ item: '975', quantity: 240, quantityfulfilled: 100 }] });
+    assert.throws(() => s.tx.apply({ op: 'to_line', toId: '600', item: '975', from: 240, to: 50 }), /already has 100 fulfilled/);
+    assert.equal(s.log.toRec.saved, 0);
+});
+
+test('if_seal: blank refused, same seal is a no-op', () => {
+    let s = setup({ status: 'A', ifLines: [{ item: '975', quantity: 24 }] });
+    assert.throws(() => s.tx.apply({ op: 'if_seal', ifId: '9', ifNum: 'IF9', seal: ' ' }), /Seal is blank/);
+    s.f.values.custbody7 = 'SEAL: 5249330';
+    assert.equal(s.tx.apply({ op: 'if_seal', ifId: '9', ifNum: 'IF9', seal: '5249330' }), '9');
+    assert.equal(s.f.saved, 0);
+});
