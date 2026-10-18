@@ -76,7 +76,7 @@ textarea.inp{font-family:monospace;font-size:13px}textarea.inp.note{font-family:
 .fixc{border:2px solid var(--amber)}.fixtxt{font-size:18px;font-weight:700;margin:6px 0;overflow-wrap:anywhere}.card.quiet{background:#f8fafc}.card.quiet h4{color:#475569}
 .linkbtn{color:var(--blue);text-decoration:underline;cursor:pointer}.lsec>h3{margin-top:0}.modal .tbl{margin:8px 0}
 .modal{position:fixed;inset:0;z-index:30;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
-.modal>div{background:#fff;border-radius:14px;padding:16px;width:100%;max-width:480px;max-height:90vh;overflow:auto}.modal h4{margin:0 0 8px;font-size:18px}
+.modal>div{background:#fff;border-radius:14px;padding:16px;width:100%;max-width:640px;max-height:90vh;overflow:auto}.modal h4{margin:0 0 8px;font-size:18px}
 .oform{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.oform .inp{flex:1 1 160px;min-width:0;margin:0}.oform .num{flex:0 0 76px}
 .tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}.tools .inp{flex:1 1 180px;margin:0;padding:9px;font-size:14px}.tools select.inp{flex:0 1 220px}th.sortable{cursor:pointer;color:var(--blue)}
 h3{font-size:15px;margin:16px 0 8px}
@@ -1291,7 +1291,8 @@ h3{font-size:15px;margin:16px 0 8px}
                     '<div class="muted">' + esc(x.lines.map(l => l.sku + ' × ' + num(l.pcs)).join(' · ')) + ' · ' + num(x.pallets) + ' pallets' + (x.lbs != null ? ' · ' + num(x.lbs) + ' lb' : '') + '</div>' +
                     (x.error ? '<div class="muted">⚠ ' + esc(x.error) + '</div>' : '') +
                     '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '" data-scan="1">✅ Approve</button>' +
-                    '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Reject</button></div>' +
+                    '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Reject</button>' +
+                    '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">📋 View load</button></div>' +
                     '<div class="muted sm">Approve writes the TO + IF (Picked). Shipped happens at pickup.</div></div>';
             }
             const t = x.truck, id = esc(t.id), lab = esc(t.label), late = x.ageMin != null && x.ageMin >= LATE_MIN;
@@ -1302,7 +1303,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="muted">' + num(x.pallets) + ' pallets · ' + num(x.pcs) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
                 '<div class="muted">Marked shipped by ' + esc(x.markedBy || '?') + ' at ' + esc(x.markedAt) + (x.ageMin != null ? ' · ' + x.ageMin + ' min ago' : '') + '</div>' +
                 '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Confirm shipped</button>' +
-                '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button></div></div>';
+                '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button>' +
+                '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">📋 View load</button></div></div>';
         }
         // One row per undecided never-loaded pallet (spec 2026-10-06 pm §2): Accept onto the truck it was scanned on, or Reject with a note.
         function flagRow(f) {
@@ -1441,6 +1443,19 @@ h3{font-size:15px;margin:16px 0 8px}
             tone(r.ok ? 'ok' : 'bad');
             SCREENS.approve(r.ok ? flash('amber', '↩ ' + esc(label) + ' sent back to the floor', esc(note.trim())) : errBox(r.error));
         };
+        // Scan-built truck: one row per loaded pallet with its estimated weight (item weight × pcs + pallet tare). Pallets carry no dims.
+        function palletWeights(v) {
+            const sc = v.scan, per = {}, tare = sc.pallets ? sc.tare / sc.pallets : 0;
+            sc.rows.forEach(r => { per[String(r.item)] = r.lbs == null || !r.pcs ? null : r.lbs / r.pcs; });
+            const ps = v.pallets.filter(p => p.status === 'loaded');
+            if (!ps.length) return '';
+            return '<table class="tbl"><tr><th>Pallet</th><th>Contents</th><th>Pcs</th><th>Est. weight</th></tr>' + ps.map(p => {
+                let lb = tare, miss = false;
+                (p.lines || []).forEach(l => { const w = per[String(l.item)]; if (w == null) miss = true; else lb += w * (Number(l.pcs) || 0); });
+                return '<tr><td><b>' + esc(p.code) + '</b></td><td>' + esc(p.summary || p.headline || '') + (p.damaged ? ' <span class="pill p-amber">damaged</span>' : '') +
+                    '</td><td>' + num(p.pieces) + '</td><td>' + (miss ? '<span class="muted">no weight</span>' : num(Math.round(lb)) + ' lb') + '</td></tr>';
+            }).join('') + '</table>';
+        }
         // Read-only look at a truck (manager): lines, pallets, other items.
         ACT.opentruck = async el => {
             if (!isMgr) return floorOpenTruck(el);
@@ -1455,9 +1470,13 @@ h3{font-size:15px;margin:16px 0 8px}
                 document.body.appendChild(m);
                 return;
             }
-            const v = r.view, t = v.truck;
-            m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4><div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs</div>' +
-                (v.receipt
+            const v = r.view, t = v.truck, q = t.shipReq || {}, dep = t.depart || {};
+            const hdr = [v.trailer || dep.trailer ? 'Trailer ' + (v.trailer || dep.trailer) : '', dep.seal || q.seal ? 'Seal ' + (dep.seal || q.seal) : (t.scan ? 'No seal yet' : ''),
+                dep.carrier || q.carrier || '', t.toNum || '', t.ifNum || ''].filter(Boolean).join(' · ');
+            m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4>' + (hdr ? '<div class="muted">' + esc(hdr) + '</div>' : '') +
+                '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (v.scan ? ' · ' + num(v.scan.total) + ' lb' : '') + '</div>' +
+                (v.scan && !v.receipt ? (v.scan.rows.length ? scanTable(v.scan, { weight: true }) : '<div class="muted">No pallets loaded</div>') + palletWeights(v)
+                : v.receipt
                     ? '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' + v.receipt.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
                       (v.receipt.missing.length ? '<div class="muted warn">Missing: ' + esc(v.receipt.missing.join(', ')) + ' · in transit on the TO</div>' : '') +
                       '<div class="muted">Receipts: ' + (v.receipt.irs.length ? v.receipt.irs.map(r => '<b>' + esc(r.irNum) + '</b>' + (r.pcs != null ? ' · ' + num(r.pcs) + ' pcs' : '') + (r.ifNum ? ' (' + esc(r.ifNum) + ')' : '')).join(', ') : 'none yet') + '</div>'

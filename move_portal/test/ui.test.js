@@ -369,3 +369,17 @@ test('Shipments cards each carry a View load button', () => {
     assert.ok(src.indexOf('data-act="opentruck"') !== -1);
     assert.ok(src.split('viewBtn(').length - 1 >= 7, 'every card builder uses viewBtn');
 });
+
+test('2026-10-17: manager ship-confirm cards open the load; the pop-up shows weights and one row per pallet', () => {
+    const src = ui._clientMain.toString().replace(/\r/g, '');
+    const card = clientFn(src, 'shipConfirmCard');
+    assert.equal((card.match(/data-act="opentruck"/g) || []).length, 2, 'View load on both scan and office ship-confirm cards');
+    const pw = new Function('esc', 'num', 'return ' + clientFn(src, 'palletWeights'))(s => String(s), n => String(n));
+    const html = pw({ scan: { pallets: 2, tare: 100, rows: [{ item: '11', pcs: 100, lbs: 500 }, { item: '12', pcs: 10, lbs: null }] },
+        pallets: [{ code: 'PLT1', status: 'loaded', summary: 'YSN201 · 100', pieces: 100, lines: [{ item: '11', pcs: 100 }] },
+            { code: 'PLT2', status: 'loaded', summary: 'YSN301 · 10', pieces: 10, lines: [{ item: '12', pcs: 10 }] },
+            { code: 'PLT3', status: 'labeled', summary: 'x', pieces: 1, lines: [] }] });
+    assert.ok(html.indexOf('550 lb') !== -1, 'item weight × pcs + tare share');
+    assert.ok(html.indexOf('no weight') !== -1);
+    assert.equal(html.indexOf('PLT3'), -1, 'only loaded pallets');
+});
