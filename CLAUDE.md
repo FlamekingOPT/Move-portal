@@ -19,7 +19,7 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **SDD ledger:** `docs/sdd-ledger/progress.md` (every ruling, review finding, minor and ON-MODE GATE item), with every task brief/report under `docs/sdd-ledger/v3/`, `verify-load/`, `rework/`, `dashboard/`.
 - **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
-## 🧭 READ FIRST — MANAGER-ONLY NETSUITE WRITES (2026-10-17) · ⏳ NOT UPLOADED TO THE SANDBOX
+## 🧭 READ FIRST — MANAGER-ONLY NETSUITE WRITES (2026-10-17) · ✅ UPLOADED TO THE SANDBOX (code 7e2c6c5)
 **Why:** On 10/17, **Save seal** on sandbox Truck 1 (TO8723 · IF53840) failed for the floor login with "You must have 'Transactions -> Fulfill Sales Orders' view permission…". Jack's rule: **the floor writes no NetSuite, only a manager does.** Spec: `docs/superpowers/specs/2026-10-17-move-portal-manager-only-writes-design.md`.
 
 **What changed** (branch `feat/v3-verification`, tests **430/430**):
@@ -43,8 +43,10 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 
 **Local beta click-through passed:** Approve, then floor scan refused, then Send back, take a pallet off, re-approve (same TO/IF, 360 → 240), seal, Picked up, Confirm shipped (IF stamped, departed). A restart of the beta loses in-memory snapshot IFs, so re-approving a truck from before the restart fails with "not in the snapshot". That's a beta artifact only.
 
+**✅ Uploaded 2026-10-17 (Administrator, via Chrome):** verify 2055190, tx 2055087, ui 2055088 and sl 2055089, LF copies from git `7e2c6c5`. The served content of each file contains the new code. Script 893 was recompiled. Smoke check: Approvals shows "At the dock" with Truck 1 (TO8723 · IF53840 · Seal 1846). View load shows 6 pallets of YSN401 × 36. YSN401 has no item weight in the sandbox, so the pop-up shows the tare only (270 lb).
+
 **⏭ NEXT (Jack):**
-1. Upload verify 2055190, tx 2055087, ui 2055088 and sl 2055089 (LF copies from git), then recompile script 893.
+1. (done) Upload + recompile.
 2. ⚠ Sandbox Truck 1 (TO8723 · IF53840) is at the dock with a **Picked (A)** IF from the old flow. `if_stamp` still ships it, so: floor Save seal, then Picked up, then manager Confirm shipped.
 3. Retest S1–S10 under the new flow (S1–S4 now cover only manager re-approve edits).
 
