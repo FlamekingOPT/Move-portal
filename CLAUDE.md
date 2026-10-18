@@ -19,6 +19,16 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **SDD ledger:** `docs/sdd-ledger/progress.md` (every ruling, review finding, minor and ON-MODE GATE item), with every task brief/report under `docs/sdd-ledger/v3/`, `verify-load/`, `rework/`, `dashboard/`.
 - **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
+## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
+1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
+   - Finish Truck 1: floor Picked up (seal 1846 is already saved), then manager Confirm shipped.
+   - Then run S1–S10.
+2. **Printed VICS BOL: PLAN ONLY, NOT BUILT.** Jack: "stop at the planning stage so it doesn't mess with what's working". **Don't touch the portal code until he says build.**
+   - Spec: `docs/superpowers/specs/2026-10-18-move-portal-bol-design.md`.
+   - Parked draft (not applied): `docs/superpowers/drafts/2026-10-18-bol-draft.patch`.
+   - Ruled: the manager prints at Approve docs. The commodity is the SKU description. Weight = unit weight × pcs + pallet tare. Unit weights come from a Capacity Builder CSV upload. Cylinders get H.M. X + CYL; accessories get PCS.
+   - **Open:** (a) YSN201 unit weight: Capacity Builder says 19.8 lb, the real BOL used 18 lb. (b) Pallet tare: 45 lb (the current setting) or 27 lb (what the sample implies)? (c) Reprint automatically after a re-approve, or only on Print BOL?
+
 ## 🧭 READ FIRST — MANAGER-ONLY NETSUITE WRITES (2026-10-17) · ✅ UPLOADED TO THE SANDBOX (code 7e2c6c5)
 **Why:** On 10/17, **Save seal** on sandbox Truck 1 (TO8723 · IF53840) failed for the floor login with "You must have 'Transactions -> Fulfill Sales Orders' view permission…". Jack's rule: **the floor writes no NetSuite, only a manager does.** Spec: `docs/superpowers/specs/2026-10-17-move-portal-manager-only-writes-design.md`.
 
