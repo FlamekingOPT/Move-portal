@@ -474,6 +474,17 @@ test('local snapshot_ns.applyOp: Picked if_create (A), found again by its token 
     assert.equal(Object.keys(ns.ifInfo()).filter(k => ns.ifInfo()[k].toId === String(toId)).length, 1);
 });
 
+test('local snapshot_ns.applyOp: Packed if_create (B) for drop trailer docs, found again by its token; if_stamp ships it from B', () => {
+    const { ns, toId } = dropNs();
+    const op = { op: 'if_create', ship: 'packed', toId, token: '[MV-8]', lines: { '11': 240 }, memo: 'Truck 1 · 10/17 · [MV-8]', trailer: 'T1', seal: '' };
+    const id = ns.applyOp(op);
+    assert.equal(ns.ifInfo()[id].status, 'B');
+    assert.equal(ns.applyOp(op), id);
+    ns.applyOp({ op: 'if_stamp', ifId: id, seal: '56', trailer: 'T1' });
+    assert.equal(ns.ifInfo()[id].status, 'C');
+    assert.equal(ns.applyOp(op), id);
+});
+
 test('local snapshot_ns.applyOp: if_qty newLine on an IF without the item throws NO_IF_LINE like prod; a stale from is refused', () => {
     const { ns, toId } = dropNs();
     const id = ns.applyOp({ op: 'if_create', ship: 'picked', toId, token: '[MV-7]', lines: { '11': 240 }, memo: '[MV-7]' });
@@ -611,6 +622,9 @@ test('dock: AT_DOCK state and picked IF in the scan approve plan', () => {
     assert.equal(p.ops[1].ship, 'picked');
     const q = v.scanApprovePlan({ ref: '7', lines: { '11': 240 }, stamp: { trailer: 'T1', seal: 'S', truckNo: 1, dayIso: '2026-10-16' }, S: {} });
     assert.equal(q.ops[1].ship, true);                     // late pallet / default unchanged
+    const k = v.scanApprovePlan({ ref: '7', lines: { '11': 240 }, stamp: { trailer: 'T1', seal: '', truckNo: 1, dayIso: '2026-10-17' }, S: {}, packed: true });
+    assert.equal(k.ops[1].ship, 'packed');                 // drop trailer docs since 2026-10-17
+    assert.equal(v.TRUCK.PICKUP_PENDING, 'pickup_pending');
 });
 
 test('dockOps: raise = TO then IF; lower = IF then TO; new SKU = IF new line on the primary IF', () => {

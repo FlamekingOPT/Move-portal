@@ -90,6 +90,14 @@ test('if_stamp', () => {
     assert.equal(c.f.saved, 0);
 });
 
+test('if_stamp ships a Packed (B) or a Picked (A) IF: drop trailer docs written before 2026-10-17 are Picked', () => {
+    ['A', 'B'].forEach(st => {
+        const s = setup({ status: st, ifLines: split() });
+        s.tx.apply({ op: 'if_stamp', ifId: '9', ifNum: 'IF1', trailer: 'T5', seal: '123', memo: 'm', lines: { 975: 504 } });
+        assert.deepEqual([s.f.values.shipstatus, s.f.saved], ['C', 1]);
+    });
+});
+
 test('if_create transforms the TO and stamps', () => {
     const s = setup({ ifLines: split() });
     assert.equal(s.tx.apply({ op: 'if_create', toId: '600', trailer: 'T5', seal: '123', memo: 'm', lines: { 975: 24 } }), '888');
@@ -262,6 +270,17 @@ test('if_create ship:picked finds an earlier IF by token (A/B/C) and creates not
     assert.equal(s.tx.apply({ op: 'if_create', ship: 'picked', toId: '600', token: '[MV-7]', lines: { '975': 24 }, trailer: 'T1', memo: 'm' }), '4242');
     assert.equal(s.log.transforms.length, 0);
     assert.deepEqual(JSON.stringify(s.log.searches[0].filters).includes('ItemShip:A'), true);
+});
+
+test('if_create ship:packed saves Packed (B) with trailer + memo; an earlier IF with the token (any status) is found, not made twice', () => {
+    const s = setup({});
+    s.tx.apply({ op: 'if_create', ship: 'packed', toId: '600', token: '[MV-7]', lines: { '975': 24 }, trailer: 'T1', seal: '', memo: 'Truck 1 · 10/17 · [MV-7]' });
+    const r = s.log.last;
+    assert.deepEqual([r.values.shipstatus, r.values.custbody_rsm_container_no, r.values.memo], ['B', 'T1', 'Truck 1 · 10/17 · [MV-7]']);
+    const f = setup({ found: '4343' });
+    assert.equal(f.tx.apply({ op: 'if_create', ship: 'packed', toId: '600', token: '[MV-7]', lines: { '975': 24 }, trailer: 'T1', memo: 'm' }), '4343');
+    assert.equal(f.log.transforms.length, 0);
+    assert.ok(['ItemShip:A', 'ItemShip:B', 'ItemShip:C'].every(k => JSON.stringify(f.log.searches[0].filters).includes(k)));
 });
 
 test('to_line raises, adds, closes at 0, reopens, and refuses a stale from', () => {

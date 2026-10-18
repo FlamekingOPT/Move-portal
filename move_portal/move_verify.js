@@ -8,7 +8,7 @@
 define([], function () {
     'use strict';
 
-    const TRUCK = { LOADING: 'loading', NEEDS_FIX: 'needs_fix', READY: 'ready', SHIP_PENDING: 'ship_pending', DEPARTING: 'departing', AT_DOCK: 'at_dock', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
+    const TRUCK = { LOADING: 'loading', NEEDS_FIX: 'needs_fix', READY: 'ready', SHIP_PENDING: 'ship_pending', DEPARTING: 'departing', AT_DOCK: 'at_dock', PICKUP_PENDING: 'pickup_pending', DEPARTED: 'departed', RECEIVING: 'receiving', APPROVING: 'approving', RECEIVED: 'received' };
     const VP = { LABELED: 'labeled', LOADED: 'loaded', IN_TRANSIT: 'in_transit', RECEIVED: 'received', MISSING: 'missing', VOID: 'void' };
     const PLANNED_IF_STATUS = ['A', 'B'];
     const OPEN_TO_STATUS = ['B', 'D', 'E'];
@@ -122,7 +122,7 @@ define([], function () {
         if (p.status === VP.LOADED) {
             if (pt === me) return { result: 'dup' };
             if (other.status === TRUCK.LOADING) return { result: 'other_truck', otherTruckId: pt, otherLabel: other.label || '' };
-            return Object.assign({ result: 'locked', otherTruckId: pt, otherLabel: other.label || '' }, other.status === TRUCK.AT_DOCK ? { reason: 'at_dock' } : {});
+            return Object.assign({ result: 'locked', otherTruckId: pt, otherLabel: other.label || '' }, other.status === TRUCK.AT_DOCK || other.status === TRUCK.PICKUP_PENDING ? { reason: 'at_dock' } : {});
         }
         if (p.status !== VP.LABELED) return { result: 'shipped', otherTruckId: pt, otherLabel: other.label || '' };
         if (o.scanBuilt) return { result: 'ok', set: { status: VP.LOADED, loadId: String(o.truckId) } };   // the scans are the order: no TO to fit
@@ -135,13 +135,14 @@ define([], function () {
     // ── departure ────────────────────────────────────────────────────────
     function memoFor(truckNo, dayIso) { return 'Truck ' + truckNo + ' · ' + String(dayIso).slice(5, 7) + '/' + String(dayIso).slice(8, 10); }
     function scanTag(ref) { return '[MV-' + ref + ']'; }
-    // Approve on a scan-built truck (spec 2026-10-14 §3): a new TO for what was scanned, then its IF saved Shipped with the stamp.
+    // Approve on a scan-built truck (spec 2026-10-14 §3): a new TO for what was scanned, then its IF saved Shipped with the stamp
+    // (o.packed: drop trailer, saved Packed and stamped Shipped at the manager's ship confirm, spec 2026-10-17; o.picked: the older Picked IF).
     function scanApprovePlan(o) {
         const ref = String(o.ref), tag = scanTag(ref), st = o.stamp || {}, S = o.S || {}, memo = memoFor(st.truckNo, st.dayIso);
         const lines = Object.assign({}, o.lines);
         const to = { op: 'to_create', ref: ref, token: tag, fromLoc: String(S.locFrom), toLoc: String(S.locTo), orderStatus: S.toStatus || 'B', lines: lines,
             memo: tag + ' Trailer ' + st.trailer + ' · ' + memo };
-        const f = { op: 'if_create', ref: ref, toId: 'new:to:' + ref, ship: o.picked ? 'picked' : true, token: tag, lines: Object.assign({}, lines), trailer: st.trailer, seal: st.seal,
+        const f = { op: 'if_create', ref: ref, toId: 'new:to:' + ref, ship: o.packed ? 'packed' : o.picked ? 'picked' : true, token: tag, lines: Object.assign({}, lines), trailer: st.trailer, seal: st.seal,
             memo: memo + ' · ' + tag };
         return { ops: [to, f], alloc: [{ ifId: 'new:' + ref, ifNum: '(new)', toId: 'new:to:' + ref, toNum: '(new TO)', lines: Object.assign({}, lines), addOn: false }],
             unplanned: [], corrections: [], bol: null };
@@ -289,7 +290,7 @@ define([], function () {
             case VP.MISSING: return pt === me ? { result: 'late', set: { status: VP.RECEIVED } } : Object.assign({ result: 'other_truck' }, ref);
             case VP.RECEIVED: return pt === me ? { result: 'dup' } : Object.assign({ result: 'dup_other' }, ref);
             case VP.LOADED: if (other.status === TRUCK.SHIP_PENDING) return Object.assign({ result: 'locked', reason: 'ship_pending' }, ref);
-                if (other.status === TRUCK.AT_DOCK) return Object.assign({ result: 'locked', reason: 'at_dock' }, ref);
+                if (other.status === TRUCK.AT_DOCK || other.status === TRUCK.PICKUP_PENDING) return Object.assign({ result: 'locked', reason: 'at_dock' }, ref);   // waiting for the manager's ship confirm too
                 if (other.status === TRUCK.DEPARTING) return Object.assign({ result: 'locked' }, ref);
                 return { result: 'never_loaded' };
             default: return { result: 'never_loaded' };

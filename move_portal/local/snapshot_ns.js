@@ -12,8 +12,8 @@ function makeSnapshotNs(verify, rawOrPath) {
     // Local stand-in for a NetSuite write (the beta's `qty` / `on` modes): the op changes the snapshot in memory, so the re-check
     // reads NetSuite as it would after the real write. Mirrors move_tx.js closely enough for the beta:
     //  if_qty      sets an IF item's qty (idempotent at op.to; refuses a stale op.from); newLine on an IF without the item throws NO_IF_LINE like prod (the beta exercises the add-on IF)
-    //  if_create   adds an IF (returns its id): Shipped (C) when op.ship === true, Picked (A) when 'picked' (an IF with op.token on this TO, any
-    //              status, is returned instead of a second one), else Packed (B)
+    //  if_create   adds an IF (returns its id): Shipped (C) when op.ship === true, Picked (A) when 'picked', else Packed (B) ('packed' = drop
+    //              trailer docs); 'packed' / 'picked' with op.token: an IF with that token on this TO, any status, is returned instead of a second one
     //  to_create   adds an approved TO (returns its id)
     //  to_line     sets a TO item's open qty (idempotent at op.to; refuses a stale op.from); 0 closes the lines; a new item adds a line
     //  if_seal     stores the seal on a Picked/Packed IF
@@ -70,7 +70,7 @@ function makeSnapshotNs(verify, rawOrPath) {
                 tl.push({ toid: h.toid, tonum: h.tonum, tostatus: h.tostatus, trandate: h.trandate, item: Number(op.item), sku: skuOf(op.item), qty: to });
             }
         } else if (op.op === 'if_create') {
-            if (op.ship === 'picked' && op.token) {   // drop trailer: a Picked IF an earlier request saved on this TO (any status)
+            if ((op.ship === 'packed' || op.ship === 'picked') && op.token) {   // drop trailer: a Packed / Picked IF an earlier request saved on this TO (any status)
                 const hit = rows.find(r => String(r.toid) === String(op.toId) && String(r.memo || '').indexOf(op.token) !== -1);
                 if (hit) return String(hit.ifid);
             }

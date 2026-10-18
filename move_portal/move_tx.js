@@ -211,7 +211,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         return String(f.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
     function createIf(op) {
-        if (op.ship === 'picked' && op.token) {       // drop trailer: a Picked IF an earlier request saved on this TO (any status)
+        if ((op.ship === 'packed' || op.ship === 'picked') && op.token) {   // drop trailer: a Packed (Picked before 2026-10-17) IF an earlier request saved on this TO (any status)
             const found = findIf(op.token, op.toId, ['ItemShip:A', 'ItemShip:B', 'ItemShip:C']);
             if (found) return found;
         }
@@ -228,6 +228,7 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
             f.setValue({ fieldId: 'shipstatus', value: 'B' });
             if (op.token) f.setValue({ fieldId: 'memo', value: op.token });
         }
+        else if (op.ship === 'packed') { f.setValue({ fieldId: 'shipstatus', value: 'B' }); stampOn(f, op); }   // drop trailer docs: Shipped at the manager's ship confirm
         else if (op.ship === 'picked') { f.setValue({ fieldId: 'shipstatus', value: 'A' }); stampOn(f, op); }
         else { f.setValue({ fieldId: 'shipstatus', value: 'C' }); stampOn(f, op); }
         setLines(f, op.lines);

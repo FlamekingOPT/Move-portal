@@ -134,7 +134,7 @@ h3{font-size:15px;margin:16px 0 8px}
 
         const PILL = { loading: ['Loading', 'p-blue'], needs_fix: ['⚠ Needs IF fix', 'p-amber'], ready: ['✅ Ready to ship', 'p-green'], ship_pending: ['Shipped by floor', 'p-amber'], departing: ['Departing…', 'p-amber'],
             departed: ['In transit', 'p-blue'], receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], error: ['Needs attention', 'p-red'],
-            at_dock: ['📄 Docs ready · at dock', 'p-green'] };
+            at_dock: ['📄 Docs ready · at dock', 'p-green'], pickup_pending: ['🚛 Picked up · waiting for manager', 'p-amber'] };
         // Scan-built (drop trailer) trucks: the floor sends a verified load for docs; the manager writes them; the carrier picks it up.
         const SCAN_PILL = { ready: ['✅ Ready for docs', 'p-green'], ship_pending: ['Waiting for docs', 'p-amber'], departing: ['Writing docs…', 'p-amber'] };
         // Dashboard "Last step" labels for the dock steps; other kinds show with "_" as spaces.
@@ -621,7 +621,9 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<button class="btn go" data-act="goship">✅ Ready to ship: go to Shipments</button></div>' + undo;
             // Drop trailer: at the dock the scan box stays (every scan edits the TO + IF); no Finish loading / Verify. Picked up is on Shipments.
             if (v.scan && st === 'at_dock') return err + (t.docsSync ? flash('amber', '⚠ Docs out of sync', esc(t.docsSync.error || ''), 'A manager must press Retry in Approvals before more scans.') : '') +
+                '<div class="muted">' + (isMgr ? 'Load locked for the floor. A manager scan here edits the TO + IF.' : '🔒 Load locked: docs are approved. To change it, ask a manager to send the trailer back.') + '</div>' +
                 '<div class="muted">When the carrier takes the trailer, tap 🚛 Picked up on the Shipments tab.</div><button class="btn go" data-act="goship">Go to Shipments</button>';
+            if (v.scan && st === 'pickup_pending') return err + flash('amber', '🚛 Picked up: waiting for a manager to confirm it shipped', (t.pickupReq || {}).seal ? esc('Seal ' + t.pickupReq.seal) : '');
             if (v.scan && st === 'ship_pending') return flash('amber', '📄 Waiting for docs: a manager approves them in Approvals', (t.shipReq || {}).seal ? esc('Seal ' + t.shipReq.seal) : 'No seal yet');
             if (v.scan && st === 'departing') return flash('amber', 'Writing docs…', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals');
             if (st === 'ship_pending') return flash('amber', '🚚 Marked shipped: waiting for a manager to confirm', esc('Seal ' + ((t.shipReq || {}).seal || '')));
@@ -642,13 +644,13 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         function paintTruck(v, first) {
             S.tv = v;
-            const t = v.truck, open = ['loading', 'needs_fix', 'ready'].indexOf(t.status) !== -1, dock = !!v.scan && t.status === 'at_dock';
+            const t = v.truck, open = ['loading', 'needs_fix', 'ready'].indexOf(t.status) !== -1, dock = !!v.scan && t.status === 'at_dock' && isMgr;   // at the dock only a manager edits (2026-10-17)
             $('thead').innerHTML = esc(t.label) + ' ' + statusPill(t.status, t.scan) + (open ? ' <button class="dbtn gh sm" data-act="ttrailer" aria-label="Edit trailer">✎ trailer</button>' : '');
             $('tsub').textContent = t.depart ? (v.scan ? [t.depart.carrier, 'Trailer ' + t.depart.trailer, t.depart.seal ? 'Seal ' + t.depart.seal : 'No seal yet'].filter(Boolean)
                 : [t.depart.carrier, 'Trailer ' + t.depart.trailer, 'Seal ' + t.depart.seal]).join(' · ') : v.totals.pallets + ' pallets · ' + num(v.totals.pieces) + ' pcs';
             if (v.scan && !dock && t.toNum) $('tsub').textContent += ' · ' + [t.toNum, t.ifNum].filter(Boolean).join(' · ');     // a closed truck shows its documents
             const sb = t.sentBack;
-            $('tsent').innerHTML = dock ? flash('green', '📄 Docs ready · at dock', esc([t.toNum, t.ifNum].filter(Boolean).join(' · ')), 'Every scan updates the TO + IF') :
+            $('tsent').innerHTML = dock ? flash('green', '📄 Docs ready · at dock', esc([t.toNum, t.ifNum].filter(Boolean).join(' · ')), 'Manager edit: every scan updates the TO + IF') :
                 sb && open ? '<div class="card amberc"><h4>↩ Sent back by ' + esc(whoName(sb.by)) + ': ' + esc(sb.note) + '</h4><div class="muted">' + esc(sb.at) +
                 ' · fix it, verify again, then mark it shipped again on the Shipments tab</div></div>' : '';
             // A truck already open on this screen that turns at_dock (docs approved) needs its scan box built now.
@@ -812,7 +814,7 @@ h3{font-size:15px;margin:16px 0 8px}
             // go Ready for docs → Waiting for docs → At dock (Picked up) → Shipped today.
             const off = r.open.filter(t => !t.scan), scn = r.open.filter(t => t.scan);
             const ready = off.filter(t => t.status === 'ready'), wait = off.filter(t => t.status === 'ship_pending' || t.status === 'departing');
-            const sReady = scn.filter(t => t.status === 'ready'), sWait = scn.filter(t => t.status === 'ship_pending' || t.status === 'departing'), sDock = scn.filter(t => t.status === 'at_dock');
+            const sReady = scn.filter(t => t.status === 'ready'), sWait = scn.filter(t => t.status === 'ship_pending' || t.status === 'departing'), sDock = scn.filter(t => t.status === 'at_dock'), sPick = scn.filter(t => t.status === 'pickup_pending');
             const gets = await Promise.all(ready.concat(sReady, sDock).map(t => api('truck_get', { truckId: t.id })));
             if (S.tab !== 'ship' || !$('shipbox')) return;
             S.shipViews = {};
@@ -833,7 +835,12 @@ h3{font-size:15px;margin:16px 0 8px}
                     return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status, true) + '</h4><div class="muted">' + esc([q.seal ? 'Seal ' + q.seal : '', q.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) +
                         '</div><div class="muted">' + esc('Sent for docs by ' + (whoName(q.by) || '?') + ' · ' + (q.at || '')) + '</div>' + viewBtn(t.id) + '</div>';
                 }).join('') || '<div class="muted">None</div>') +
-                '<h3>At dock</h3>' + (sDock.map(t => dockCard(t, S.shipViews[String(t.id)])).join('') || '<div class="muted">None</div>')) +
+                '<h3>At dock</h3>' + (sDock.map(t => dockCard(t, S.shipViews[String(t.id)])).join('') || '<div class="muted">None</div>') +
+                '<h3>Picked up · waiting for manager</h3>' + (sPick.map(t => {
+                    const q = t.pickupReq || {};
+                    return '<div class="card"><h4>🚛 ' + esc(t.label) + ' ' + statusPill(t.status, true) + '</h4><div class="muted">' + esc([q.seal ? 'Seal ' + q.seal : '', t.pallets + ' pallets'].filter(Boolean).join(' · ')) +
+                        '</div><div class="muted">' + esc('Picked up by ' + (whoName(q.by) || '?') + ' · ' + (q.at || '')) + '</div>' + (t.error ? errBox(t.error) : '') + viewBtn(t.id) + (isMgr ? forceBtn(t.id, t.label) : '') + '</div>';
+                }).join('') || '<div class="muted">None</div>')) +
                 '<h3>Shipped today</h3>' + ((r.shippedToday || []).map(t => {
                     const d = t.depart || {};
                     return '<div class="card"><h4>🚚 ' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4><div class="muted">' +
@@ -852,7 +859,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="muted">' + esc('Trailer ' + (v.trailer || '')) + (v.scan ? ' · ' + num(v.scan.total) + ' lb' : ' · IFs ' + esc(ifs.join(', '))) + '</div>' +
                 '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
                 (v.trailer ? '' : '<label class="f" for="s_tr_' + id + '">Trailer #</label><input class="inp" id="s_tr_' + id + '" data-keep="1" maxlength="20" placeholder="Trailer #" autocomplete="off">') +
-                '<label class="f" for="s_seal_' + id + '">' + (v.scan ? 'Seal # (optional)' : 'Seal #') + '</label><input class="inp" id="s_seal_' + id + '" data-keep="1" maxlength="30" placeholder="Seal (tag) #" autocomplete="off">' +
+                (v.scan ? '<div class="muted">The seal # goes in at the dock, after the docs are approved.</div>' :
+                    '<label class="f" for="s_seal_' + id + '">Seal #</label><input class="inp" id="s_seal_' + id + '" data-keep="1" maxlength="30" placeholder="Seal (tag) #" autocomplete="off">') +
                 '<label class="f" for="s_car_' + id + '">Carrier</label><input class="inp" id="s_car_' + id + '" data-keep="1" maxlength="60" value="' + esc(v.carrier || carrier) + '">' +
                 '<div id="s_msg_' + id + '"></div><button class="btn go" data-act="dmark" data-id="' + id + '">' + (v.scan ? '📄 Send for docs' : '🚚 Mark shipped') + '</button>' + viewBtn(id) + '</div>';
         }
@@ -881,7 +889,7 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.dmark = async el => {
             const id = el.dataset.id, seal = $('s_seal_' + id), car = $('s_car_' + id), sv = seal ? seal.value.trim() : '', trl = $('s_tr_' + id), tv = trl ? trl.value.trim() : '';
             const scan = shipScan(id);
-            if (needWho() || !seal) return;
+            if (needWho() || (!seal && !scan)) return;
             if (trl && !tv) { tone('bad'); $('s_msg_' + id).innerHTML = errBox('Enter the trailer #'); trl.focus(); return; }
             if (!sv && !scan) { tone('bad'); $('s_msg_' + id).innerHTML = errBox('Enter the seal #'); seal.focus(); return; }
             if (!confirm(scan ? DOCS_Q : MARK_Q)) return;
@@ -893,23 +901,40 @@ h3{font-size:15px;margin:16px 0 8px}
             markSeen(r.view);
             if (r.needsFix) { needsFixAgain(r, id); return; }
             tone('ok');
-            seal.removeAttribute('data-keep');
-            if (scan) { shipList(flash('green', '📄 ' + esc(r.view.truck.label) + ' sent for docs', sv ? esc('Seal ' + sv) : 'No seal yet', 'A manager approves the docs in Approvals.')); return; }
+            if (seal) seal.removeAttribute('data-keep');
+            if (scan) { shipList(flash('green', '📄 ' + esc(r.view.truck.label) + ' sent for docs', '', 'A manager approves the docs in Approvals. The seal goes in at the dock.')); return; }
             shipList(flash('green', '🚚 ' + esc(r.view.truck.label) + ' marked shipped', esc('Seal ' + sv), 'A manager confirms it in Approvals.'));
         };
-        // Drop trailer, at the dock: the docs are written (TO + Picked IF). The seal can be saved any time; Picked up needs it.
+        // Drop trailer, at the dock: the docs are written (TO + Packed IF) and the load is locked. The floor saves the seal (portal only) and taps
+        // Picked up; a manager confirms it shipped. A manager can send the trailer back to Load out to change the load.
         function dockCard(t, v) {
             const id = esc(t.id), d = (v && v.truck) || t, dep = d.depart || {}, sync = d.docsSync;
             return '<div class="card ' + (sync || d.error ? 'amberc' : 'greenc') + '"><h4>🚚 ' + esc(t.label) + ' ' + statusPill('at_dock', true) + '</h4>' +
                 '<div class="muted">' + esc([d.toNum, d.ifNum, 'Trailer ' + ((v && v.trailer) || dep.trailer || '')].filter(Boolean).join(' · ')) + '</div>' +
-                '<div class="muted">' + num(v ? v.totals.pallets : t.pallets) + ' pallets · ' + num(v ? v.totals.pieces : 0) + ' pcs · Every scan updates the TO + IF</div>' +
+                '<div class="muted">' + num(v ? v.totals.pallets : t.pallets) + ' pallets · ' + num(v ? v.totals.pieces : 0) + ' pcs · 🔒 Load locked</div>' +
+                (d.sentBack ? '<div class="card amberc"><h4>↩ Sent back by ' + esc(whoName(d.sentBack.by)) + ': ' + esc(d.sentBack.note) + '</h4><div class="muted">' + esc(d.sentBack.at || '') + '</div></div>' : '') +
                 (sync ? flash('amber', '⚠ Docs out of sync', '', 'A manager must press Retry in Approvals before more scans.') : '') +
                 (d.error ? errBox(d.error) : '') +
                 '<label class="f" for="d_seal_' + id + '">Seal #</label><input class="inp" id="d_seal_' + id + '" data-keep="1" maxlength="30" value="' + esc(dep.seal || '') + '" placeholder="Seal (tag) #" autocomplete="off">' +
                 '<div id="d_msg_' + id + '"></div>' + viewBtn(id) + '<div class="row2"><button class="btn gh" data-act="dseal" data-id="' + id + '">Save seal</button>' +
                 '<button class="btn go" data-act="dpicked" data-id="' + id + '"' + (sync ? ' disabled' : '') + '>🚛 Picked up</button></div>' +
-                (isMgr ? forceBtn(t.id, t.label) : '') + '</div>';
+                (isMgr ? '<button class="btn ghost sm" data-act="dsendback" data-id="' + id + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' + forceBtn(t.id, t.label) : '') + '</div>';
         }
+        // Manager: the load is locked at the dock; to change it the trailer goes back to Load out with its docs. The next Approve docs
+        // writes only the difference onto the same TO + IF.
+        ACT.dsendback = async el => {
+            const label = el.dataset.label || 'this trailer';
+            const note = prompt('Send ' + label + ' back to Load out. Note for the floor (required):');
+            if (note == null) return;
+            closeNote();
+            const back = r => (S.tab === 'ship' && $('shipbox') ? shipList : SCREENS.approve)(r);
+            if (!note.trim()) { tone('bad'); back(errBox('Enter a note for the floor')); return; }
+            busy(el, true);
+            const r = await api('dock_sendback', { truckId: el.dataset.id, note: note.trim() });
+            busy(el, false);
+            tone(r.ok ? 'ok' : 'bad');
+            back(r.ok ? flash('amber', '↩ ' + esc(label) + ' sent back to Load out', esc(note.trim()), 'Approve docs again after the floor sends it: only the change is written to the same TO + IF.') : errBox(r.error));
+        };
         // Manager escape for a trailer stuck at the dock: departs it in the portal with no NetSuite writes (the office fixes the TO/IF by hand).
         function forceBtn(id, label) {
             return '<button class="btn ghost sm" data-act="dforce" data-id="' + esc(id) + '" data-label="' + esc(label || '') + '">Mark picked up without NetSuite</button>';
@@ -942,7 +967,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const id = el.dataset.id, inp = $('d_seal_' + id), sv = inp ? inp.value.trim() : '';
             if (needWho() || !inp) return;
             if (!sv) { tone('bad'); $('d_msg_' + id).innerHTML = errBox('Enter the seal # before the carrier leaves'); inp.focus(); return; }
-            if (!confirm('Carrier has the trailer? This marks the IF Shipped in NetSuite.')) return;
+            if (!confirm('Carrier has the trailer? A manager confirms it shipped.')) return;
             busy(el, true);
             const r = await api('picked_up', { truckId: id, seal: sv });
             busy(el, false);
@@ -950,7 +975,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!r.ok) { tone('bad'); shipList(errBox(r.error)); return; }
             tone('ok');
             inp.removeAttribute('data-keep');
-            shipList(flash('green', '🚛 ' + esc(r.view.truck.label) + ' picked up', esc('Seal ' + sv), 'In transit to ' + esc(B.toName) + '.'));
+            shipList(flash('green', '🚛 ' + esc(r.view.truck.label) + ' picked up', esc('Seal ' + sv), 'Sent to a manager to confirm it shipped.'));
         };
 
         // ── Manager: Labels (requests · print a SKU · print plan · reprint · SKU configs) ──
@@ -1293,7 +1318,8 @@ h3{font-size:15px;margin:16px 0 8px}
                     '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '" data-scan="1">✅ Approve</button>' +
                     '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Reject</button>' +
                     '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">📋 View load</button></div>' +
-                    '<div class="muted sm">Approve writes the TO + IF (Picked). Shipped happens at pickup.</div></div>';
+                    '<div class="muted sm">' + (x.redo ? 'Sent back from the dock: Approve updates ' + esc([x.redo.toNum, x.redo.ifNum].filter(Boolean).join(' + ')) + ' with only the change.'
+                        : 'Approve writes the TO + IF (Packed). Shipped happens when you confirm the pickup.') + '</div></div>';
             }
             const t = x.truck, id = esc(t.id), lab = esc(t.label), late = x.ageMin != null && x.ageMin >= LATE_MIN;
             const oth = (x.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
@@ -1366,8 +1392,14 @@ h3{font-size:15px;margin:16px 0 8px}
         };
         function paintApprove(msg) {
             const r = S.appr;
-            setLate((r.shipPending || []).filter(x => x.ageMin != null && x.ageMin >= LATE_MIN).length);
+            setLate((r.shipPending || []).concat(r.pickups || []).filter(x => x.ageMin != null && x.ageMin >= LATE_MIN).length);
             const ship = (r.shipPending || []).length ? '<h3 id="ap_ship">Ship confirmations</h3>' + r.shipPending.map(shipConfirmCard).join('') : '';
+            const pick = (r.pickups || []).length ? '<h3 id="ap_pick">Picked up · confirm shipped</h3>' + r.pickups.map(pickupCard).join('') : '';
+            // Drop trailer: trailers parked at the dock (load locked for the floor). Send back reopens the load in Load out.
+            const dockList = (r.atDock || []).length ? '<h3 id="ap_dock">At the dock</h3>' + r.atDock.map(t => '<div class="card"><h4>🚚 ' + esc(t.label) + ' ' + statusPill('at_dock', true) + '</h4>' +
+                '<div class="muted">' + esc([t.toNum, t.ifNum, 'Trailer ' + t.trailer, t.seal ? 'Seal ' + t.seal : 'No seal yet', num(t.pallets) + ' pallets'].filter(Boolean).join(' · ')) + '</div>' +
+                '<div class="row2"><button class="dbtn gh" data-act="dsendback" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' +
+                '<button class="dbtn gh" data-act="opentruck" data-id="' + esc(t.id) + '">📋 View load</button></div>' + forceBtn(t.id, t.label) + '</div>').join('') : '';
             const fix = (r.fixes || []).length ? '<h3 id="ap_fix">Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
             const trk = (r.trucks || []).length ? '<h3 id="ap_trucks">Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))).join('') : '';
             // Drop trailer: an at-dock truck whose TO + IF edit failed. Scans are blocked until Retry finishes the pending edits.
@@ -1397,13 +1429,44 @@ h3{font-size:15px;margin:16px 0 8px}
                         ? '<button class="btn go" disabled>Approve receipt — ' + esc((x.blockReason || '').toLowerCase()) + '</button>'
                         : '<button class="btn go" data-act="aprecv" data-id="' + esc(x.truck.id) + '" data-label="' + esc(x.truck.label) + '">' + (x.stuck ? 'Re-approve receipt' : missing.length ? 'Approve short receipt' : 'Approve receipt') + '</button>') + '</div>';
             }).join('');
-            main((msg || '') + (ship + oos + fix + trk + flg + (ret ? '<h3 id="ap_retry">Stalled departures</h3>' + ret : '') + (rec ? '<h3 id="ap_rec">Receipts</h3>' + rec : '') || '<div class="muted">Nothing waiting for approval</div>'));
+            main((msg || '') + (ship + pick + oos + fix + trk + flg + (ret ? '<h3 id="ap_retry">Stalled departures</h3>' + ret : '') + (rec ? '<h3 id="ap_rec">Receipts</h3>' + rec : '') || '<div class="muted">Nothing waiting for approval</div>') + dockList);
             if (S.scrollTo) { const a = $(S.scrollTo); S.scrollTo = ''; if (a) a.scrollIntoView({ block: 'start' }); }
         }
+        // Drop trailer: the floor tapped Picked up; Confirm shipped stamps each IF Shipped with the seal (2026-10-17).
+        function pickupCard(x) {
+            const id = esc(x.truck.id), lab = esc(x.truck.label), late = x.ageMin != null && x.ageMin >= LATE_MIN;
+            return '<div class="card ' + (late || x.error ? 'amberc' : 'bl') + '"><h4>🚛 ' + lab + (late ? ' <span class="pill p-amber">waiting ' + x.ageMin + ' min</span>' : '') + '</h4>' +
+                '<div class="muted">' + esc(['Trailer ' + x.trailer, x.seal ? 'Seal ' + x.seal : 'No seal', x.carrier, x.toNum].concat(x.ifs || []).filter(Boolean).join(' · ')) + '</div>' +
+                '<div class="muted">' + esc((x.lines || []).map(l => l.sku + ' × ' + num(l.pcs)).join(' · ')) + ' · ' + num(x.pallets) + ' pallets' + (x.lbs != null ? ' · ' + num(x.lbs) + ' lb' : '') + '</div>' +
+                '<div class="muted">' + esc('Picked up by ' + (x.by || '?') + ' · ' + x.at) + '</div>' + (x.error ? errBox(x.error) : '') +
+                '<div class="row2"><button class="dbtn go" data-act="pkconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Confirm shipped</button>' +
+                (x.halfDone ? '' : '<button class="dbtn gh" data-act="pkreject" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button>') +
+                '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">📋 View load</button></div>' +
+                '<div class="muted sm">Confirm stamps the IF Shipped with the seal; stock leaves Riverside.</div>' + forceBtn(x.truck.id, x.truck.label) + '</div>';
+        }
+        ACT.pkconfirm = async el => {
+            const label = el.dataset.label || 'this trailer';
+            if (!confirm('Confirm ' + label + ' shipped? Each IF is stamped Shipped in NetSuite (as the write mode allows).')) return;
+            busy(el, true);
+            const r = await api('pickup_confirm', { truckId: el.dataset.id });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? flash('green', '✅ ' + esc(label) + ' shipped', esc('Seal ' + (((r.view.truck || {}).depart || {}).seal || '')),
+                (r.written || []).length ? 'IF stamped Shipped in NetSuite.' : 'Plan saved (nothing written to NetSuite).') : errBox(r.error));
+        };
+        ACT.pkreject = async el => {
+            const label = el.dataset.label || 'this trailer';
+            const note = prompt('Send ' + label + ' back to the dock. Note for the floor (required):');
+            if (note == null) return;
+            if (!note.trim()) { tone('bad'); SCREENS.approve(errBox('Enter a note for the floor')); return; }
+            busy(el, true);
+            const r = await api('pickup_reject', { truckId: el.dataset.id, note: note.trim() });
+            tone(r.ok ? 'ok' : 'bad');
+            SCREENS.approve(r.ok ? flash('amber', '↩ ' + esc(label) + ' back at the dock', esc(note.trim())) : errBox(r.error));
+        };
         ACT.apaddopen = el => { S.addOpen = S.addOpen || {}; S.addOpen[el.dataset.id] = !S.addOpen[el.dataset.id]; if (S.appr) paintApprove(''); };
         ACT.apconfirm = async el => {
             const label = el.dataset.label || 'this truck';
-            if (!confirm(el.dataset.scan ? 'Approve the docs for ' + label + '? This writes the TO + IF (Picked) to NetSuite (as the write mode allows). Shipped happens at pickup.'
+            if (!confirm(el.dataset.scan ? 'Approve the docs for ' + label + '? This writes the TO + IF (Packed) to NetSuite (as the write mode allows). Shipped happens when you confirm the pickup.'
                 : 'Confirm ' + label + ' shipped? It gets its Truck # and its IFs are stamped/shipped in NetSuite (as the write mode allows).')) return;
             busy(el, true);
             const r = await api('ship_confirm', { truckId: el.dataset.id });
@@ -1413,7 +1476,8 @@ h3{font-size:15px;margin:16px 0 8px}
             const t = r.view.truck;
             if (r.atDock) {                             // drop trailer: docs written, the truck waits at the dock for the carrier
                 SCREENS.approve(flash('green', !r.toNum ? '✅ ' + esc(t.label) + ' · Plan saved (writes are off)'
-                    : '📄 Docs written: ' + esc(r.toNum || 'TO') + ' · ' + esc(r.ifNum || 'IF') + ' (Picked). The floor taps Picked up when the carrier takes the trailer.',
+                    : r.outOfSync ? '⚠ ' + esc(t.label) + ' · docs out of sync: press Retry below'
+                    : '📄 Docs ' + (r.rewritten ? 'updated' : 'written') + ': ' + esc(r.toNum || 'TO') + ' · ' + esc(r.ifNum || 'IF') + ' (Packed). The floor taps Picked up when the carrier takes the trailer.',
                     (t.depart || {}).seal ? esc('Seal ' + t.depart.seal) : 'No seal yet'));
                 return;
             }
@@ -1475,7 +1539,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 dep.carrier || q.carrier || '', t.toNum || '', t.ifNum || ''].filter(Boolean).join(' · ');
             m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4>' + (hdr ? '<div class="muted">' + esc(hdr) + '</div>' : '') +
                 '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (v.scan ? ' · ' + num(v.scan.total) + ' lb' : '') + '</div>' +
-                (v.scan && !v.receipt ? (v.scan.rows.length ? scanTable(v.scan, { weight: true }) : '<div class="muted">No pallets loaded</div>') + palletWeights(v)
+                (v.scan && (!v.receipt || ['at_dock', 'pickup_pending'].indexOf(t.status) !== -1) ? (v.scan.rows.length ? scanTable(v.scan, { weight: true }) : '<div class="muted">No pallets loaded</div>') + palletWeights(v)
                 : v.receipt
                     ? '<table class="tbl"><tr><th>IF</th><th>Received / shipped</th></tr>' + v.receipt.perIf.map(f => '<tr class="' + (f.short ? 'warnrow' : 'okrow') + '"><td>' + esc(f.ifNum) + '</td><td>' + num(f.received) + ' / ' + num(f.shipped) + '</td></tr>').join('') + '</table>' +
                       (v.receipt.missing.length ? '<div class="muted warn">Missing: ' + esc(v.receipt.missing.join(', ')) + ' · in transit on the TO</div>' : '') +
@@ -1483,7 +1547,8 @@ h3{font-size:15px;margin:16px 0 8px}
                     : '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' + v.lines.map(l => '<tr><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) + '</td><td>' + num(l.scanned) + ' / ' + num(l.expected) + '</td></tr>').join('') +
                       v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td>' + num(x.scanned) + ' extra</td></tr>').join('') + '</table>') +
                 ((v.otherItems || []).length ? '<div class="muted">Other: ' + v.otherItems.map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ') + '</div>' : '') + noteHtml(v.shortNote) +
-                '<div class="row2"><button class="dbtn gh" data-act="notecancel">Close</button></div></div>';
+                '<div class="row2">' + (t.scan && t.status === 'at_dock' ? '<button class="dbtn gh" data-act="dsendback" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' : '') +
+                '<button class="dbtn gh" data-act="notecancel">Close</button></div></div>';
             document.body.appendChild(m);
         };
         ACT.apretry = async el => { if (!confirm('Retry departure of ' + ((el.dataset.label) || 'this truck') + '?')) return; busy(el, true); const r = await api('depart_retry', { truckId: el.dataset.id }); tone(r.ok ? 'ok' : 'bad'); SCREENS.approve(r.ok ? flash('green', '✅ Departed') : errBox(r.error)); };
@@ -1627,7 +1692,7 @@ h3{font-size:15px;margin:16px 0 8px}
             return s + '<line x1="' + x0 + '" x2="' + (W - 10) + '" y1="' + base + '" y2="' + base + '" stroke="#cbd5e1"/></svg>';
         }
         // ── Dashboard (spec 2026-10-06 pm §3) ───────────────────────────
-        const STAGES = ['Receipt pending', 'Waiting for manager', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
+        const STAGES = ['Receipt pending', 'Waiting for manager', 'Waiting for ship confirm', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
         const HISTSORTS = [['stage', 'Sort: furthest along'], ['newest', 'Sort: newest step'], ['if', 'Sort: IF'], ['trailer', 'Sort: trailer']];
         const SORTS = [['stage', 'Sort: furthest along'], ['newest', 'Sort: newest step'], ['oldest', 'Sort: oldest step (stuck first)'], ['if', 'Sort: IF'], ['trailer', 'Sort: trailer']];
         const COLS = [['ifNum', 'Fulfillment'], ['toNum', 'TO'], ['truck', 'Truck'], ['', 'SKUs on truck'], ['pcs', 'Pallets · pcs'], ['', 'Received'], ['stage', 'Status'], ['newest', 'Last step']];

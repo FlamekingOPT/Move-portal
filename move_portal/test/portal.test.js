@@ -1838,7 +1838,7 @@ test('approvals: top-level keys; trucks flag empty/gone IFs; fixes skip diffs th
     ctx.ns.plannedIfs = () => real().filter(f => f.ifId !== '9002');
     ctx.run('truck_verify', { truckId: t.id });
     const a = ctx.run('approvals');
-    assert.deepEqual(Object.keys(a).sort(), ['fixes', 'flagged', 'freeIfs', 'receipts', 'retries', 'shipPending', 'trucks', 'writeMode']);
+    assert.deepEqual(Object.keys(a).sort(), ['fixes', 'flagged', 'freeIfs', 'pickups', 'receipts', 'retries', 'shipPending', 'trucks', 'writeMode']);
     assert.deepEqual(a.trucks[0].ifs.map(f => [f.ifNum, f.gone, f.empty]), [['IF9001', false, false], ['IF9002', true, false]]);
     assert.deepEqual(a.fixes, []);
     ctx.ns.plannedIfs = real;
@@ -2772,6 +2772,11 @@ function shipScan(ctx, n, mode) {
     return t;
 }
 
+// Drop trailer (2026-10-17): the floor's Picked up waits for the manager; Confirm shipped writes the stamps. A retry skips the floor step.
+function pickUp(ctx, a) {
+    if (ctx.data.getLoad(a.truckId).status !== 'pickup_pending') ctx.run('picked_up', a, false);
+    return ctx.run('pickup_confirm', { truckId: a.truckId });
+}
 function docsScan(ctx, n, mode, seal) {
     ctx.data.db.settings.writeMode = mode || 'on';
     const t = scanTruck(ctx, n || 2);
@@ -2780,7 +2785,7 @@ function docsScan(ctx, n, mode, seal) {
     return t;
 }
 
-test('drop trailer: Send for docs needs no seal; Approve writes TO (B) + Picked IF and parks the truck at the dock', () => {
+test('drop trailer: Send for docs needs no seal; Approve writes TO (B) + Packed IF and parks the truck at the dock', () => {
     const ctx = scanSetup();
     const t = docsScan(ctx, 2);
     assert.equal(ctx.data.getLoad(t.id).status, 'ship_pending');
@@ -2788,18 +2793,19 @@ test('drop trailer: Send for docs needs no seal; Approve writes TO (B) + Picked 
     assert.equal(r.atDock, true);
     const x = ctx.data.getLoad(t.id), d = x.data;
     const [to, f] = ctx.tx._t.ops;
-    assert.deepEqual([to.op, to.orderStatus, f.op, f.ship, f.seal], ['to_create', 'B', 'if_create', 'picked', '']);
+    assert.deepEqual([to.op, to.orderStatus, f.op, f.ship, f.seal], ['to_create', 'B', 'if_create', 'packed', '']);
     assert.deepEqual([x.status, d.depart.seal, d.departPallets], ['at_dock', '', null]);
     assert.deepEqual(d.docLines, { '11': { qty: 240, ifId: d.ifId, ifNum: 'IF' + d.ifId } });
     assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'loaded'));
 });
 
-test('drop trailer: a seal given at Send for docs is stamped on the Picked IF', () => {
+test('drop trailer (2026-10-17): a seal typed at Send for docs is ignored; the seal goes in at the dock only', () => {
     const ctx = scanSetup();
     const t = docsScan(ctx, 1, 'on', '5249330');
+    assert.equal(ctx.data.getLoad(t.id).data.shipReq.seal, '');
     ctx.run('ship_confirm', { truckId: t.id });
-    assert.equal(ctx.tx._t.ops[1].seal, '5249330');
-    assert.equal(ctx.data.getLoad(t.id).data.depart.seal, '5249330');
+    assert.equal(ctx.tx._t.ops[1].seal, '');
+    assert.equal(ctx.data.getLoad(t.id).data.depart.seal, '');
 });
 
 test('drop trailer: off mode parks at the dock with a plan only', () => {
@@ -2825,17 +2831,17 @@ test('drop trailer: Shipments lists at-dock trucks as open, not shipped; Dashboa
     assert.deepEqual(rows.map(r => [r.stage, r.pallets, r.pcs]), [['At dock', 1, 120]]);
 });
 
-test('scan-built Approve (on): writes TO then Picked IF and parks at the dock', () => {
+test('scan-built Approve (on): writes TO then Packed IF and parks at the dock', () => {
     const ctx = scanSetup();
     const t = shipScan(ctx, 2);
     ctx.run('ship_confirm', { truckId: t.id });
     const x = ctx.data.getLoad(t.id), d = x.data;
     const [to, f] = ctx.tx._t.ops;
     assert.deepEqual([to.op, to.orderStatus, to.fromLoc, to.toLoc, to.lines, to.token], ['to_create', 'B', '35', '99', { '11': 240 }, '[MV-' + t.id + ']']);
-    assert.deepEqual([f.op, f.ship, f.toId, f.seal, f.trailer, f.lines], ['if_create', 'picked', d.toId, 'S' + t.id, d.trailer, { '11': 240 }]);
+    assert.deepEqual([f.op, f.ship, f.toId, f.seal, f.trailer, f.lines], ['if_create', 'packed', d.toId, '', d.trailer, { '11': 240 }]);
     assert.deepEqual([x.status, x.to, x.if, d.toNum, d.ifNum], ['at_dock', d.toId, d.ifId, 'TO' + d.toId, 'IF' + d.ifId]);
     assert.deepEqual(d.alloc, [{ ifId: d.ifId, ifNum: 'IF' + d.ifId, toId: d.toId, toNum: 'TO' + d.toId, lines: { '11': 240 }, addOn: false }]);
-    ctx.run('picked_up', { truckId: t.id }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'S' + t.id });
     t.ps.forEach(p => ctx.run('unload_scan', { truckId: t.id, raw: p.code }, false));
     ctx.run('receipt_approve', { truckId: t.id });
     const ir = ctx.tx._t.ops.find(o => o.op === 'receipt');
@@ -2947,7 +2953,7 @@ test('scan-built: a late pallet accepted after shipping gets a one-pallet TO + S
     const ctx = scanSetup();
     const t = shipScan(ctx, 1);
     ctx.run('ship_confirm', { truckId: t.id });
-    ctx.run('picked_up', { truckId: t.id, seal: 'S' + t.id }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'S' + t.id });
     const late = printLabels(ctx, 1, 'Jlate')[0];
     ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);           // never loaded → flagged
     const n0 = ctx.tx._t.ops.length;
@@ -2970,7 +2976,7 @@ test('scan-built: a late pallet is refused when Riverside cannot cover it, and n
     const ctx = scanSetup();
     const t = shipScan(ctx, 1);
     ctx.run('ship_confirm', { truckId: t.id });
-    ctx.run('picked_up', { truckId: t.id, seal: 'S' + t.id }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'S' + t.id });
     const late = printLabels(ctx, 1, 'Jlate2')[0];
     ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);
     ctx.data.db.stock['35']['11'].avail = 10;
@@ -2992,7 +2998,7 @@ test('scan-built: a late-pallet Accept retried after a failed IF is not blocked 
     const ctx = scanSetup();
     const t = shipScan(ctx, 1);
     ctx.run('ship_confirm', { truckId: t.id });
-    ctx.run('picked_up', { truckId: t.id, seal: 'S' + t.id }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'S' + t.id });
     const late = printLabels(ctx, 1, 'Jlate3')[0];
     ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);
     const ref = t.id + '-P' + late.id, n0 = ctx.tx._t.ops.length;
@@ -3101,7 +3107,7 @@ test('final5: Reject refuses a late pallet whose TO was created without its IF, 
     const ctx = scanSetup();
     const t = shipScan(ctx, 1);
     ctx.run('ship_confirm', { truckId: t.id });
-    ctx.run('picked_up', { truckId: t.id, seal: 'S' + t.id }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'S' + t.id });
     const late = printLabels(ctx, 1, 'Jlate5')[0];
     ctx.run('unload_scan', { truckId: t.id, raw: late.code }, false);
     ctx.tx._t.failOn = op => op.op === 'if_create';
@@ -3161,8 +3167,8 @@ function atDock(ctx, n) {
 test('picked up: refused without a seal; with one, each IF is stamped Shipped and the truck leaves', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 2);
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id }, false), /Enter the seal/);
-    const r = ctx.run('picked_up', { truckId: t.id, seal: '5249330' }, false);
+    assert.throws(() => pickUp(ctx, { truckId: t.id }), /Enter the seal/);
+    const r = pickUp(ctx, { truckId: t.id, seal: '5249330' });
     const st = ctx.tx._t.ops.find(o => o.op === 'if_stamp'), d = ctx.data.getLoad(t.id).data;
     assert.deepEqual([st.ifId, st.seal, st.trailer, st.lines], [d.ifId, '5249330', d.trailer, { '11': 240 }]);
     assert.deepEqual([ctx.data.getLoad(t.id).status, d.depart.seal, d.depart.pickedUpBy], ['departed', '5249330', 'Miguel']);
@@ -3175,32 +3181,32 @@ test('picked up: refused without a seal; with one, each IF is stamped Shipped an
     assert.deepEqual([ir.ifId, ir.toId, ir.lines], [d.ifId, d.toId, { '11': 240 }]);
 });
 
-test('dock seal: saved at the dock stamps the Picked IF; Picked up then needs no seal', () => {
+test('dock seal (2026-10-17): saved on the truck only, no NetSuite write; Picked up then needs no seal', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     ctx.run('dock_seal', { truckId: t.id, seal: '777' }, false);
-    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.seal]), [['if_seal', '777']]);
+    assert.deepEqual(ctx.tx._t.ops, []);
     assert.equal(ctx.data.getLoad(t.id).data.depart.seal, '777');
-    ctx.run('picked_up', { truckId: t.id }, false);
+    pickUp(ctx, { truckId: t.id });
     assert.equal(ctx.data.getLoad(t.id).status, 'departed');
 });
 
-test('dock seal: a truck waiting for docs takes its seal at Send for docs, not here (final review)', () => {
+test('dock seal: a truck waiting for docs takes no seal (it goes in at the dock)', () => {
     const ctx = scanSetup();
     const t = docsScan(ctx, 1);
-    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: '888' }, false), /Add the seal at Send for docs/);
+    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: '888' }, false), /The seal goes in once the trailer is at the dock/);
     assert.equal(ctx.tx._t.ops.length, 0);
 });
 
-test('picked up: a stamp failure keeps the truck at the dock with an error; pressing again finishes', () => {
+test('confirm shipped: a stamp failure keeps the truck waiting for the manager with an error; pressing again finishes', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     ctx.tx._t.failOn = op => op.op === 'if_stamp';
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: '9' }, false), /NetSuite/);
+    assert.throws(() => pickUp(ctx, { truckId: t.id, seal: '9' }), /NetSuite/);
     const x = ctx.data.getLoad(t.id);
-    assert.deepEqual([x.status, !!x.data.error, x.data.claim], ['at_dock', true, '']);
+    assert.deepEqual([x.status, !!x.data.error, x.data.claim], ['pickup_pending', true, '']);
     assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'loaded'));
-    ctx.run('picked_up', { truckId: t.id, seal: '9' }, false);
+    pickUp(ctx, { truckId: t.id, seal: '9' });
     assert.equal(ctx.data.getLoad(t.id).status, 'departed');
     assert.equal(ctx.data.getLoad(t.id).data.error, '');
 });
@@ -3215,10 +3221,10 @@ test('picked up: refused while docs are out of sync; a seal used by another truc
     ctx.run('ship_mark', { truckId: b.id }, false);
     ctx.run('ship_confirm', { truckId: b.id });
     assert.equal(ctx.data.getLoad(b.id).status, 'at_dock');
-    ctx.run('picked_up', { truckId: a.id, seal: '55' }, false);
-    assert.throws(() => ctx.run('picked_up', { truckId: b.id, seal: '55' }, false), /already on/);
+    pickUp(ctx, { truckId: a.id, seal: '55' });
+    assert.throws(() => pickUp(ctx, { truckId: b.id, seal: '55' }), /already on/);
     ctx.data.updateLoad(ctx.data.getLoad(b.id), { data: { docsSync: { error: 'x', pending: [] } } });
-    assert.throws(() => ctx.run('picked_up', { truckId: b.id, seal: '56' }, false), /out of sync/);
+    assert.throws(() => pickUp(ctx, { truckId: b.id, seal: '56' }), /out of sync/);
 });
 
 test('picked up in off mode: the truck leaves and pallets go in transit with no NetSuite writes', () => {
@@ -3226,7 +3232,7 @@ test('picked up in off mode: the truck leaves and pallets go in transit with no 
     const t = docsScan(ctx, 2, 'off');
     ctx.run('ship_confirm', { truckId: t.id });
     ctx.tx._t.ops = [];
-    const r = ctx.run('picked_up', { truckId: t.id, seal: 'OFF1' }, false);
+    const r = pickUp(ctx, { truckId: t.id, seal: 'OFF1' });
     assert.equal(ctx.tx._t.ops.length, 0);
     assert.deepEqual([ctx.data.getLoad(t.id).status, r.written.length, r.planOnly.length], ['departed', 0, 1]);
     assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'in_transit'));
@@ -3248,7 +3254,7 @@ function atDockWithAddOn(ctx) {
     const t = atDock(ctx, 1);
     const p = printLabels(ctx, 1, 'JaddOn', [{ item: '12', sku: 'YSN301', cfg: 'A', pcs: 60 }])[0];
     ctx.tx._t.failOn = op => op.op === 'if_qty' && op.newLine ? (() => { throw new Error('NO_IF_LINE IF has no line'); })() : false;
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false).result, 'ok');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }).result, 'ok');   // at the dock: a manager edit
     ctx.tx._t.failOn = null;
     ctx.tx._t.ops = [];
     assert.equal(ctx.data.getLoad(t.id).data.alloc.length, 2);
@@ -3259,11 +3265,11 @@ test('picked up fix: once a stamp landed the seal is pinned; a different seal is
     const ctx = scanSetup();
     const t = atDockWithAddOn(ctx), d = ctx.data.getLoad(t.id).data;
     ctx.tx._t.failOn = op => op.op === 'if_stamp' && String(op.ifId) === String(d.alloc[1].ifId);
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: 'A1' }, false), /NetSuite/);
+    assert.throws(() => pickUp(ctx, { truckId: t.id, seal: 'A1' }), /NetSuite/);
     const x = ctx.data.getLoad(t.id);
-    assert.deepEqual([x.status, x.data.depart.seal, Object.keys(x.data.writes).filter(k => /^if_stamp:/.test(k))], ['at_dock', 'A1', ['if_stamp:' + d.ifId]]);
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: 'B2' }, false), /Seal A1 is already on the paperwork: use it, or ask the office/);
-    ctx.run('picked_up', { truckId: t.id, seal: ' a1 ' }, false);
+    assert.deepEqual([x.status, x.data.depart.seal, Object.keys(x.data.writes).filter(k => /^if_stamp:/.test(k))], ['pickup_pending', 'A1', ['if_stamp:' + d.ifId]]);
+    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: 'B2' }, false), /waiting for a manager to confirm/);   // the seal is pinned on the waiting truck
+    pickUp(ctx, { truckId: t.id, seal: ' a1 ' });
     assert.equal(ctx.data.getLoad(t.id).status, 'departed');
     const st = ctx.tx._t.ops.filter(o => o.op === 'if_stamp');
     assert.deepEqual(st.map(o => o.ifId).sort(), [d.alloc[0].ifId, d.alloc[1].ifId].map(String).sort());
@@ -3274,27 +3280,29 @@ test('picked up fix: a retry with no seal uses the pinned one, and a half-done p
     const ctx = scanSetup();
     const t = atDockWithAddOn(ctx), d = ctx.data.getLoad(t.id).data;
     ctx.tx._t.failOn = op => op.op === 'if_stamp' && String(op.ifId) === String(d.alloc[1].ifId);
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: 'P9' }, false), /NetSuite/);
+    assert.throws(() => pickUp(ctx, { truckId: t.id, seal: 'P9' }), /NetSuite/);
     const b = atDockJob(ctx, 'Jpin2');
-    assert.throws(() => ctx.run('picked_up', { truckId: b.id, seal: 'P9' }, false), /already on/);
-    ctx.run('picked_up', { truckId: t.id }, false);
+    assert.throws(() => pickUp(ctx, { truckId: b.id, seal: 'P9' }), /already on/);
+    pickUp(ctx, { truckId: t.id });
     assert.ok(ctx.tx._t.ops.filter(o => o.op === 'if_stamp').every(o => o.seal === 'P9'));
     assert.equal(ctx.data.getLoad(t.id).status, 'departed');
 });
 
-test('picked up fix: while Picked up is half done, dock scans and dock seal are refused; Picked up again finishes', () => {
+test('confirm shipped fix: while a confirm is half done, scans, seal and Send back are refused; Confirm shipped again finishes', () => {
     const ctx = scanSetup();
     const t = atDockWithAddOn(ctx), d = ctx.data.getLoad(t.id).data;
     ctx.tx._t.failOn = op => op.op === 'if_stamp' && String(op.ifId) === String(d.alloc[1].ifId);
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: 'H1' }, false), /NetSuite/);
+    assert.throws(() => pickUp(ctx, { truckId: t.id, seal: 'H1' }), /NetSuite/);
     const n0 = ctx.tx._t.ops.length;
     const more = printLabels(ctx, 1, 'Jhalf')[0];
-    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: more.code }, false), /Picked up is half done: press Picked up again\./);
-    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false), /Picked up is half done/);
-    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: 'H1' }, false), /Picked up is half done/);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: more.code }), /closed/);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }), /closed/);
+    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: 'H1' }, false), /waiting for a manager to confirm/);
+    assert.throws(() => ctx.run('pickup_reject', { truckId: t.id, note: 'n' }), /A stamp already landed/);
+    assert.throws(() => ctx.run('dock_sendback', { truckId: t.id, note: 'n' }), /A stamp already landed/);
     assert.equal(ctx.tx._t.ops.length, n0);
     assert.equal(ctx.data.getPallet(more.id).status, 'labeled');
-    ctx.run('picked_up', { truckId: t.id }, false);
+    pickUp(ctx, { truckId: t.id });
     assert.equal(ctx.data.getLoad(t.id).status, 'departed');
 });
 
@@ -3303,18 +3311,18 @@ test('picked up fix: an in-transit pallet alone also marks the pickup half done'
     const t = atDock(ctx, 2);
     ctx.data.updatePallet(ctx.data.getPallet(t.ps[0].id), { status: 'in_transit' });
     assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: 'IT1' }, false), /Picked up is half done/);
-    ctx.run('picked_up', { truckId: t.id, seal: 'IT1' }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'IT1' });
     assert.equal(ctx.data.getLoad(t.id).status, 'departed');
     assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'in_transit'));
 });
 
-test('dock seal fix: a failed IF seal write releases the claim and leaves the seal unchanged', () => {
+test('dock seal fix (2026-10-17): the floor seal never reaches NetSuite, so an IF NetSuite would refuse does not matter', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     ctx.tx._t.failOn = op => op.op === 'if_seal';
-    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: 'F1' }, false), /The seal was not saved: NetSuite refused it/);
+    ctx.run('dock_seal', { truckId: t.id, seal: 'F1' }, false);
     const x = ctx.data.getLoad(t.id);
-    assert.deepEqual([x.data.claim, x.data.depart.seal], ['', '']);
+    assert.deepEqual([x.data.claim, x.data.depart.seal, ctx.tx._t.ops.length], ['', 'F1', 0]);
 });
 
 test('dock seal fix: a seal another truck holds is refused', () => {
@@ -3329,14 +3337,14 @@ test('dock seal fix: a truck waiting for docs that someone is processing is refu
     const ctx = scanSetup();
     const t = docsScan(ctx, 1);
     ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { claim: 'other', workingAt: Date.now() } });
-    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: 'W1' }, false), /Add the seal at Send for docs/);   // final review: no ship_pending seal
+    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: 'W1' }, false), /The seal goes in once the trailer is at the dock/);   // no ship_pending seal
 });
 
 test('at dock: scanning a pallet on raises the TO line then the IF line', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 2), d0 = ctx.data.getLoad(t.id).data;
     const p = printLabels(ctx, 1, 'Jdock1')[0];
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     assert.equal(r.result, 'ok');
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['to_line', 240, 360], ['if_qty', 240, 360]]);
     const d = ctx.data.getLoad(t.id).data;
@@ -3347,7 +3355,7 @@ test('at dock: scanning a pallet on raises the TO line then the IF line', () => 
 test('at dock: taking a pallet off lowers the IF then the TO', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 2);
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' });
     assert.equal(r.result, 'taken_off');
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['if_qty', 240, 120], ['to_line', 240, 120]]);
     assert.equal(ctx.data.getPallet(t.ps[0].id).status, 'labeled');
@@ -3356,19 +3364,19 @@ test('at dock: taking a pallet off lowers the IF then the TO', () => {
 test('at dock: the last pallet cannot be taken off', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
-    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false), /last pallet/i);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }), /last pallet/i);
     assert.equal(ctx.tx._t.ops.length, 0);
 });
 
-test('at dock: a new SKU adds a TO line and an IF line; NO_IF_LINE falls back to a Picked add-on IF', () => {
+test('at dock: a new SKU adds a TO line and an IF line; NO_IF_LINE falls back to a Packed add-on IF', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     const p = printLabels(ctx, 1, 'Jdock2', [{ item: '12', sku: 'YSN301', cfg: 'A', pcs: 60 }])[0];
     ctx.tx._t.failOn = op => op.op === 'if_qty' && op.newLine ? (() => { throw new Error('NO_IF_LINE IF has no line'); })() : false;
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     assert.equal(r.result, 'ok');
     const ops = ctx.tx._t.ops.map(o => o.op + (o.ship ? ':' + o.ship : ''));
-    assert.deepEqual(ops, ['to_line', 'if_create:picked']);
+    assert.deepEqual(ops, ['to_line', 'if_create:packed']);
     const d = ctx.data.getLoad(t.id).data;
     assert.equal(d.alloc.length, 2);
     assert.equal(d.alloc[1].addOn, true);
@@ -3380,7 +3388,7 @@ test('at dock: a stock short refuses the scan and writes nothing', () => {
     const t = atDock(ctx, 1);
     ctx.data.db.stock['35']['11'].avail = 50;
     const p = printLabels(ctx, 1, 'Jdock3')[0];
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     assert.equal(r.result, 'short');
     assert.match(r.message, /Can't add: YSN201/);
     assert.equal(ctx.tx._t.ops.length, 0);
@@ -3392,7 +3400,7 @@ test('at dock: IF failure undoes the TO change and refuses the scan', () => {
     const t = atDock(ctx, 1);
     ctx.tx._t.failOn = op => op.op === 'if_qty';
     const p = printLabels(ctx, 1, 'Jdock4')[0];
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     assert.equal(r.result, 'refused');
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['to_line', 120, 240], ['to_line', 240, 120]]);
     assert.equal(ctx.data.getPallet(p.id).status, 'labeled');
@@ -3406,12 +3414,12 @@ test('at dock: a failed undo leaves Docs out of sync, pauses scans, and Retry fi
     let n = 0;
     ctx.tx.apply = op => { n++; if (n === 2 || n === 3) throw new Error('boom ' + n); return orig(op); };   // the IF write fails, then the undo fails too
     const p = printLabels(ctx, 2, 'Jdock5');
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p[0].code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p[0].code });
     assert.equal(r.result, 'out_of_sync');
     const d = ctx.data.getLoad(t.id).data;
     assert.ok(d.docsSync && d.docsSync.pending.length === 1);
     assert.equal(ctx.data.getPallet(p[0].id).status, 'loaded');   // the TO already holds it: the pallet counts on the truck
-    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: p[1].code }, false), /out of sync/i);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: p[1].code }), /out of sync/i);
     assert.throws(() => ctx.run('dock_resync', { truckId: t.id }, false), /Managers only/);
     assert.deepEqual(ctx.run('approvals').outOfSync.map(o => [o.id, o.pending]), [[t.id, 1]]);
     assert.ok(ctx.run('truck_get', { truckId: t.id }, false).view.truck.docsSync);
@@ -3432,7 +3440,7 @@ test('at dock: other items are portal-only; off mode edits write nothing', () =>
     const u = docsScan(off, 1, 'off');
     off.run('ship_confirm', { truckId: u.id });
     const p = printLabels(off, 1, 'Jdock6')[0];
-    assert.equal(off.run('truck_scan', { truckId: u.id, raw: p.code }, false).result, 'ok');
+    assert.equal(off.run('truck_scan', { truckId: u.id, raw: p.code }).result, 'ok');   // a manager edit
     assert.equal(off.tx._t.ops.length, 0);
     assert.equal(off.data.getLoad(u.id).data.docLines['11'].qty, 240);
 });
@@ -3441,7 +3449,7 @@ test('at dock: a pallet on an at-dock truck cannot be scanned onto another truck
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     const other = ctx.run('truck_start', { trailer: tr() }, false).view.truck;
-    const r = ctx.run('truck_scan', { truckId: other.id, raw: t.ps[0].code }, false);
+    const r = ctx.run('truck_scan', { truckId: other.id, raw: t.ps[0].code });
     assert.deepEqual([r.result, r.reason], ['locked', 'at_dock']);
 });
 
@@ -3455,7 +3463,7 @@ test('at dock fix: a failed add-on IF create undoes the TO raise and refuses the
     const orig = ctx.tx.apply;
     ctx.tx.apply = op => { if (noIfLine(op)) throw new Error('NO_IF_LINE IF has no line'); if (op.op === 'if_create') throw new Error('create boom'); return orig(op); };
     const p = newSkuPallet(ctx, 'Jfix1');
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     assert.equal(r.result, 'refused');
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['to_line', 0, 60], ['to_line', 60, 0]]);
     const d = ctx.data.getLoad(t.id).data;
@@ -3473,24 +3481,24 @@ test('at dock fix: a failed add-on IF create whose undo also fails leaves Docs o
         return orig(op);
     };
     const p = newSkuPallet(ctx, 'Jfix2');
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     assert.equal(r.result, 'out_of_sync');
     const d = ctx.data.getLoad(t.id).data;
     assert.deepEqual([d.claim, d.docsSync.pending.map(o => [o.op, !!o.newLine]), ctx.data.getPallet(p.id).status], ['', [['if_qty', true]], 'loaded']);
 });
 
-test('at dock fix: Retry turns a pending new line the IF refuses into a Picked add-on IF', () => {
+test('at dock fix: Retry turns a pending new line the IF refuses into a Packed add-on IF', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     const orig = ctx.tx.apply;
     let n = 0;
     ctx.tx.apply = op => { n++; if (n === 2 || n === 3) throw new Error('boom ' + n); return orig(op); };
     const p = newSkuPallet(ctx, 'Jfix3');
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false).result, 'out_of_sync');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }).result, 'out_of_sync');
     ctx.tx.apply = op => { if (noIfLine(op)) throw new Error('NO_IF_LINE IF has no line'); return orig(op); };
     ctx.run('dock_resync', { truckId: t.id });
     const d = ctx.data.getLoad(t.id).data, last = ctx.tx._t.ops[ctx.tx._t.ops.length - 1];
-    assert.deepEqual([last.op, last.ship, d.docsSync, d.addOnSeq], ['if_create', 'picked', null, 1]);
+    assert.deepEqual([last.op, last.ship, d.docsSync, d.addOnSeq], ['if_create', 'packed', null, 1]);
     assert.match(last.token, /-A12-1\]$/);
     assert.notEqual(d.docLines['12'].ifId, d.ifId);
     assert.deepEqual(d.alloc.map(a => a.addOn), [false, true]);
@@ -3501,12 +3509,12 @@ test('at dock fix: the last pallet of a SKU on its own add-on IF cannot be taken
     const t = atDock(ctx, 1);
     ctx.tx._t.failOn = op => noIfLine(op) ? (() => { throw new Error('NO_IF_LINE IF has no line'); })() : false;
     const p = newSkuPallet(ctx, 'Jfix4');
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false).result, 'ok');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }).result, 'ok');
     const created = ctx.tx._t.ops.find(o => o.op === 'if_create');
     assert.match(created.token, /-A12-1\]$/);
     const ifNum = ctx.data.getLoad(t.id).data.docLines['12'].ifNum;
     ctx.tx._t.ops = [];
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code, mode: 'off' }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code, mode: 'off' });
     assert.equal(r.result, 'refused');
     assert.equal(r.message, 'YSN301 is on its own add-on IF ' + ifNum + ': ask the office to remove it.');
     assert.equal(ctx.tx._t.ops.length, 0);
@@ -3516,27 +3524,27 @@ test('at dock fix: the last pallet of a SKU on its own add-on IF cannot be taken
 test('at dock fix: truck_remove routes as a take-off; truck_undo is refused', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 2);
-    const r = ctx.run('truck_remove', { truckId: t.id, palletId: t.ps[0].id }, false);
+    const r = ctx.run('truck_remove', { truckId: t.id, palletId: t.ps[0].id });
     assert.equal(r.result, 'taken_off');
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['if_qty', 240, 120], ['to_line', 240, 120]]);
     assert.equal(ctx.data.getPallet(t.ps[0].id).status, 'labeled');
-    assert.throws(() => ctx.run('truck_undo', { truckId: t.id }, false), /At the dock, take a pallet off by scanning it in Take off mode/);
+    assert.throws(() => ctx.run('truck_undo', { truckId: t.id }), /At the dock, take a pallet off by scanning it in Take off mode/);
 });
 
 test('at dock fix: the claim is cleared after refused, short and out_of_sync', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
     ctx.tx._t.failOn = op => op.op === 'if_qty';
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: printLabels(ctx, 1, 'Jfix5')[0].code }, false).result, 'refused');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: printLabels(ctx, 1, 'Jfix5')[0].code }).result, 'refused');
     assert.equal(ctx.data.getLoad(t.id).data.claim, '');
     ctx.data.db.stock['35']['11'].avail = 50;
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: printLabels(ctx, 1, 'Jfix6')[0].code }, false).result, 'short');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: printLabels(ctx, 1, 'Jfix6')[0].code }).result, 'short');
     assert.equal(ctx.data.getLoad(t.id).data.claim, '');
     ctx.data.db.stock['35']['11'].avail = 1000;
     const orig = ctx.tx.apply;
     let n = 0;
     ctx.tx.apply = op => { n++; if (n === 2 || n === 3) throw new Error('boom ' + n); return orig(op); };
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: printLabels(ctx, 1, 'Jfix7')[0].code }, false).result, 'out_of_sync');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: printLabels(ctx, 1, 'Jfix7')[0].code }).result, 'out_of_sync');
     assert.equal(ctx.data.getLoad(t.id).data.claim, '');
 });
 
@@ -3549,13 +3557,13 @@ test('final I2a: a no-docs truck stays portal-only after writeMode flips to on: 
     ctx.data.db.settings.writeMode = 'on';
     ctx.tx._t.ops = [];
     const p = printLabels(ctx, 1, 'JnoDocs1')[0];
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     assert.equal(r.result, 'ok');
     assert.equal(ctx.data.getLoad(t.id).data.docLines['11'].qty, 360);
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false).result, 'taken_off');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }).result, 'taken_off');
     ctx.run('dock_seal', { truckId: t.id, seal: 'ND1' }, false);
     assert.equal(ctx.data.getLoad(t.id).data.depart.seal, 'ND1');
-    const u = ctx.run('picked_up', { truckId: t.id }, false);
+    const u = pickUp(ctx, { truckId: t.id });
     assert.equal(ctx.tx._t.ops.length, 0);
     assert.deepEqual([ctx.data.getLoad(t.id).status, u.written.length], ['departed', 0]);
     assert.ok([t.ps[1], p].every(q => ctx.data.getPallet(q.id).status === 'in_transit'));
@@ -3567,7 +3575,7 @@ test('final I2a: a new SKU on a truck with no primary IF stays portal-only (no "
     ctx.run('ship_confirm', { truckId: t.id });
     ctx.data.db.settings.writeMode = 'on';
     ctx.tx._t.ops = [];
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: newSkuPallet(ctx, 'JnoDocs2').code }, false).result, 'ok');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: newSkuPallet(ctx, 'JnoDocs2').code }).result, 'ok');
     assert.equal(ctx.tx._t.ops.length, 0);
     assert.deepEqual(ctx.data.getLoad(t.id).data.docLines['12'], { qty: 60, ifId: '', ifNum: '' });
 });
@@ -3582,7 +3590,7 @@ test('final I2b: picked_up_force is manager-only and needs a note (300 max)', ()
     assert.equal(ctx.data.getLoad(t.id).status, 'at_dock');
     const r = printLabels(ctx, 1, 'JforceR')[0];
     const o = ctx.run('truck_start', { trailer: tr() }, false).view.truck.id;
-    ctx.run('truck_scan', { truckId: o, raw: r.code }, false);
+    ctx.run('truck_scan', { truckId: o, raw: r.code });
     assert.throws(() => ctx.run('picked_up_force', { truckId: o, note: 'n' }), /not at the dock/);
 });
 
@@ -3590,7 +3598,7 @@ test('final I2b: picked_up_force gets an out-of-sync truck out with no NetSuite 
     const ctx = scanSetup();
     const t = atDock(ctx, 2);
     ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { docsSync: { error: 'x', pending: [{ op: 'if_qty' }] }, error: 'old' } });
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: 'F7' }, false), /out of sync/);
+    assert.throws(() => pickUp(ctx, { truckId: t.id, seal: 'F7' }), /out of sync/);
     ctx.tx._t.ops = [];
     const r = ctx.run('picked_up_force', { truckId: t.id, note: ' IF edited by hand ', seal: 'F7' });
     assert.equal(ctx.tx._t.ops.length, 0);
@@ -3606,7 +3614,7 @@ test('final I2b: picked_up_force gets a half-done pickup out; without a seal it 
     const ctx = scanSetup();
     const t = atDockWithAddOn(ctx), d0 = ctx.data.getLoad(t.id).data;
     ctx.tx._t.failOn = op => op.op === 'if_stamp' && String(op.ifId) === String(d0.alloc[1].ifId);
-    assert.throws(() => ctx.run('picked_up', { truckId: t.id, seal: 'HF1' }, false), /NetSuite/);
+    assert.throws(() => pickUp(ctx, { truckId: t.id, seal: 'HF1' }), /NetSuite/);
     ctx.tx._t.failOn = null;
     ctx.tx._t.ops = [];
     ctx.run('picked_up_force', { truckId: t.id, note: 'add-on IF stuck' });
@@ -3626,7 +3634,7 @@ test('final I3: a mixed pallet whose 2nd-SKU IF write fails and whose undo fails
         if (op.op === 'if_qty' && op.item === '11' && op.to < op.from) throw new Error('undo boom');   // a later inverse
         return orig(op);
     };
-    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false).result, 'out_of_sync');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }).result, 'out_of_sync');
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.item, o.from, o.to]),
         [['to_line', '11', 120, 240], ['if_qty', '11', 120, 240], ['to_line', '12', 0, 60], ['to_line', '12', 60, 0]]);   // the 1st inverse landed
     assert.deepEqual(ctx.data.getLoad(t.id).data.docsSync.pending.map(o => [o.op, o.item, o.from, o.to]),
@@ -3644,7 +3652,7 @@ test('final I3: a mixed pallet whose 2nd-SKU IF write fails and whose undo fails
 test('final minor: a truck whose docs were written yesterday and picked up today shows in shippedToday', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 1);
-    ctx.run('picked_up', { truckId: t.id, seal: 'Y1' }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'Y1' });
     const x = ctx.data.getLoad(t.id);
     assert.equal(x.data.depart.shippedDay, '2026-10-14');
     ctx.data.updateLoad(x, { data: { depart: Object.assign({}, x.data.depart, { day: '2026-10-13' }) } });
@@ -3657,7 +3665,7 @@ test('final minor: Picked up stamps the main IF with the truck tag and the add-o
     const t = atDockWithAddOn(ctx), d = ctx.data.getLoad(t.id).data;
     assert.match(d.alloc[1].token, /-A12-1\]$/);
     assert.equal(d.docLines['12'].token, d.alloc[1].token);
-    ctx.run('picked_up', { truckId: t.id, seal: 'M1' }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'M1' });
     const st = ctx.tx._t.ops.filter(o => o.op === 'if_stamp'), by = id => st.find(o => String(o.ifId) === String(id));
     const ref = d.approveRef || t.id;
     assert.ok(by(d.alloc[0].ifId).memo.endsWith(' · ' + verify.scanTag(ref)));
@@ -3676,7 +3684,7 @@ test('final minor: a pallet that changed between the read and the claim is refus
         if (String(id) === String(p.id) && ++n === 2) ctx.data.updatePallet(orig(id), { status: 'loaded', load: other });   // another truck took it
         return orig(id);
     };
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: p.code });
     ctx.data.getPallet = orig;
     assert.deepEqual([r.result, r.message], ['refused', 'That pallet changed: scan it again.']);
     assert.equal(ctx.tx._t.ops.length, 0);
@@ -3692,17 +3700,17 @@ test('final minor: a take-off of a pallet no longer on this truck is refused aft
         if (String(id) === String(id0) && ++n === 2) ctx.data.updatePallet(orig(id), { status: 'labeled', load: '' });
         return orig(id);
     };
-    const r = ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false);
+    const r = ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' });
     ctx.data.getPallet = orig;
     assert.deepEqual([r.result, r.message], ['refused', 'That pallet changed: scan it again.']);
     assert.equal(ctx.tx._t.ops.length, 0);
 });
 
-// Minor: dock_seal only at the dock (the seal before docs goes in at Send for docs).
+// Minor: dock_seal only at the dock (no seal before docs, 2026-10-17).
 test('final minor: dock_seal refuses a truck that is not at the dock', () => {
     const ctx = scanSetup();
     const t = docsScan(ctx, 1);
-    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: '888' }, false), /Add the seal at Send for docs, or once the trailer is at the dock\./);
+    assert.throws(() => ctx.run('dock_seal', { truckId: t.id, seal: '888' }, false), /The seal goes in once the trailer is at the dock/);
     assert.equal(ctx.data.getLoad(t.id).data.shipReq.seal, '');
 });
 
@@ -3712,10 +3720,125 @@ test('truck_get: a shipped scan truck lists its full load; an at-dock truck is u
     const dock = ctx.run('truck_get', { truckId: t.id }, false).view;
     assert.equal(dock.truck.status, 'at_dock');
     assert.deepEqual([dock.scan.rows.length, dock.scan.pallets, dock.scan.rows[0].pcs], [1, 2, 240]);
-    ctx.run('picked_up', { truckId: t.id, seal: 'S' + t.id }, false);
+    pickUp(ctx, { truckId: t.id, seal: 'S' + t.id });
     const v = ctx.run('truck_get', { truckId: t.id }, false).view;
     assert.equal(v.truck.status, 'departed');
     assert.deepEqual([v.scan.rows.length, v.scan.rows[0].item, v.scan.rows[0].pcs, v.scan.rows[0].pallets, v.scan.pallets], [1, '11', 240, 2, 2]);
     assert.equal(v.pallets.length, 2);
     assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'in_transit'));
+});
+
+// ── drop trailer, manager-only writes (spec 2026-10-17) ──────────────────
+test('2026-10-17: the floor cannot scan on, take off or undo at the dock; a manager can', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2), p = printLabels(ctx, 1, 'Jlock1')[0];
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false), /this load is locked/);
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false), /this load is locked/);
+    assert.throws(() => ctx.run('truck_remove', { truckId: t.id, palletId: t.ps[0].id }, false), /this load is locked/);
+    assert.throws(() => ctx.run('truck_undo', { truckId: t.id }, false), /this load is locked/);
+    assert.equal(ctx.tx._t.ops.length, 0);
+    assert.equal(ctx.data.getPallet(p.id).status, 'labeled');
+    assert.equal(ctx.run('truck_scan', { truckId: t.id, raw: p.code }).result, 'ok');
+});
+
+test('2026-10-17: floor Picked up writes nothing and waits for the manager; Confirm shipped stamps the Packed IF Shipped', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2);
+    const r = ctx.run('picked_up', { truckId: t.id, seal: 'Q1' }, false);
+    assert.equal(r.pending, true);
+    let x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.pickupReq.seal, x.data.pickupReq.by, ctx.tx._t.ops.length], ['pickup_pending', 'Q1', 'Miguel', 0]);
+    assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'loaded'));
+    assert.throws(() => ctx.run('pickup_confirm', { truckId: t.id }, false), /Managers only|manager/i);
+    const ap = ctx.run('approvals');
+    assert.deepEqual(ap.pickups.map(q => [String(q.truck.id), q.seal, q.pallets]), [[String(t.id), 'Q1', 2]]);
+    assert.equal(ctx.run('dashboard').rows.find(q => String(q.truckId) === String(t.id)).stage, 'Waiting for ship confirm');
+    ctx.run('pickup_confirm', { truckId: t.id });
+    x = ctx.data.getLoad(t.id);
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.seal]), [['if_stamp', 'Q1']]);
+    assert.deepEqual([x.status, x.data.depart.pickedUpBy, x.data.pickupReq], ['departed', 'Miguel', null]);
+    assert.ok(t.ps.every(p => ctx.data.getPallet(p.id).status === 'in_transit'));
+});
+
+test('2026-10-17: the manager sends a Picked up back to the dock with a note; the floor can press it again', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.run('picked_up', { truckId: t.id, seal: 'Q2' }, false);
+    assert.throws(() => ctx.run('pickup_reject', { truckId: t.id, note: ' ' }), /Enter a note/);
+    ctx.run('pickup_reject', { truckId: t.id, note: 'carrier not here yet' });
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.pickupReq, x.data.sentBack.note, ctx.tx._t.ops.length], ['at_dock', null, 'carrier not here yet', 0]);
+    assert.equal(ctx.run('picked_up', { truckId: t.id }, false).pending, true);   // the saved seal is reused
+});
+
+test('2026-10-17: picked_up_force also gets a truck waiting for the ship confirm out', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.run('picked_up', { truckId: t.id, seal: 'Q3' }, false);
+    ctx.run('picked_up_force', { truckId: t.id, note: 'office shipped it by hand' });
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.depart.seal, x.data.pickupReq, ctx.tx._t.ops.length], ['departed', 'Q3', null, 0]);
+});
+
+test('2026-10-17: Send back from the dock re-opens the load; Approve again lowers the same IF then the TO, no new TO', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2), d0 = ctx.data.getLoad(t.id).data;
+    assert.throws(() => ctx.run('dock_sendback', { truckId: t.id }), /Enter a note/);
+    ctx.run('dock_sendback', { truckId: t.id, note: 'one pallet stays' });
+    let x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.depart, x.data.docsDepart.truckNo, x.data.toId, x.data.sentBack.note], ['loading', null, d0.depart.truckNo, d0.toId, 'one pallet stays']);
+    ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    assert.equal(ctx.run('approvals').shipPending[0].redo.ifNum, d0.ifNum);
+    const r = ctx.run('ship_confirm', { truckId: t.id });
+    assert.deepEqual([r.atDock, r.rewritten], [true, true]);
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['if_qty', 240, 120], ['to_line', 240, 120]]);
+    x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.toId, x.data.ifId, x.data.docLines['11'].qty, x.data.alloc[0].lines['11'], x.data.depart.truckNo, x.data.docsDepart],
+        ['at_dock', d0.toId, d0.ifId, 120, 120, d0.depart.truckNo, null]);
+    assert.equal(ctx.data.getPallet(t.ps[0].id).status, 'labeled');
+});
+
+test('2026-10-17: Approve again after a Send back raises the TO then the IF; a stock short on the increase refuses and writes nothing', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.run('dock_sendback', { truckId: t.id, note: 'add one' });
+    const p = printLabels(ctx, 1, 'Jre2')[0];
+    ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    ctx.data.db.stock['35']['11'].avail = 100;
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }), /Can't approve: YSN201 on truck 120, available 100/);
+    assert.deepEqual([ctx.tx._t.ops.length, ctx.data.getLoad(t.id).status], [0, 'ship_pending']);
+    ctx.data.db.stock['35']['11'].avail = 1000;
+    ctx.run('ship_confirm', { truckId: t.id });
+    assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.from, o.to]), [['to_line', 120, 240], ['if_qty', 120, 240]]);
+    assert.equal(ctx.data.getLoad(t.id).data.docLines['11'].qty, 240);
+});
+
+test('2026-10-17: Approve again with an unchanged load writes nothing; a NetSuite refusal leaves the truck waiting', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2);
+    ctx.run('dock_sendback', { truckId: t.id, note: 'check it' });
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    ctx.run('ship_confirm', { truckId: t.id });
+    assert.deepEqual([ctx.tx._t.ops.length, ctx.data.getLoad(t.id).status], [0, 'at_dock']);
+    ctx.run('dock_sendback', { truckId: t.id, note: 'take one off' });
+    ctx.run('truck_scan', { truckId: t.id, raw: t.ps[1].code, mode: 'off' }, false);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    ctx.tx._t.failOn = op => op.op === 'if_qty';
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }), /NetSuite refused the change.*NetSuite is unchanged/);
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.claim, x.data.docLines['11'].qty], ['ship_pending', '', 240]);
+});
+
+test('2026-10-17: Send back from the dock is refused once a stamp landed or while docs are out of sync', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { docsSync: { error: 'x', pending: [] } } });
+    assert.throws(() => ctx.run('dock_sendback', { truckId: t.id, note: 'n' }), /out of sync/);
+    assert.throws(() => ctx.run('dock_sendback', { truckId: t.id, note: 'n' }, false), /Managers only|manager/i);
 });

@@ -140,7 +140,7 @@ test('a refused mark shipped reloads Shipments, error on top', () => {
     const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf('The truck changed on another device: verify again') !== -1);
     const i = src.indexOf('ACT.dmark =');
-    assert.ok(i !== -1 && src.slice(i, i + 900).indexOf('departRefused(r') !== -1, 'no departRefused in dmark');
+    assert.ok(i !== -1 && src.slice(i, i + 1100).indexOf('departRefused(r') !== -1, 'no departRefused in dmark');
     const j = src.indexOf('async function departRefused');
     assert.ok(j !== -1 && /shipList\(/.test(src.slice(j, j + 600)));
 });
@@ -320,8 +320,8 @@ test('label counts: no stale-label row on the dashboard; the plan says "on truck
 test('ui: drop-trailer copy is present', () => {
     const src = ui._clientMain.toString().replace(/\r/g, '');
     ['Ready for docs', '📄 Send for docs', 'Waiting for docs', 'At dock', '📄 Docs ready · at dock', '🚛 Picked up',
-        'Approve writes the TO + IF (Picked). Shipped happens at pickup.', 'Docs out of sync', 'Every scan updates the TO + IF',
-        'Writing docs…', 'Seal # (optional)', 'Send this trailer for docs? A manager approves them in Approvals.', 'Plan saved (writes are off)',
+        'Approve writes the TO + IF (Packed). Shipped happens when you confirm the pickup.', 'Docs out of sync', '🔒 Load locked',
+        'Writing docs…', 'The seal # goes in at the dock', 'Send this trailer for docs? A manager approves them in Approvals.', 'Plan saved (writes are off)',
         'No seal yet', 'Sent for docs by ', "api('dock_seal'", "api('picked_up'", "api('dock_resync'"].forEach(s => assert.ok(src.includes(s), s));
 });
 
@@ -382,4 +382,12 @@ test('2026-10-17: manager ship-confirm cards open the load; the pop-up shows wei
     assert.ok(html.indexOf('550 lb') !== -1, 'item weight × pcs + tare share');
     assert.ok(html.indexOf('no weight') !== -1);
     assert.equal(html.indexOf('PLT3'), -1, 'only loaded pallets');
+});
+
+test('2026-10-17: manager-only writes copy: pickup confirm, send back to Load out, locked dock', () => {
+    const src = ui._clientMain.toString().replace(/\r/g, '');
+    ['Picked up · confirm shipped', '✅ Confirm shipped', "api('pickup_confirm'", "api('pickup_reject'", "api('dock_sendback'", '↩ Send back to Load out',
+        'Picked up · waiting for manager', 'Sent to a manager to confirm it shipped.', 'ask a manager to send the trailer back', 'with only the change'].forEach(t => assert.ok(src.includes(t), t));
+    const card = clientFn(src, 'pickupCard');
+    assert.ok(card.includes('data-act="pkconfirm"') && card.includes('data-act="opentruck"'));
 });

@@ -19,7 +19,38 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **SDD ledger:** `docs/sdd-ledger/progress.md` (every ruling, review finding, minor and ON-MODE GATE item), with every task brief/report under `docs/sdd-ledger/v3/`, `verify-load/`, `rework/`, `dashboard/`.
 - **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
-## 🧭 READ FIRST — DROP-TRAILER DOCS FLOW BUILT (2026-10-16) · ⏭ NEXT = SANDBOX S1–S5
+## 🧭 READ FIRST — MANAGER-ONLY NETSUITE WRITES (2026-10-17) · ⏳ NOT UPLOADED TO THE SANDBOX
+**Why:** On 10/17, **Save seal** on sandbox Truck 1 (TO8723 · IF53840) failed for the floor login with "You must have 'Transactions -> Fulfill Sales Orders' view permission…". Jack's rule: **the floor writes no NetSuite, only a manager does.** Spec: `docs/superpowers/specs/2026-10-17-move-portal-manager-only-writes-design.md`.
+
+**What changed** (branch `feat/v3-verification`, tests **430/430**):
+- **Seal:** it goes in only at the dock, on Shipments. Send for docs ignores any seal (`ship_mark` sets `seal:''` for scan trucks). `dock_seal` is portal only, with no `if_seal`.
+- **Approve docs** writes the TO plus an IF **Packed (B)**, via `scanApprovePlan packed:true` and `if_create ship:'packed'`. Dock add-on IFs are Packed too. `if_stamp` ships A or B to C.
+- **The load is locked at the dock (Jack chose option 1).** Floor scan, take-off and undo there are refused (`DOCK_LOCKED`). The server still lets a manager edit at the dock. There's no UI for that; it keeps the old write code and its tests valid.
+- **Changing the load:** a manager uses **↩ Send back to Load out** (`dock_sendback`). The truck goes to `loading`, its docs stay parked (`docsDepart`), and the floor reloads and sends for docs. The manager's next Approve runs `reApproveDocs`, which writes **only the difference** to the same TO + IF.
+  - It reuses the dock write code, now extracted as `writeDocsDelta`: undo on failure, out-of-sync + Retry if the undo fails.
+  - The stock check covers the increase only.
+- **Picked up:**
+  - The floor's `picked_up` writes nothing and sets the new status `pickup_pending` (`pickupReq`).
+  - Manager **`pickup_confirm`** stamps each IF Shipped with the seal, puts the pallets in transit, and departs the truck.
+  - **`pickup_reject`** sends the truck back to the dock with a note.
+  - `picked_up_force` also works on `pickup_pending`.
+- **Approvals** gets three changes:
+  - A new "Picked up · confirm shipped" section.
+  - A new "At the dock" list (Send back to Load out, View load, force).
+  - The re-approve card says it updates the existing TO + IF.
+- **View load:** ship-confirm and pickup cards have 📋 View load. The manager pop-up shows SKU weights and a per-pallet estimated weight. Pallets have no dims.
+- **Floor:** the at-dock card shows 🔒 Load locked, the truck screen has no scan box at the dock, and there's a "Picked up · waiting for manager" list.
+
+**Local beta click-through passed:** Approve, then floor scan refused, then Send back, take a pallet off, re-approve (same TO/IF, 360 → 240), seal, Picked up, Confirm shipped (IF stamped, departed). A restart of the beta loses in-memory snapshot IFs, so re-approving a truck from before the restart fails with "not in the snapshot". That's a beta artifact only.
+
+**⏭ NEXT (Jack):**
+1. Upload verify 2055190, tx 2055087, ui 2055088 and sl 2055089 (LF copies from git), then recompile script 893.
+2. ⚠ Sandbox Truck 1 (TO8723 · IF53840) is at the dock with a **Picked (A)** IF from the old flow. `if_stamp` still ships it, so: floor Save seal, then Picked up, then manager Confirm shipped.
+3. Retest S1–S10 under the new flow (S1–S4 now cover only manager re-approve edits).
+
+**Open:** the Dashboard tile "Trucks shipped today" counts an at-dock truck on its docs day. That predates this change and was not changed.
+
+## (earlier) DROP-TRAILER DOCS FLOW BUILT (2026-10-16) · ⏭ NEXT = SANDBOX S1–S5
 **State:** branch `feat/v3-verification`, code **781e7f6..HEAD** (Tasks 1–7 of `docs/superpowers/plans/2026-10-16-move-portal-drop-trailer-docs.md`, each reviewed, then a final-review fix wave), tests **417/417**. Spec `docs/superpowers/specs/2026-10-16-move-portal-drop-trailer-docs-design.md` (amends the 2026-10-14 scan-built spec). **Uploaded to the sandbox 2026-10-16** (code `eb819dc`). Four changed files were uploaded over the same File Cabinet ids, LF copies from git: verify 2055190, tx 2055087, ui 2055088, sl 2055089. Served content was checked for the new functions. Script 893 was recompiled. There were no departing or ship_pending trucks at upload time. Smoke check passed: manager Dashboard and Approvals load, and the floor (deploy 2) Shipments tab shows Ready for docs / Waiting for docs / At dock / Shipped today. 📋 View load on Truck 1 shows TO8721 · IF53838 · 26 plt · 5,200 pcs read-only, with no console errors. **S1–S10 are not run yet. Not in prod.** ⏭ **Jack tests in the sandbox on Mon 2026-10-19.** The run order is in the NEXT list below: Approve docs, then at-dock edits, then seal + Picked up + receipt, then the edge cases. Only scan-built trucks (`officeIfs: false`) changed; the office-IF flow is untouched.
 
 **Also 2026-10-16:**

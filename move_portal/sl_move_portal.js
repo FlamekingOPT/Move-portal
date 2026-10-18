@@ -163,7 +163,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function truckSummary(x, counts) {
         const k = counts || data.palletStatusCounts([x.id]), n = st => cnt(k, x.id, st);
-        return { id: x.id, label: truckLabel(x), status: x.status, depart: x.data.depart || null, shipReq: x.data.shipReq || null, sentBack: x.data.sentBack || null,
+        return { id: x.id, label: truckLabel(x), status: x.status, depart: x.data.depart || null, shipReq: x.data.shipReq || null, sentBack: x.data.sentBack || null, pickupReq: x.data.pickupReq || null,
             scan: isScan(x), error: x.data.error || '', pallets: n(VP.LOADED) + n(VP.IN_TRANSIT) + n(VP.RECEIVED) + n(VP.MISSING), received: n(VP.RECEIVED),
             missing: n(VP.MISSING) + (x.status === T.RECEIVED ? n(VP.IN_TRANSIT) : 0) };
     }
@@ -228,7 +228,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // SKU rows for the floor's Load / Verify / Shipments: loaded pallets only, with weight and Riverside available.
     function scanRows(x, ps, c) {
         // Past loading (shipped, receiving, received...) the table is the whole load: loaded, in transit, received or missing.
-        const loaded = [T.LOADING, T.NEEDS_FIX, T.READY, T.AT_DOCK].indexOf(x.status) === -1 ? ps : ps.filter(p => p.status === VP.LOADED), tl = verify.truckLines(loaded), items = Object.keys(tl);
+        const loaded = [T.LOADING, T.NEEDS_FIX, T.READY, T.AT_DOCK, T.PICKUP_PENDING].indexOf(x.status) === -1 ? ps : ps.filter(p => p.status === VP.LOADED), tl = verify.truckLines(loaded), items = Object.keys(tl);
         const info = data.itemInfo(items), avail = items.length ? data.locationStock(c.S.locFrom, items) : {};
         const w = verify.truckWeight(tl, info, core.palletTare(c.S), loaded.length);
         const rows = items.map(k => {
@@ -419,7 +419,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const truckNo = verify.truckNoForDay(chk.trucks, c.now.dayIso, x.id), ps = chk.ps;
         if (!ps.length) throw userErr('Nothing is loaded on this truck');
         if (isScan(x)) {
-            const plan = verify.scanApprovePlan({ ref: x.data.approveRef || x.id, lines: verify.linesPcs(verify.truckLines(ps)), picked: true,
+            const plan = verify.scanApprovePlan({ ref: x.data.approveRef || x.id, lines: verify.linesPcs(verify.truckLines(ps)), packed: true,
                 stamp: { trailer: inp.trailer, seal: inp.seal || '', truckNo: truckNo, dayIso: c.now.dayIso }, S: c.S });
             return { truckNo: truckNo, approveRef: x.data.approveRef || String(x.id), palletKey: palletKey(ps), plan: plan, ifs: [], otherItems: x.data.otherItems || [] };
         }
@@ -700,9 +700,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_planned', false, (a, c) => {
         const trucks = allTrucks(), taken = {}, dp = defPcs(c);
         trucks.forEach(x => (x.data.ifs || []).forEach(f => { taken[f.ifId] = true; }));
-        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING || x.status === T.AT_DOCK);
+        const open = trucks.filter(x => OPEN.indexOf(x.status) !== -1 || x.status === T.SHIP_PENDING || x.status === T.DEPARTING || isDock(x));
         // Shipped today (Shipments tab): trucks that left today: a scan truck's pickup day (shippedDay), else the departure day.
-        const shipped = trucks.filter(x => x.status !== T.DEPARTING && x.status !== T.AT_DOCK && x.data.depart && (x.data.depart.shippedDay || x.data.depart.day) === c.now.dayIso);
+        const shipped = trucks.filter(x => x.status !== T.DEPARTING && !isDock(x) && x.data.depart && (x.data.depart.shippedDay || x.data.depart.day) === c.now.dayIso);
         const counts = data.palletStatusCounts(open.concat(shipped).map(x => x.id));
         const busy = {};
         trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
@@ -712,7 +712,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     // A trailer is on one truck at a time until it leaves.
-    const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.DEPARTING, T.AT_DOCK];
+    const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.DEPARTING, T.AT_DOCK, T.PICKUP_PENDING];
+    // At the dock with docs: parked (at_dock) or waiting for the manager's Confirm shipped (pickup_pending, spec 2026-10-17).
+    function isDock(x) { return !!x && (x.status === T.AT_DOCK || x.status === T.PICKUP_PENDING); }
     const normTrailer = t => String(t || '').trim().toUpperCase();
     // A trailer # entered on the floor: trimmed, 1-20 chars, not on another open truck (exceptId = the truck it goes on).
     function checkTrailer(raw, exceptId) {
@@ -795,7 +797,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (!(/^NO_IF_LINE/.test((e && e.message) || '') && op.newLine)) throw e;
             seq.n++;
             const dep = d.depart || {}, tag = verify.scanTag((d.approveRef || x.id) + '-A' + op.item + '-' + seq.n);
-            const id = tx.apply({ op: 'if_create', ship: 'picked', toId: String(d.toId), token: tag, lines: { [op.item]: op.to }, trailer: dep.trailer, seal: dep.seal || '',
+            const id = tx.apply({ op: 'if_create', ship: 'packed', toId: String(d.toId), token: tag, lines: { [op.item]: op.to }, trailer: dep.trailer, seal: dep.seal || '',
                 memo: verify.memoFor(dep.truckNo, dep.day) + ' · ' + tag });
             return { item: String(op.item), ifId: String(id), ifNum: newIfNum(id), token: tag };
         }
@@ -813,7 +815,39 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             return !Object.keys(dl).some(o => o !== k && String(dl[o].ifId) === String(l.ifId) && Number(dl[o].qty) > 0);
         });
     }
-    // Applies one pallet change at the dock. sign +1 = on, -1 = off. Returns a scan result.
+    // Writes one load change (delta { item: ±pcs }) to the truck's TO + IF op by op (writeMode on, docs written): a manager's at-dock edit,
+    // or a re-approve of docs after Send back (spec 2026-10-17). A failed op undoes what this change already wrote.
+    // Returns { dl } (the new docLines) | { refused: text } | { outOfSync: { error, pending }, dl } when the undo itself failed.
+    function writeDocsDelta(x, d, delta, seq, c) {
+        const docLines = d.docLines || {}, addOns = {};
+        const newDl = () => withAddOns(verify.applyDelta(docLines, delta, d.ifId, d.ifNum), addOns);
+        if (!docsLive(d, c)) return { dl: newDl() };
+        const ops = verify.dockOps({ toId: d.toId, primaryIfId: d.ifId, primaryIfNum: d.ifNum, docLines: docLines, delta: delta });
+        const done = [];
+        for (let i = 0; i < ops.length; i++) {
+            const op = ops[i];
+            try {
+                const ao = applyDockOp(x, d, op, seq);
+                if (ao) { addOns[ao.item] = ao; done.push(Object.assign({}, op, { op: 'if_create' })); } else done.push(op);
+            } catch (e) {
+                const undo = done.slice().reverse().map(verify.inverseOp);
+                let undone = 0;                       // inverse ops that landed, newest done op first
+                try {
+                    if (undo.some(u => u === null)) throw new Error('cannot undo an add-on IF');
+                    undo.forEach(u => { tx.apply(u); undone++; });
+                } catch (e2) {
+                    // The done ops not undone are still in place: the change counts as made. Retry (a straight idempotent replay) re-applies
+                    // the forward ops of the steps the undo reverted, in their original order, then the forward remainder.
+                    log.error({ title: 'move dock undo ' + x.id, details: 'edit: ' + ((e && e.message) || String(e)) + ' / undo: ' + ((e2 && e2.stack) || String(e2)) });
+                    return { outOfSync: { error: (e && e.message) || String(e), pending: ops.slice(i - undone, i).concat(ops.slice(i)) }, dl: newDl() };
+                }
+                return { refused: 'NetSuite refused the change: ' + ((e && e.message) || e) };
+            }
+        }
+        return { dl: newDl() };
+    }
+    // Applies one pallet change at the dock (manager only since 2026-10-17: the floor's load is locked once docs are written).
+    // sign +1 = on, -1 = off. Returns a scan result.
     function dockEdit(x, p, sign, s, c) {
         const cl = claimLoad(x, null, 'dock', mustAtDock);
         const d = cl.Ld.data, seq = { n: Number(d.addOnSeq) || 0 };
@@ -849,38 +883,15 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 const shorts = verify.stockCheck(delta, avail);
                 if (shorts.length) { release(); return result('short', { message: 'Can\'t add: ' + verify.stockText(shorts, skuNames(items)) + '. Leave the pallet off and call the office.' }); }
             }
-            const docLines = d.docLines || {}, addOns = {};
-            if (docsLive(d, c)) {
-                const ops = verify.dockOps({ toId: d.toId, primaryIfId: d.ifId, primaryIfNum: d.ifNum, docLines: docLines, delta: delta });
-                const done = [];
-                for (let i = 0; i < ops.length; i++) {
-                    const op = ops[i];
-                    try {
-                        const ao = applyDockOp(x, d, op, seq);
-                        if (ao) { addOns[ao.item] = ao; done.push(Object.assign({}, op, { op: 'if_create' })); } else done.push(op);
-                    } catch (e) {
-                        const undo = done.slice().reverse().map(verify.inverseOp);
-                        let undone = 0;                       // inverse ops that landed, newest done op first
-                        try {
-                            if (undo.some(u => u === null)) throw new Error('cannot undo an add-on IF');
-                            undo.forEach(u => { tx.apply(u); undone++; });
-                        } catch (e2) {
-                            // The done ops not undone are still in place: the pallet counts as changed. Retry (a straight idempotent replay) re-applies
-                            // the forward ops of the steps the undo reverted, in their original order, then the forward remainder.
-                            log.error({ title: 'move dock undo ' + x.id, details: 'edit: ' + ((e && e.message) || String(e)) + ' / undo: ' + ((e2 && e2.stack) || String(e2)) });
-                            data.updatePallet(p, sign > 0 ? palletOn : palletOff);
-                            const dl = withAddOns(verify.applyDelta(docLines, delta, d.ifId, d.ifNum), addOns);
-                            const pending = ops.slice(i - undone, i).concat(ops.slice(i));
-                            release({ docsSync: { error: (e && e.message) || String(e), pending: pending, at: c.now.stamp, by: c.actor }, docLines: dl,
-                                alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
-                            return result('out_of_sync', { message: 'Docs are out of sync with the trailer. A manager must press Retry before more scans.' });
-                        }
-                        release();
-                        return result('refused', { message: 'NetSuite refused the change: ' + ((e && e.message) || e) + '. The pallet stays ' + (sign > 0 ? 'off' : 'on') + ' the truck.' });
-                    }
-                }
+            const w = writeDocsDelta(x, d, delta, seq, c);
+            if (w.outOfSync) {
+                data.updatePallet(p, sign > 0 ? palletOn : palletOff);
+                release({ docsSync: Object.assign(w.outOfSync, { at: c.now.stamp, by: c.actor }), docLines: w.dl,
+                    alloc: verify.allocFromDocLines(w.dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
+                return result('out_of_sync', { message: 'Docs are out of sync with the trailer. A manager must press Retry before more scans.' });
             }
-            const dl = withAddOns(verify.applyDelta(docLines, delta, d.ifId, d.ifNum), addOns);
+            if (w.refused) { release(); return result('refused', { message: w.refused + '. The pallet stays ' + (sign > 0 ? 'off' : 'on') + ' the truck.' }); }
+            const dl = w.dl;
             data.updatePallet(p, sign > 0 ? palletOn : palletOff);
             release({ docLines: dl, alloc: verify.allocFromDocLines(dl, { toId: d.toId, toNum: d.toNum }), lastStep: stepOf('dock_edit', c) });
             return result(sign > 0 ? 'ok' : 'taken_off');
@@ -917,50 +928,64 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         if (seal.length > 30) throw userErr('The seal # is too long (30 characters max)');
         return seal;
     }
-    // The seal is optional until Picked up. Before docs it goes in at Send for docs. At the dock: it is saved on the truck
-    // and (writeMode on, docs written) stamped on each Picked IF, all before the truck record changes.
+    // Once a stamp landed the seal is pinned: every IF on the truck must carry the same one.
+    function pinnedSeal(seal) {
+        return cur => {
+            const old = (cur.data.depart && cur.data.depart.seal) || '';
+            if (stampsDone(cur) && verify.sealKey(seal) !== verify.sealKey(old)) throw userErr('Seal ' + old + ' is already on the paperwork: use it, or ask the office');
+        };
+    }
+    const PICKUP_WAIT = 'This trailer is waiting for a manager to confirm it shipped';
+    // The floor writes no NetSuite (spec 2026-10-17): the seal is saved on the truck only; the manager's Confirm shipped stamps it on each IF.
     act('dock_seal', false, (a, c) => {
         const seal = cleanSeal(a.seal);
         if (!seal) throw userErr('Enter the seal #');
         const x = mustTruck(a.truckId);
         if (!isScan(x)) throw userErr('This truck takes its seal at Mark shipped');
-        if (x.status !== T.AT_DOCK) throw userErr('Add the seal at Send for docs, or once the trailer is at the dock.');
+        if (x.status === T.PICKUP_PENDING) throw userErr(PICKUP_WAIT);
+        if (x.status !== T.AT_DOCK) throw userErr('The seal goes in once the trailer is at the dock (docs approved).');
+        pinnedSeal(seal)(x);
         sealTaken(seal, x.id);
         const cl = claimLoad(x, null, 'dock', mustAtDock);
-        try {
-            if (docsLive(cl.Ld.data, c)) (cl.Ld.data.alloc || []).forEach(f => {
-                assertClaim(x.id, cl.claim, truckLabel(x), 'dock');
-                tx.apply({ op: 'if_seal', ifId: f.ifId, ifNum: f.ifNum, seal: seal });
-            });
-        } catch (e) {
-            const cur = data.getLoad(x.id);
-            if (cur && cur.data.claim === cl.claim) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '' } });
-            if (e.user) throw e;
-            log.error({ title: 'move dock seal ' + x.id, details: (e && e.stack) || String(e) });
-            throw userErr('The seal was not saved: NetSuite refused it (' + ((e && e.message) || e) + ')');
-        }
         data.updateLoad(data.getLoad(x.id), { data: { claim: '', workingAt: 0, phase: '', depart: Object.assign({}, cl.Ld.data.depart, { seal: seal }), lastStep: stepOf('dock_seal', c) } });
         return { view: truckView(mustTruck(x.id), c) };
     });
 
-    // The carrier took the trailer: each IF on the truck is stamped Shipped with the seal (writeMode on), then the loaded pallets go
-    // in transit (shippedDay = the pickup day), then the truck departs. depart.day stays the docs day (it carries the Truck #).
-    // Any failure leaves the truck at the dock with data.error and the claim released; pressing again skips the stamps already done.
+    // The carrier took the trailer: the floor sends it to the manager (pickup_pending, seal required, no NetSuite write).
     act('picked_up', false, (a, c) => {
         const x = mustTruck(a.truckId);
+        if (x.status === T.PICKUP_PENDING) throw userErr(PICKUP_WAIT);
         if (x.status !== T.AT_DOCK) throw userErr('This truck is ' + x.status + ', not waiting at the dock');
         const seal = cleanSeal(a.seal || (x.data.depart && x.data.depart.seal));
         if (!seal) throw userErr('Enter the seal # before the carrier leaves');
-        // Once a stamp landed the seal is pinned: every IF on the truck must carry the same one.
-        const pinned = cur => {
-            const old = (cur.data.depart && cur.data.depart.seal) || '';
-            if (stampsDone(cur) && verify.sealKey(seal) !== verify.sealKey(old)) throw userErr('Seal ' + old + ' is already on the paperwork: use it, or ask the office');
-        };
-        pinned(x);
+        pinnedSeal(seal)(x);
+        sealTaken(seal, x.id);
+        if (!data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT]).length) throw userErr('Nothing is loaded on this truck');
+        const cl = claimLoad(x, null, 'pickup', cur => { mustAtDock(cur, true); pinnedSeal(seal)(cur); });
+        const dep = cl.Ld.data.depart || {}, useSeal = stampsDone(cl.Ld) ? dep.seal : seal;
+        data.updateLoad(data.getLoad(x.id), { status: T.PICKUP_PENDING, data: { claim: '', workingAt: 0, phase: '', error: '', sentBack: null,
+            pickupReq: { seal: useSeal, by: c.actor, at: c.now.stamp }, depart: Object.assign({}, dep, { seal: useSeal }), lastStep: stepOf('pickup_requested', c) } });
+        return { pending: true, view: truckView(mustTruck(x.id), c) };
+    });
+    function mustPickupPending(cur) {
+        if (cur.status !== T.PICKUP_PENDING) throw userErr('This truck is ' + cur.status + ', not waiting for a ship confirm');
+        if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
+    }
+    // Manager Confirm shipped: each IF on the truck is stamped Shipped with the seal (writeMode on), then the loaded pallets go in transit
+    // (shippedDay = the confirm day), then the truck departs. depart.day stays the docs day (it carries the Truck #).
+    // Any failure leaves the truck waiting with data.error and the claim released; pressing again skips the stamps already done.
+    act('pickup_confirm', true, (a, c) => {
+        const x = mustTruck(a.truckId);
+        const ready = cur => { mustPickupPending(cur); if (cur.data.docsSync) throw userErr('Docs are out of sync on this truck: press Retry first'); };
+        ready(x);
+        const q = x.data.pickupReq || {};
+        const seal = cleanSeal(q.seal || (x.data.depart && x.data.depart.seal));
+        if (!seal) throw userErr('No seal on this truck: send it back to the dock for the seal');
+        pinnedSeal(seal)(x);
         sealTaken(seal, x.id);
         // In-transit pallets count too: a retry after the pallet step but before the truck step must still finish.
         if (!data.palletsByLoad(x.id, [VP.LOADED, VP.IN_TRANSIT]).length) throw userErr('Nothing is loaded on this truck');
-        const cl = claimLoad(x, null, 'pickup', cur => { mustAtDock(cur, true); pinned(cur); });
+        const cl = claimLoad(x, null, 'pickup', cur => { ready(cur); pinnedSeal(seal)(cur); });
         const d = cl.Ld.data, dep = d.depart || {}, ref = d.approveRef || x.id;
         const useSeal = stampsDone(cl.Ld) ? dep.seal : seal;      // pinned: the exact seal already on the paperwork
         // Each IF keeps its own token: an add-on's is the tag it was created with (only add-ons carry one), else the truck tag.
@@ -973,8 +998,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 (k, id) => { writes[k] = id; data.updateLoad(data.getLoad(x.id), { data: { writes: writes } }); });
             assertClaim(x.id, cl.claim, truckLabel(x), 'pickup');
             shipPallets(mustTruck(x.id), c, null, day);
-            data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { claim: '', workingAt: 0, phase: '', error: '', writes: writes,
-                depart: Object.assign({}, dep, { seal: useSeal, pickedUpAt: c.now.stamp, pickedUpBy: c.actor, shippedDay: day }), lastStep: stepOf('picked_up', c) } });
+            data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { claim: '', workingAt: 0, phase: '', error: '', writes: writes, pickupReq: null,
+                depart: Object.assign({}, dep, { seal: useSeal, pickedUpAt: q.at || c.now.stamp, pickedUpBy: q.by || c.actor, shippedAt: c.now.stamp, shippedBy: c.user, shippedDay: day }),
+                lastStep: stepOf('picked_up', c) } });
         } catch (e) {
             const cur = data.getLoad(x.id);
             const ours = cur && cur.data.claim === cl.claim;
@@ -984,28 +1010,65 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             if (ours) data.updateLoad(cur, { data: { claim: '', workingAt: 0, phase: '', error: (e && e.message) || String(e), writes: writes,
                 depart: Object.assign({}, dep, { seal: useSeal }) } });
             if (e.user) throw e;
-            throw userErr('Picked up was not saved: a NetSuite write failed (' + ((e && e.message) || e) + '). Press Picked up again.');
+            throw userErr('Confirm shipped was not saved: a NetSuite write failed (' + ((e && e.message) || e) + '). Press Confirm shipped again.');
         }
         return { written: res.written, planOnly: res.planOnly, view: truckView(mustTruck(x.id), c) };
     });
-    // Manager escape for a trailer stuck at the dock (docs out of sync, a half-done Picked up, an IF the office changed): the truck departs
-    // in the portal with NO NetSuite writes. Who, when and why are recorded on depart.forced; the office fixes the TO/IF by hand.
+    function cleanNote(raw, need) {
+        const note = String(raw == null ? '' : raw).trim();
+        if (!note) throw userErr(need);
+        if (note.length > 300) throw userErr('The note is too long (300 characters max)');
+        return note;
+    }
+    // Manager Send back from the ship confirm (note for the floor): the trailer is at the dock again, only before any stamp landed.
+    act('pickup_reject', true, (a, c) => {
+        const note = cleanNote(a.note, 'Enter a note for the floor');
+        const guard = cur => {
+            mustPickupPending(cur);
+            if (pickupHalfDone(cur)) throw userErr('A stamp already landed in NetSuite: press Confirm shipped again, or mark it picked up without NetSuite');
+        };
+        guard(mustTruck(a.truckId));
+        const cur = mustTruck(a.truckId);            // fresh read, guarded, then the write
+        guard(cur);
+        data.updateLoad(cur, { status: T.AT_DOCK, data: { pickupReq: null, error: '', sentBack: { note: note, by: c.user, at: c.now.stamp }, lastStep: stepOf('pickup_sent_back', c) } });
+        return { view: truckView(mustTruck(cur.id), c) };
+    });
+    // Manager Send back to load (spec 2026-10-17): the load is locked once docs are written, so a change goes back through Load out.
+    // The truck returns to loading with its docs parked (toId / ifId / docLines stay; depart moves to docsDepart so the truck is open again).
+    // The next Approve docs writes only the difference onto the same TO + IF.
+    act('dock_sendback', true, (a, c) => {
+        const note = cleanNote(a.note, 'Enter a note for the floor');
+        const guard = cur => {
+            if (!isDock(cur)) throw userErr('This truck is ' + cur.status + ', not at the dock');
+            if (pickupHalfDone(cur)) throw userErr('A stamp already landed in NetSuite: confirm shipped, or mark it picked up without NetSuite');
+            if (cur.data.docsSync) throw userErr('Docs are out of sync on this truck: press Retry first');
+            if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
+        };
+        guard(mustTruck(a.truckId));
+        const cur = mustTruck(a.truckId);
+        guard(cur);
+        data.updateLoad(cur, { status: T.LOADING, data: { docsDepart: cur.data.depart || null, depart: null, pickupReq: null, shipReq: null, verify: null, error: '',
+            sentBack: { note: note, by: c.user, at: c.now.stamp }, lastStep: stepOf('sent_back', c) } });
+        return { view: truckView(mustTruck(cur.id), c) };
+    });
+    // Manager escape for a trailer stuck at the dock or waiting for the ship confirm (docs out of sync, a half-done confirm, an IF the office
+    // changed): the truck departs in the portal with NO NetSuite writes. Who, when and why are recorded on depart.forced; the office fixes the TO/IF by hand.
     act('picked_up_force', true, (a, c) => {
         const note = String(a.note == null ? '' : a.note).trim();
         if (!note) throw userErr('Enter a note: why NetSuite is skipped');
         if (note.length > 300) throw userErr('The note is too long (300 characters max)');
         const x = mustTruck(a.truckId);
-        if (x.status !== T.AT_DOCK) throw userErr('This truck is ' + x.status + ', not at the dock');
+        if (!isDock(x)) throw userErr('This truck is ' + x.status + ', not at the dock');
         const seal = cleanSeal(a.seal);
         if (seal) sealTaken(seal, x.id);
         const cl = claimLoad(x, null, 'pickup', cur => {
-            if (cur.status !== T.AT_DOCK) throw userErr('This truck is ' + cur.status + ', not at the dock');
+            if (!isDock(cur)) throw userErr('This truck is ' + cur.status + ', not at the dock');
             if (cur.data.claim && !stale(cur)) throw userErr((truckLabel(cur) || 'This truck') + ' is being updated. Try again in a moment.');
         });
         const dep = cl.Ld.data.depart || {}, day = c.now.dayIso;
         try {
             shipPallets(mustTruck(x.id), c, null, day);
-            data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { claim: '', workingAt: 0, phase: '', error: '', docsSync: null,
+            data.updateLoad(data.getLoad(x.id), { status: T.DEPARTED, data: { claim: '', workingAt: 0, phase: '', error: '', docsSync: null, pickupReq: null,
                 depart: Object.assign({}, dep, { seal: seal || dep.seal || '', pickedUpAt: c.now.stamp, pickedUpBy: c.actor, shippedDay: day,
                     forced: { by: c.actor, at: c.now.stamp, note: note } }), lastStep: stepOf('picked_up_forced', c) } });
         } catch (e) {
@@ -1015,6 +1078,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         }
         return { view: truckView(mustTruck(x.id), c) };
     });
+    // The load is locked once docs are written (spec 2026-10-17): only a manager's edit writes the TO + IF; the floor asks for a Send back.
+    const DOCK_LOCKED = 'Docs are approved: this load is locked. Ask a manager to send the trailer back to fix it.';
+    function mustDockEditor(c) { if (!c.mgr) throw userErr(DOCK_LOCKED); }
     function isFlaggedTip(p) { return !!(p && ((p.data.decision && p.data.decision.kind === 'accepted_pending') || p.data.flag === 'never_loaded')); }
     function dockScan(x, a, c) {
         const s = core.parseScan(a.raw), p = s.palletId ? data.getPallet(s.palletId) : null;
@@ -1034,7 +1100,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
 
     act('truck_scan', false, (a, c) => {
         const x0 = mustTruck(a.truckId);
-        if (x0.status === T.AT_DOCK) return dockScan(x0, a, c);
+        if (x0.status === T.AT_DOCK) { mustDockEditor(c); return dockScan(x0, a, c); }
         const x = mustOpenTruck(a.truckId);
         const s = core.parseScan(a.raw);
         const p = s.palletId ? data.getPallet(s.palletId) : null;
@@ -1075,6 +1141,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('truck_remove', false, (a, c) => {
         const x0 = mustTruck(a.truckId);
         if (x0.status === T.AT_DOCK) {                // at the dock a removal changes the TO and IF too
+            mustDockEditor(c);
             const p0 = mustPallet(a.palletId);
             if (p0.status !== VP.LOADED || String(p0.loadId) !== String(x0.id)) throw userErr('That pallet is not on this truck');
             return dockEdit(x0, p0, -1, { raw: p0.code }, c);
@@ -1087,7 +1154,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     act('truck_undo', false, (a, c) => {
-        if (mustTruck(a.truckId).status === T.AT_DOCK) throw userErr('At the dock, take a pallet off by scanning it in Take off mode');
+        if (isDock(mustTruck(a.truckId))) throw userErr(c.mgr ? 'At the dock, take a pallet off by scanning it in Take off mode' : DOCK_LOCKED);
         const x = mustOpenTruck(a.truckId), st = (x.data.stack || []).slice();
         let undone = false;
         while (st.length) {
@@ -1309,8 +1376,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         mustReady(x);
         const own = String(x.data.trailer || '').trim();
         // A truck with no trailer (started before the rework) takes the one entered at the mark.
-        const inp = { trailer: own || checkTrailer(a.trailer, x.id), seal: String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
-        if (!inp.seal && !isScan(x)) throw userErr('Enter the seal #');     // drop trailer: a scan truck's seal can come at Picked up
+        // Drop trailer (spec 2026-10-17): a scan truck's seal goes in only at the dock (Shipments), never at Send for docs.
+        const inp = { trailer: own || checkTrailer(a.trailer, x.id), seal: isScan(x) ? '' : String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
+        if (!inp.seal && !isScan(x)) throw userErr('Enter the seal #');
         if (inp.seal.length > 30) throw userErr('The seal # is too long (30 characters max)');
         if (inp.carrier.length > 60) throw userErr('The carrier is too long (60 characters max)');
         if (inp.seal) sealTaken(inp.seal, x.id);
@@ -1340,6 +1408,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         mustPending(x0);
         const inp = shipInput(x0), mc = markCtx(x0, c);
         if (inp.seal) sealTaken(inp.seal, x0.id);
+        if (isScan(x0) && x0.data.docsDepart) return reApproveDocs(x0, c);   // sent back from the dock: its TO + IF exist
         if (isScan(x0)) {                                // spec 2026-10-14 S4: blocked before anything is claimed or written
             const tl = verify.linesPcs(verify.truckLines(data.palletsByLoad(x0.id, [VP.LOADED]))), items = Object.keys(tl);
             const st = data.locationStock(c.S.locFrom, items), avail = {};
@@ -1366,6 +1435,51 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return finishDepart(mustTruck(x0.id), c, cl.claim);
     });
 
+    // Approve docs again after a Send back from the dock (spec 2026-10-17): only the difference between the load and the docs is written
+    // onto the same TO + IF (writeDocsDelta: undo on failure, out of sync + Retry if the undo fails), then the trailer parks at the dock again.
+    // The stock check covers the increase only (the TO already holds the rest). No docs (off / qty): plan only, like at the dock.
+    function reApproveDocs(x0, c) {
+        const ps = data.palletsByLoad(x0.id, [VP.LOADED]);
+        if (!ps.length) throw userErr('Nothing is loaded on this truck');
+        const tl = verify.linesPcs(verify.truckLines(ps)), dl = x0.data.docLines || {}, delta = {}, up = {};
+        Object.keys(tl).concat(Object.keys(dl)).forEach(k => {
+            const n = (Number(tl[k]) || 0) - (dl[k] ? Number(dl[k].qty) || 0 : 0);
+            if (n) delta[k] = n;
+            if (n > 0) up[k] = n;
+        });
+        const solo = addOnEmptied(x0.data, delta);
+        if (solo.length) throw userErr(skuNames(solo)[solo[0]] + ' is on its own add-on IF ' + dl[solo[0]].ifNum + ': ask the office to remove it, then approve again.');
+        if (Object.keys(up).length) {
+            const items = Object.keys(up), st = data.locationStock(c.S.locFrom, items), avail = {};
+            items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; });
+            const shorts = verify.stockCheck(up, avail);
+            if (shorts.length) throw userErr('Can\'t approve: ' + verify.stockText(shorts, skuNames(items)) + '. Send it back to take pallets off, or fix stock in NetSuite and approve again.');
+        }
+        const cl = claimLoad(x0, null, 'redocs', cur => {
+            if (cur.status !== T.SHIP_PENDING || !cur.data.shipReq || cur.data.depart || (cur.data.claim && !stale(cur)))
+                throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+        });
+        const d0 = cl.Ld.data, q = d0.shipReq || {}, old = d0.docsDepart || {};
+        const dep = Object.assign({}, old, { trailer: String(d0.trailer || q.trailer || old.trailer || '').trim(), carrier: q.carrier || old.carrier });
+        const d = Object.assign({}, d0, { depart: dep }), seq = { n: Number(d0.addOnSeq) || 0 };
+        if (palletKey(data.palletsByLoad(x0.id, [VP.LOADED])) !== palletKey(ps)) {
+            data.updateLoad(data.getLoad(x0.id), { data: { claim: '', workingAt: 0, phase: '' } });
+            throw userErr('This truck changed while it was being checked. Approve again.');
+        }
+        let w;
+        try { w = Object.keys(delta).length ? writeDocsDelta(x0, d, delta, seq, c) : { dl: dl }; }
+        catch (e) { data.updateLoad(data.getLoad(x0.id), { data: { claim: '', workingAt: 0, phase: '', addOnSeq: seq.n } }); throw e; }
+        const base = { claim: '', workingAt: 0, phase: '', addOnSeq: seq.n };
+        if (w.refused) {
+            data.updateLoad(data.getLoad(x0.id), { data: Object.assign(base, { error: w.refused }) });
+            throw userErr(w.refused + '. NetSuite is unchanged: approve again, or send it back.');
+        }
+        data.updateLoad(data.getLoad(x0.id), { status: T.AT_DOCK, data: Object.assign(base, { error: '', shipReq: null, sentBack: null, shortNote: null, docsDepart: null, depart: dep,
+            docLines: w.dl, alloc: verify.allocFromDocLines(w.dl, { toId: d0.toId, toNum: d0.toNum }), lastStep: stepOf('docs_rewritten', c) },
+            w.outOfSync ? { docsSync: Object.assign(w.outOfSync, { at: c.now.stamp, by: c.actor }) } : {}) });
+        return Object.assign({ atDock: true, rewritten: true, view: truckView(mustTruck(x0.id), c) }, d0.toId ? { toNum: d0.toNum, ifNum: d0.ifNum } : {},
+            w.outOfSync ? { outOfSync: true } : {});
+    }
     // Send back (manager, note required): the floor gets the truck back as loading, with the note on its screen.
     act('ship_sendback', true, (a, c) => {
         const note = String(a.note || '').trim().slice(0, 300);
@@ -2004,13 +2118,27 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             }
             return Object.assign({ scan: isScan(x), lines: sr ? sr.rows.map(r => ({ sku: r.sku, pcs: r.pcs })) : [], lbs: sr ? sr.total : null }, err ? { error: err } : {}, { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
                 ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
-                otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) });
+                otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) },
+                x.data.docsDepart ? { redo: { toNum: x.data.toNum || '', ifNum: x.data.ifNum || '' } } : {});   // sent back from the dock: Approve updates the same TO + IF
+        });
+        // Drop trailer: the floor pressed Picked up; the manager confirms it shipped (spec 2026-10-17).
+        const pickups = trucks.filter(x => x.status === T.PICKUP_PENDING).map(x => {
+            const q = x.data.pickupReq || {}, dep = x.data.depart || {};
+            let sr = null;
+            try { sr = scanRows(x, data.palletsByLoad(x.id, [VP.LOADED]), c); } catch (e) { log.error({ title: 'move pickup card ' + x.id, details: (e && e.stack) || String(e) }); }
+            return { truck: sum(x), trailer: dep.trailer || x.data.trailer || '', seal: q.seal || dep.seal || '', carrier: dep.carrier || '', toNum: x.data.toNum || '',
+                ifs: (x.data.alloc || []).map(f => f.ifNum).filter(Boolean), lines: sr ? sr.rows.map(r => ({ sku: r.sku, pcs: r.pcs })) : [], lbs: sr ? sr.total : null,
+                pallets: cnt(counts, x.id, VP.LOADED), by: whoName(q.by), at: q.at || '', ageMin: minutesSince(q.at, c), error: x.data.error || '', halfDone: pickupHalfDone(x) };
         });
         // Drop trailer: at-dock trucks whose docs are out of sync (spec 2026-10-16 §4). The key appears only when one exists.
         const outOfSync = trucks.filter(x => x.status === T.AT_DOCK && x.data.docsSync).map(x => Object.assign(sum(x), { error: x.data.docsSync.error, at: x.data.docsSync.at,
             pending: (x.data.docsSync.pending || []).length }));
-        return Object.assign(outOfSync.length ? { outOfSync: outOfSync } : {}, {
+        // Drop trailer: trailers parked at the dock with docs (load locked); the manager can send one back to Load out (2026-10-17).
+        const atDock = trucks.filter(x => x.status === T.AT_DOCK && isScan(x) && !x.data.docsSync).map(x => Object.assign(sum(x), { toNum: x.data.toNum || '', ifNum: x.data.ifNum || '',
+            trailer: (x.data.depart || {}).trailer || x.data.trailer || '', seal: (x.data.depart || {}).seal || '', pallets: cnt(counts, x.id, VP.LOADED) }));
+        return Object.assign(outOfSync.length ? { outOfSync: outOfSync } : {}, atDock.length ? { atDock: atDock } : {}, {
             shipPending: shipPending,
+            pickups: pickups,
             flagged: flagged,
             fixes: fixes,
             trucks: fixTrucks,
@@ -2042,8 +2170,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('approvals', true, (a, c) => approvalsView(c));
 
     // ── dashboard (spec 2026-10-06 pm §3): trucks, approvals waiting, Active loads ──
-    const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
+    const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Waiting for ship confirm', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
     function stageOf(x) {
+        if (x.status === T.PICKUP_PENDING) return 'Waiting for ship confirm';
         if (x.status === T.AT_DOCK) return 'At dock';
         if (isScan(x) && (x.status === T.SHIP_PENDING || x.status === T.DEPARTING)) return 'Waiting for docs';
         if (isScan(x) && x.status === T.READY) return 'Ready for docs';
@@ -2101,7 +2230,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 truckNo: dep ? dep.truckNo : null, status: x.status, stage: stage, lastKind: ls.kind, lastBy: whoName(ls.by), lastAt: ls.at, lastMin: ls.at ? minutesSince(ls.at, c) : null,
                 flagged: stillFlagged(d.flagged).filter(p => p.data.flaggedTruck === x.id).length };
             if (dep) {
-                const ps = (x.status === T.AT_DOCK ? loadedAll : shippedAll)[String(x.id)] || [];   // at the dock: still loaded
+                const ps = (isDock(x) ? loadedAll : shippedAll)[String(x.id)] || [];   // at the dock: still loaded
                 const rp = verify.planReceipts({ alloc: d.alloc || [], pallets: ps, received: d.received || {}, stamp: dep, seq: 0 }), got = cnt(counts, x.id, VP.RECEIVED) > 0;
                 const sk = skuNames([...new Set((d.alloc || []).reduce((s, al) => s.concat(Object.keys(al.lines)), []))]), irs = irsOf(x);
                 (d.alloc || []).forEach(al => {
