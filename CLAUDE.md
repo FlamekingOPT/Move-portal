@@ -28,7 +28,7 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
   - tx 3050484, label_template 3050485, ui 3050486, sl 3050487
   - ⚠ Gotcha: `mediaitem.nl?folder=` is ignored, so new files land in the last-used folder (they went to PickerPortal and were moved). Set the folder with `nlapiSetFieldValue('folder', …)` before you save.
 - **Script** `customscript_move_portal` id **1166**. Both deployments are **login required**, Execute As Current Role (Jack: the floor uses the picker login, not a no-login URL):
-  - **Manager** `customdeploy_move_portal` id **3712**, status **Testing** (owner only until Released). URL `https://8211645.app.netsuite.com/app/site/hosting/scriptlet.nl?script=1166&deploy=1`. Audience: Administrator 3, Warehouse Portal Manager 2536, FK Warehouse Manager 1303 / 2509 / 1403 / 2522.
+  - **Manager** `customdeploy_move_portal` id **3712**, status **Released 2026-10-19** (Jack: "the test works, let's release it"; the off-mode test truck was walked and deleted). URL `https://8211645.app.netsuite.com/app/site/hosting/scriptlet.nl?script=1166&deploy=1`. Audience: Administrator 3, Warehouse Portal Manager 2536, FK Warehouse Manager 1303 / 2509 / 1403 / 2522.
   - **Floor** `customdeploy_move_portal_floor` id **3713**, **Released**. URL `…script=1166&deploy=2`. Audience: the manager roles + **Portal Picker - Riverside 2539** (the RVS Warehouse login 10643). Keep 2539 OUT of the manager deployment: manager mode = the manager deployment + a logged-in user.
 - **Roles:**
   - Portal Picker - Riverside (2539): + Transfer Order View, + Item Receipt View.
@@ -90,7 +90,7 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
       - 21 workbook SKUs aren't in NetSuite and were skipped (old/renamed price-sheet names): AB228, FK-SSPT-18INX2, GH10-RBH, GH10-RBH-10LB, GH10-SSH-10LB, GH3-RBH, GH3-RBH-3LB, GH5-RBH, GH5-RBH-5LB, GH5-SSH-5LBG, LID 420-W, RV-COMBO1, VSCFL, YSN-CHS10, YSN-CHS20, YSN-RGB2, YSN100ASME, YSNAX1-019, YSNBBQ-136, YSNBM-264, YSNVT-301.
       - Spot checks via item search: YSN201 18 CYL, YSN201-AG 18 CYL, YSN301 25 CYL, YSN401 34 CYL, KT12ACR-2 2.6 PCS, VOPD20 1 PCS.
       - On-hand SKUs still without a weight are on the workbook's Missing sheet. Add them with a re-upload (the upload replaces the whole table, so re-upload the full list).
-    - ⏭ Next: the off-mode walk, then writeMode `on`.
+    - ✅ Off-mode walk done by Jack. The manager deployment 3712 was Released 2026-10-19, so all six manager roles can open it. ⏭ Next: writeMode `on` for the first real truck, with Jack watching.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
