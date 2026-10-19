@@ -1869,6 +1869,27 @@ test('unload scan of a pallet on a ship_pending truck: locked, with its label an
     assert.deepEqual([r.result, r.reason, r.otherLabel], ['locked', 'ship_pending', ctx.data.getLoad(a.t.id).data.trailer ? 'Trailer ' + ctx.data.getLoad(a.t.id).data.trailer : '']);
 });
 
+test('trailers: save trims, refuses duplicates and long numbers, and the floor list follows', () => {
+    const ctx = setup();
+    const r = ctx.run('trailers_save', { trailers: [' 900100 ', '537224', ''] });
+    assert.deepEqual(r.trailers, ['900100', '537224']);
+    assert.deepEqual(ctx.run('trailers_list').trailers, ['900100', '537224']);
+    assert.deepEqual(ctx.run('truck_planned', {}, false).trailers, ['900100', '537224']);
+    assert.throws(() => ctx.run('trailers_save', { trailers: ['A', 'a'] }), /listed twice/);
+    assert.throws(() => ctx.run('trailers_save', { trailers: ['X'.repeat(21)] }), /too long/);
+    assert.throws(() => ctx.run('trailers_save', { trailers: ['1'] }, false), /Managers only/);
+    assert.throws(() => ctx.run('trailers_list', {}, false), /Managers only/);
+});
+
+test('trailers: removing a trailer an open truck uses warns but keeps the truck', () => {
+    const ctx = setup();
+    const t = ctx.run('truck_start', { ifIds: ['9001'], trailer: '537224' }, false).view.truck;
+    assert.deepEqual(ctx.run('trailers_list').busy, ['537224']);
+    const r = ctx.run('trailers_save', { trailers: ['900100'] });
+    assert.deepEqual(r.removedBusy, ['537224']);
+    assert.equal(ctx.data.getLoad(t.id).data.trailer, '537224');
+});
+
 test('truck_planned: shippedToday lists today\'s departed trucks; trailers lists the free ones', () => {
     const ctx = setup();
     const ps = printLabels(ctx, 42, 'Jst', [L975]);

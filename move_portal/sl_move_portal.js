@@ -747,6 +747,28 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             trailers: (c.S.trailers || DEFAULT_TRAILERS).filter(t => !busy[normTrailer(t)]), carrier: c.S.defaultCarrier || 'ArcBest' };
     });
 
+    function busyTrailers() {
+        const out = [];
+        allTrucks().filter(x => TRAILER_BUSY.indexOf(x.status) !== -1 && x.data && x.data.trailer).forEach(x => { const n = normTrailer(x.data.trailer); if (out.indexOf(n) === -1) out.push(n); });
+        return out;
+    }
+    act('trailers_list', true, (a, c) => ({ trailers: c.S.trailers || DEFAULT_TRAILERS, busy: busyTrailers() }));
+    act('trailers_save', true, (a, c) => {
+        const list = (Array.isArray(a.trailers) ? a.trailers : []).map(t => String(t == null ? '' : t).trim()).filter(t => t !== '');
+        if (list.length > 100) throw userErr('Too many trailers (100 max)');
+        const seen = {};
+        list.forEach(t => {
+            if (t.length > 20) throw userErr('Trailer # too long (20 characters max)');
+            const n = normTrailer(t);
+            if (seen[n]) throw userErr(t + ' is listed twice');
+            seen[n] = true;
+        });
+        const busy = busyTrailers();
+        const removedBusy = (c.S.trailers || DEFAULT_TRAILERS).filter(t => !seen[normTrailer(t)] && busy.indexOf(normTrailer(t)) !== -1);
+        data.saveSettings({ trailers: list });
+        return { trailers: list, removedBusy: removedBusy };
+    });
+
     // A trailer is on one truck at a time until it leaves.
     const TRAILER_BUSY = [T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.DEPARTING, T.AT_DOCK, T.PICKUP_PENDING];
     // At the dock with docs: parked (at_dock) or waiting for the manager's Confirm shipped (pickup_pending, spec 2026-10-17).

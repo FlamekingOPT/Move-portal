@@ -208,7 +208,7 @@ test('2026-10-06 pm: Dashboard first and default; Labels start with Print a SKU'
     const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf("mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]") !== -1, 'tab order');
     assert.ok(src.indexOf("mgr: 'dash'") !== -1, 'default tab');
-    assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_weights', 'Unit weights') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
+    assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_weights', 'Unit weights') + sec('lb_trailers', 'Trailers') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
 });
 
 test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject; Approve waits; anchors for the dashboard links', () => {
@@ -394,7 +394,7 @@ test('2026-10-17: manager-only writes copy: pickup confirm, send back to Load ou
 
 test('ui: weights card, overweight banner and weight in item search exist', () => {
     const src = ui._clientMain.toString().replace(/\r/g, '');
-    ["api('weights_preview'", "api('weights_save'", "api('weights_list'", "'Unit weights'", "'⚠ Over '", "'at least '", 'Download current weights'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
+    ["api('weights_preview'", "api('weights_save'", "api('weights_list'", "'Unit weights'", "api('trailers_save'", "api('trailers_list'", "'Trailers'", "'⚠ Over '", "'at least '", 'Download current weights'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
 
 test('ui: ship-confirm card banner reads x.weight', () => {

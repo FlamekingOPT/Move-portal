@@ -1009,11 +1009,12 @@ h3{font-size:15px;margin:16px 0 8px}
         // ── Manager: Labels (requests · print a SKU · print plan · reprint · SKU configs) ──
         SCREENS.labels = () => {
             const sec = (id, title) => '<div class="card lsec"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>';
-            main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_weights', 'Unit weights') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
+            main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_weights', 'Unit weights') + sec('lb_trailers', 'Trailers') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
             labelQueue($('lb_queue'));
             labelSku($('lb_sku'));
             labelUpload($('lb_xlsx'));
             labelWeights($('lb_weights'));
+            labelTrailers($('lb_trailers'));
             labelPlan($('lb_plan'));
             labelReprint($('lb_reprint'));
             labelConfigs($('lb_configs'));
@@ -1163,6 +1164,41 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!$('wt_status')) return;
             $('wt_status').innerHTML = r.ok ? num(r.rows.length) + ' SKUs with a weight' + (r.at ? ' · uploaded ' + esc(r.at) + (r.by ? ' by ' + esc(r.by) : '') : '') : errBox(r.error);
         }
+        async function labelTrailers(box) {
+            const r = await api('trailers_list');
+            if (!$('lb_trailers')) return;
+            if (!r.ok) { box.innerHTML = errBox(r.error); return; }
+            S.trList = r.trailers.slice(); S.trBusy = r.busy || [];
+            drawTrailers(box, '');
+        }
+        function drawTrailers(box, msg) {
+            const onTruck = S.trBusy || [];
+            box.innerHTML = '<div class="muted">The trailers the floor can pick when starting a truck. A trailer on an open truck is hidden from the floor list until it leaves.</div>' +
+                '<div id="tr_list">' + (S.trList.length ? S.trList.map((t, i) => '<span style="display:inline-block;border:1px solid var(--line);border-radius:8px;padding:4px 8px;margin:2px">' + esc(t) + (onTruck.indexOf(String(t).trim().toUpperCase()) !== -1 ? ' (on a truck)' : '') +
+                    ' <button class="btn ghost sm" data-act="trremove" data-i="' + i + '" title="Remove">✕</button></span> ').join('') : '<span class="muted">No trailers listed</span>') + '</div>' +
+                '<div><input id="tr_new" maxlength="20" placeholder="Trailer #"> <button class="btn ghost sm" data-act="tradd">Add</button> <button class="btn pri sm" data-act="trsave">Save</button></div>' +
+                '<div id="tr_msg">' + (msg || '') + '</div>';
+            $('tr_new').onkeydown = e => { if (e.key === 'Enter') ACT.tradd(); };
+        }
+        ACT.tradd = () => {
+            const v = $('tr_new').value.trim();
+            if (!v) return;
+            if (v.length > 20) { $('tr_msg').innerHTML = errBox('Trailer # too long (20 characters max)'); return; }
+            if (S.trList.some(t => String(t).trim().toUpperCase() === v.toUpperCase())) { $('tr_msg').innerHTML = errBox(v + ' is listed twice'); return; }
+            S.trList.push(v);
+            drawTrailers($('lb_trailers'), '');
+            $('tr_new').focus();
+        };
+        ACT.trremove = el => { S.trList.splice(Number(el.dataset.i), 1); drawTrailers($('lb_trailers'), ''); };
+        ACT.trsave = async el => {
+            busy(el, true);
+            const r = await api('trailers_save', { trailers: S.trList });
+            busy(el, false);
+            if (!r.ok) { $('tr_msg').innerHTML = errBox(r.error); return; }
+            S.trList = r.trailers.slice();
+            drawTrailers($('lb_trailers'), flash('green', '✅ ' + num(r.trailers.length) + ' trailers saved') +
+                (r.removedBusy && r.removedBusy.length ? flash('amber', 'Still on an open truck: ' + r.removedBusy.map(esc).join(', '), 'The truck keeps its trailer.') : ''));
+        };
         ACT.wtpick = async () => {
             const f = $('wt_file').files[0], out = $('wt_out');
             if (!f) return;
