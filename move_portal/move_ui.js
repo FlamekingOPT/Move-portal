@@ -358,7 +358,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (exact && (hit || r.items.length === 1)) return pickItem(I, i, hit || r.items[0]);
             I.items = r.items;
             box.innerHTML = r.items.length ? '<div class="results">' + r.items.map((x, k) => '<div data-act="pick" data-i="' + i + '" data-k="' + k + '"><b>' + esc(x.sku) +
-                '</b> <span class="muted">' + esc(x.desc) + '</span></div>').join('') + '</div>' : '<div class="muted">No match</div>';
+                '</b> <span class="muted">' + esc(x.desc) + (x.lb != null ? ' · ' + num(x.lb) + ' lb' + (x.type ? ' ' + esc(x.type) : '') : ' · no weight') + '</span></div>').join('') + '</div>' : '<div class="muted">No match</div>';
         }
         function pickItem(I, i, x) {
             const l = I.ed.lines[i];
@@ -513,6 +513,11 @@ h3{font-size:15px;margin:16px 0 8px}
             return '<label class="it"><div>' + (pick ? '<input type="checkbox" data-if="' + esc(f.ifId) + '"> ' : '') + '<b>' + esc(f.ifNum) + '</b> · ' + esc(f.toNum) +
                 ' · ' + esc(f.lines.map(l => l.sku + ' ' + num(l.qty)).join(', ')) + '</div><div class="muted">' + (f.estPallets ? '≈ ' + f.estPallets + ' pallets' : '') + '</div></label>';
         }
+        function weightBanner(sc) {
+            if (sc.over) return flash('amber', '⚠ Over ' + num(sc.max) + ' lb: ' + (sc.atLeast ? 'at least ' : '') + num(sc.total) + ' lb');
+            if (sc.atLeast) return '<div class="muted">Total is at least ' + num(sc.total) + ' lb: ' + num(sc.noWeight) + ' SKU' + (sc.noWeight === 1 ? ' has' : 's have') + ' no weight</div>';
+            return '';
+        }
         // Scan-built truck (spec 2026-10-14): SKU rows with pallets, pcs, weight and Riverside available.
         function scanTable(sc, opt) {
             opt = opt || {};
@@ -523,7 +528,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 (opt.weight ? '<tr><td class="muted">Pallets (tare)</td><td class="muted">' + num(sc.pallets) + ' pallets × ' + num(sc.pallets ? sc.tare / sc.pallets : 0) + '</td><td></td><td class="muted">' + num(sc.tare) + ' lb</td>' + (opt.avail ? '<td></td>' : '') + '</tr>' +
                     '<tr><td><b>Total</b></td><td><b>' + num(sc.pallets) + '</b></td><td><b>' + num(sc.pcs) + '</b></td><td><b>' + num(sc.total) + ' lb</b>' +
                     (sc.noWeight ? ' <span class="muted">+ ' + sc.noWeight + ' SKU' + (sc.noWeight > 1 ? 's' : '') + ' without weight</span>' : '') + '</td>' + (opt.avail ? '<td></td>' : '') + '</tr>' : '') +
-                '</table>' + (opt.avail && sc.short ? flash('amber', '⚠ More than Riverside has available', 'Approve will be blocked: take pallets off or call the office') : '');
+                '</table>' + weightBanner(sc) + (opt.avail && sc.short ? flash('amber', '⚠ More than Riverside has available', 'Approve will be blocked: take pallets off or call the office') : '');
         }
         // Trailer #: the trailers no open truck has (r.trailers, from the settings), or "Other…" with a typed number.
         function trailerHtml(list) {
@@ -981,10 +986,11 @@ h3{font-size:15px;margin:16px 0 8px}
         // ── Manager: Labels (requests · print a SKU · print plan · reprint · SKU configs) ──
         SCREENS.labels = () => {
             const sec = (id, title) => '<div class="card lsec"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>';
-            main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
+            main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_weights', 'Unit weights') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'));
             labelQueue($('lb_queue'));
             labelSku($('lb_sku'));
             labelUpload($('lb_xlsx'));
+            labelWeights($('lb_weights'));
             labelPlan($('lb_plan'));
             labelReprint($('lb_reprint'));
             labelConfigs($('lb_configs'));
@@ -1111,11 +1117,64 @@ h3{font-size:15px;margin:16px 0 8px}
             const head = lines.shift().split(',').map(s => s.trim());
             return lines.map(l => { const c = l.split(','); const o = {}; head.forEach((h, i) => { o[h] = (c[i] || '').trim(); }); return o; });
         }
-        async function readSheet(file) {
-            if (/\.csv$/i.test(file.name)) return mapRows(csvObjs(await file.text()));
+        async function readObjs(file) {
+            if (/\.csv$/i.test(file.name)) return csvObjs(await file.text());
             const X = await loadXlsx(), wb = X.read(await file.arrayBuffer(), { type: 'array' });
-            return mapRows(X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
+            return X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
         }
+        async function readSheet(file) { return mapRows(await readObjs(file)); }
+        // Unit weights: columns SKU, Unit weight (lb), Type, matched loosely; the server takes [sku, lb, type] arrays.
+        function weightRows(objs) {
+            if (!objs.length) return [];
+            const norm = k => String(k).trim().toLowerCase().replace(/\s+/g, ' ');
+            const keys = Object.keys(objs[0]), pick = names => keys.find(k => names.indexOf(norm(k)) !== -1);
+            const cs = pick(['sku']), cw = pick(['unit weight (lb)', 'unit weight', 'weight (lb)', 'weight', 'lb']), ct = pick(['type']);
+            if (!cs || !cw) throw new Error('The sheet needs the columns SKU and Unit weight (lb) (Type is optional)');
+            return objs.map(o => [o[cs], o[cw], ct ? o[ct] : '']);
+        }
+        async function labelWeights(box) {
+            box.innerHTML = '<div id="wt_status" class="muted">Loading…</div><div class="muted">Columns: SKU · Unit weight (lb) · Type (CYL or PCS). The upload replaces all weights.</div>' +
+                '<input type="file" id="wt_file" accept=".xlsx,.xls,.csv"> <button class="btn ghost sm" data-act="wtdownload">Download current weights</button><div id="wt_out"></div>';
+            $('wt_file').onchange = () => ACT.wtpick();
+            const r = await api('weights_list');
+            if (!$('wt_status')) return;
+            $('wt_status').innerHTML = r.ok ? num(r.rows.length) + ' SKUs with a weight' + (r.at ? ' · uploaded ' + esc(r.at) + (r.by ? ' by ' + esc(r.by) : '') : '') : errBox(r.error);
+        }
+        ACT.wtpick = async () => {
+            const f = $('wt_file').files[0], out = $('wt_out');
+            if (!f) return;
+            let rows;
+            try { rows = weightRows(await readObjs(f)); } catch (e) { out.innerHTML = errBox(e.message); return; }
+            if (!rows.length) { out.innerHTML = errBox('No data rows found'); return; }
+            const pv = await api('weights_preview', { rows: rows });
+            if (!pv.ok) { out.innerHTML = errBox(pv.error); return; }
+            S.wtRows = rows;
+            const li = a => '<ul>' + a.map(x => '<li>' + x + '</li>').join('') + '</ul>';
+            out.innerHTML = '<div class="muted"><b>' + esc(f.name) + '</b></div><div>✅ ' + num(pv.count) + ' rows · +' + num(pv.added) + ' added · ' + num(pv.changed) + ' changed · −' + num(pv.removed) + ' removed</div>' +
+                (pv.errors && pv.errors.length ? '<div class="muted">Problems (skipped):</div>' + li(pv.errors.map(e => 'Row ' + esc(e.row) + ': ' + esc(e.msg))) : '') +
+                (pv.unknownSkus && pv.unknownSkus.length ? '<div class="muted">Not in NetSuite:</div>' + li(pv.unknownSkus.map(esc)) : '') +
+                (pv.count ? '<div id="wt_msg"></div><button class="btn pri" data-act="wtsave">Save weights</button>' : '');
+        };
+        ACT.wtsave = async el => {
+            if (!S.wtRows) return;
+            busy(el, true);
+            const r = await api('weights_save', { rows: S.wtRows });
+            busy(el, false);
+            if (!r.ok) { $('wt_msg').innerHTML = errBox(r.error); return; }
+            S.wtRows = null;
+            $('wt_out').innerHTML = flash('green', '✅ ' + num(r.count) + ' weights saved');
+            labelWeights($('lb_weights'));
+        };
+        ACT.wtdownload = async () => {
+            const r = await api('weights_list');
+            if (!r.ok) { alert(r.error); return; }
+            const q = v => (/[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v));
+            const csv = ['SKU,Unit weight (lb),Type'].concat(r.rows.map(x => [x.sku, x.lb, x.type].map(q).join(','))).join('\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+            a.download = 'move_unit_weights.csv';
+            document.body.appendChild(a); a.click(); a.remove();
+        };
         function labelUpload(box) {
             box.innerHTML = '<div class="muted">Columns: SKU · Pcs per pallet · Pallets · Odd pallet pcs (optional). One row per SKU (pcs per pallet, pallets, odd pallet pcs).</div>' +
                 '<input type="file" id="xlsx_file" accept=".xlsx,.xls,.csv"> <button class="btn ghost sm" data-act="xlsxtemplate">Download template</button>' +
@@ -1314,6 +1373,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 const id = esc(x.truck.id), lab = esc(x.truck.label);
                 return '<div class="card bl"><h4>🚚 ' + lab + '</h4><div class="muted">' + esc([x.seal ? 'Seal ' + x.seal : 'No seal yet', 'sent ' + (x.markedAt || '') + ' by ' + (x.markedBy || '?')].join(' · ')) + '</div>' +
                     '<div class="muted">' + esc(x.lines.map(l => l.sku + ' × ' + num(l.pcs)).join(' · ')) + ' · ' + num(x.pallets) + ' pallets' + (x.lbs != null ? ' · ' + num(x.lbs) + ' lb' : '') + '</div>' +
+                    (x.scan && x.scan.over ? weightBanner(x.scan) : '') +
                     (x.error ? '<div class="muted">⚠ ' + esc(x.error) + '</div>' : '') +
                     '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '" data-scan="1">✅ Approve</button>' +
                     '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Reject</button>' +

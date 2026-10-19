@@ -208,7 +208,7 @@ test('2026-10-06 pm: Dashboard first and default; Labels start with Print a SKU'
     const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf("mgr: [['dash', 'Dashboard'], ['approve', 'Approvals'], ['labels', 'Labels'], ['report', 'Report']]") !== -1, 'tab order');
     assert.ok(src.indexOf("mgr: 'dash'") !== -1, 'default tab');
-    assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
+    assert.ok(src.indexOf("main(sec('lb_sku', 'Print a SKU') + sec('lb_xlsx', 'Upload an Excel') + sec('lb_weights', 'Unit weights') + sec('lb_queue', 'Label requests') + sec('lb_plan', 'Print plan') + sec('lb_reprint', 'Reprint') + sec('lb_configs', 'SKU configs'))") !== -1, 'labels order');
 });
 
 test('2026-10-06 pm: flagged pallets card and receipt rows with Accept / Reject; Approve waits; anchors for the dashboard links', () => {
@@ -390,4 +390,9 @@ test('2026-10-17: manager-only writes copy: pickup confirm, send back to Load ou
         'Picked up · waiting for manager', 'Sent to a manager to confirm it shipped.', 'ask a manager to send the trailer back', 'with only the change'].forEach(t => assert.ok(src.includes(t), t));
     const card = clientFn(src, 'pickupCard');
     assert.ok(card.includes('data-act="pkconfirm"') && card.includes('data-act="opentruck"'));
+});
+
+test('ui: weights card, overweight banner and weight in item search exist', () => {
+    const src = ui._clientMain.toString().replace(/\r/g, '');
+    ["api('weights_preview'", "api('weights_save'", "api('weights_list'", "'Unit weights'", "'⚠ Over '", "'at least '", 'Download current weights'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
