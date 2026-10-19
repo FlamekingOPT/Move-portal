@@ -91,6 +91,12 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
       - Spot checks via item search: YSN201 18 CYL, YSN201-AG 18 CYL, YSN301 25 CYL, YSN401 34 CYL, KT12ACR-2 2.6 PCS, VOPD20 1 PCS.
       - On-hand SKUs still without a weight are on the workbook's Missing sheet. Add them with a re-upload (the upload replaces the whole table, so re-upload the full list).
     - ✅ Off-mode walk done by Jack. The manager deployment 3712 was Released 2026-10-19, so all six manager roles can open it. **✅ writeMode `on` in prod since 2026-10-19 ~2:30 pm** (Jack OK; he's watching the first real truck). At the switch there were no open trucks (loads 1 and 2 were deleted tests), and all 239 weights were intact. Fallback: set writeMode `qty` or `off` in Move Settings, no redeploy needed.
+    - **Jorge Luna (employee 1629) can't approve, since 2026-10-19 ~2:45 pm** (Jack: approvals only, "for now"):
+      - New Settings key `noApprove` (employee ids) = ["1629"]. Code `5e5f3cd` (sl uploaded to prod 3050487, 1166 recompiled; the sandbox still runs the version without it). Tests 470/470.
+      - The server refuses the 15 decision actions with "Approvals are turned off for you in the Move Portal. Ask another manager to approve.": ship_confirm, ship_sendback, pickup_confirm, pickup_reject, dock_sendback, picked_up_force, dock_resync, truck_correct, truck_drop_if, depart_retry, depart_release, truck_delete, pallet_accept, pallet_reject, receipt_approve.
+      - He keeps Dashboard, Report, View load and Labels (print, weights, trailers).
+      - Why not a role change: he has Warehouse Portal Manager + the Portal manager checkbox; removing them would also cut his picker-portal/NetSuite access.
+      - **Undo:** set `noApprove` to [] in Move Settings. No redeploy needed.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
