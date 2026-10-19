@@ -7,6 +7,7 @@ const { loadAmd } = require('./amd');
 const { makeLocalStore } = require('../local/local_store');
 const { makeSnapshotNs } = require('../local/snapshot_ns');
 const { labelsHtml } = require('../local/label_html');
+const { bolHtml } = require('../local/bol_html');
 
 const arg = k => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : null; };
 const snapDir = path.join(__dirname, '..', 'snapshot');
@@ -70,6 +71,15 @@ http.createServer((req, res) => {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.end(ui.buildPage({ url: '/?script=1&deploy=1' + (floor ? '&floor=1' : ''), mode: floor ? 'floor' : 'manager', me: floor ? 'Floor' : 'Manager',
             roster: data.db.settings.roster || [], fromName: 'Riverside', toName: 'Tippecanoe', maxPrint: 250 }));
+        return;
+    }
+    if (action === 'bol') {
+        // local stand-in for the BOL PDF route: manager deployment only (the floor never prints a BOL)
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        if (floor) { res.end('Managers only'); return; }
+        mgrNow = true;
+        try { res.end(bolHtml(sl._runAction('bol_data', { truckId: u.searchParams.get('truckId') }, true).bol)); }
+        catch (e) { res.end('Cannot print BOL: ' + String(e.message).replace(/[<&]/g, ' ')); }
         return;
     }
     if (action === 'pdf') {

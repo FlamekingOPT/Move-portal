@@ -401,3 +401,14 @@ test('ui: ship-confirm card banner reads x.weight', () => {
     const src = ui._clientMain.toString().replace(/\r/g, '');
     assert.ok(src.indexOf('x.weight && x.weight.over ? weightBanner(x.weight)') !== -1);
 });
+
+test('ui: BOL opens in a new tab from Approve and Print BOL', () => {
+    const src = ui._clientMain.toString().replace(/\r/g, '');
+    ['&action=bol&truckId=', 'ACT.printbol', 'Print BOL', 'BOL opened in a new tab', 'Pop-ups are blocked'].forEach(s => assert.ok(src.includes(s), s));
+    const i = src.indexOf('ACT.apconfirm = async');
+    const h = src.slice(i, src.indexOf('ACT.dresync', i));
+    const o = h.indexOf("window.open('', '_blank')");
+    assert.ok(o > -1);
+    assert.ok(o < h.indexOf("await api('ship_confirm'"));
+    assert.ok(h.indexOf('confirm(') < o);
+});

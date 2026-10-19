@@ -97,6 +97,8 @@ h3{font-size:15px;margin:16px 0 8px}
         function main(html) { $('main').innerHTML = html; }
         function busy(el, on) { if (el) el.disabled = on; }
         function pdfUrl(q) { return B.url + '&action=pdf&' + q; }
+        function bolUrl(id) { return B.url + '&action=bol&truckId=' + encodeURIComponent(id); }
+        function bolBtn(id) { return '<button class="dbtn gh" data-act="printbol" data-id="' + esc(id) + '">🖨 Print BOL</button>'; }
         function num(n) { return Number(n || 0).toLocaleString(); }
 
         async function api(action, body) {
@@ -194,6 +196,7 @@ h3{font-size:15px;margin:16px 0 8px}
         }
 
         const ACT = {};
+        ACT.printbol = el => window.open(bolUrl(el.dataset.id), '_blank');
         const SCREENS = {};
         document.addEventListener('click', e => {
             const el = e.target.closest('[data-act]');
@@ -923,6 +926,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<label class="f" for="d_seal_' + id + '">Seal #</label><input class="inp" id="d_seal_' + id + '" data-keep="1" maxlength="30" value="' + esc(dep.seal || '') + '" placeholder="Seal (tag) #" autocomplete="off">' +
                 '<div id="d_msg_' + id + '"></div>' + viewBtn(id) + '<div class="row2"><button class="btn gh" data-act="dseal" data-id="' + id + '">Save seal</button>' +
                 '<button class="btn go" data-act="dpicked" data-id="' + id + '"' + (sync ? ' disabled' : '') + '>🚛 Picked up</button></div>' +
+                (isMgr ? '<div class="row2">' + bolBtn(t.id) + '</div>' : '') +
                 (isMgr ? '<button class="btn ghost sm" data-act="dsendback" data-id="' + id + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' + forceBtn(t.id, t.label) : '') + '</div>';
         }
         // Manager: the load is locked at the dock; to change it the trailer goes back to Load out with its docs. The next Approve docs
@@ -1501,7 +1505,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div class="muted">' + esc('Picked up by ' + (x.by || '?') + ' · ' + x.at) + '</div>' + (x.error ? errBox(x.error) : '') +
                 '<div class="row2"><button class="dbtn go" data-act="pkconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Confirm shipped</button>' +
                 (x.halfDone ? '' : '<button class="dbtn gh" data-act="pkreject" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button>') +
-                '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">📋 View load</button></div>' +
+                '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">📋 View load</button>' + bolBtn(x.truck.id) + '</div>' +
                 '<div class="muted sm">Confirm stamps the IF Shipped with the seal; stock leaves Riverside.</div>' + forceBtn(x.truck.id, x.truck.label) + '</div>';
         }
         ACT.pkconfirm = async el => {
@@ -1529,18 +1533,29 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!confirm(el.dataset.scan ? 'Approve the docs for ' + label + '? This writes the TO + IF (Packed) to NetSuite (as the write mode allows). Shipped happens when you confirm the pickup.'
                 : 'Confirm ' + label + ' shipped? It gets its Truck # and its IFs are stamped/shipped in NetSuite (as the write mode allows).')) return;
             busy(el, true);
+            // A pop-up opened after an await is blocked, so the blank tab opens now (the user's click) and is closed again unless docs were written.
+            const w = el.dataset.scan ? window.open('', '_blank') : null;
+            const dropTab = () => { if (w) { try { w.close(); } catch (e) { /* already closed */ } } };
             const r = await api('ship_confirm', { truckId: el.dataset.id });
             tone(r.ok && !r.needsFix ? 'ok' : 'bad');
-            if (!r.ok) { SCREENS.approve(errBox(r.error)); return; }
-            if (r.needsFix) { SCREENS.approve(flash('red', '❌ ' + esc(label) + ' no longer matches its IFs: back to Needs IF fix', '', (r.diffs || []).map(d => esc(d.text)).join('<br>'))); return; }
+            if (!r.ok) { dropTab(); SCREENS.approve(errBox(r.error)); return; }
+            if (r.needsFix) { dropTab(); SCREENS.approve(flash('red', '❌ ' + esc(label) + ' no longer matches its IFs: back to Needs IF fix', '', (r.diffs || []).map(d => esc(d.text)).join('<br>'))); return; }
             const t = r.view.truck;
             if (r.atDock) {                             // drop trailer: docs written, the truck waits at the dock for the carrier
+                let bolMsg = '', bolActs = '';
+                if (r.outOfSync) dropTab();
+                else {
+                    if (w) { w.location = bolUrl(el.dataset.id); bolMsg = r.rewritten ? '🧾 BOL REV ' + (r.bolRev || '') + ' opened: throw away the old copy' : '🧾 BOL opened in a new tab'; }
+                    else bolMsg = 'Pop-ups are blocked: press Print BOL';
+                    bolMsg = esc(bolMsg); bolActs = bolBtn(el.dataset.id);
+                }
                 SCREENS.approve(flash('green', !r.toNum ? '✅ ' + esc(t.label) + ' · Plan saved (writes are off)'
                     : r.outOfSync ? '⚠ ' + esc(t.label) + ' · docs out of sync: press Retry below'
                     : '📄 Docs ' + (r.rewritten ? 'updated' : 'written') + ': ' + esc(r.toNum || 'TO') + ' · ' + esc(r.ifNum || 'IF') + ' (Packed). The floor taps Picked up when the carrier takes the trailer.',
-                    (t.depart || {}).seal ? esc('Seal ' + t.depart.seal) : 'No seal yet'));
+                    (t.depart || {}).seal ? esc('Seal ' + t.depart.seal) : 'No seal yet', bolMsg, bolActs));
                 return;
             }
+            dropTab();
             if (r.view.scan) {                          // scan-built: say what reached NetSuite (spec §3 "Plan saved"); no BOL line
                 SCREENS.approve(flash('green', r.toNum ? '✅ ' + esc(t.label) + ' shipped · ' + esc(r.toNum) + ' + ' + esc(r.ifNum) + ' written to NetSuite'
                     : '✅ ' + esc(t.label) + ' shipped in the portal · Plan saved (writeMode ' + esc(r.view.writeMode) + ': nothing written to NetSuite)', esc('Seal ' + ((t.depart || {}).seal || ''))));
@@ -1607,7 +1622,7 @@ h3{font-size:15px;margin:16px 0 8px}
                     : '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' + v.lines.map(l => '<tr><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) + '</td><td>' + num(l.scanned) + ' / ' + num(l.expected) + '</td></tr>').join('') +
                       v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td>' + num(x.scanned) + ' extra</td></tr>').join('') + '</table>') +
                 ((v.otherItems || []).length ? '<div class="muted">Other: ' + v.otherItems.map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ') + '</div>' : '') + noteHtml(v.shortNote) +
-                '<div class="row2">' + (t.scan && t.status === 'at_dock' ? '<button class="dbtn gh" data-act="dsendback" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' : '') +
+                '<div class="row2">' + (t.scan && ['at_dock', 'pickup_pending', 'departed', 'receiving', 'received'].indexOf(t.status) !== -1 ? bolBtn(t.id) : '') + (t.scan && t.status === 'at_dock' ? '<button class="dbtn gh" data-act="dsendback" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' : '') +
                 '<button class="dbtn gh" data-act="notecancel">Close</button></div></div>';
             document.body.appendChild(m);
         };
