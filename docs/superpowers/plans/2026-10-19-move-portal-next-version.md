@@ -34,7 +34,8 @@ Verify, Shipments, View load and the manager pop-up show truck weight as unit we
 - Rule 5 adds **25 variant SKUs ≈ 56,500 pcs**.
 - About **150 SKUs stay blank**, mostly small accessories. The largest gaps by pieces: 5AYRS03366, 11055-DB4, 11088H-5, KT12ACR-2BR (its base is KT12ACR-2, not a plain "-xx" variant), KT15ACR-2, G2R150B, AB226, AB227, D-CAP-335, 11043B-2A, LS-726A.
 - **YSN201 = 18 lb** (Main). This settles open item (a) in the BOL plan: Capacity Builder said 19.8 lb, and the real BOL used 18 lb.
-- ⚠ A pallet weight may include the wooden pallet. If so, a pallet-derived unit weight runs a little high (≈ 45 lb ÷ pallet qty). The portal adds its own tare (`palletTare`, 45 lb), so ask Jack whether those pallet weights are gross or net before trusting rules 2–4.
+- **Pallet weights are treated as gross (Jack 10/19: "I don't know, but let's assume they do" include the wooden pallet).** Rules 2–4 are therefore **(pallet weight − tare) ÷ pallet qty**, with tare = `palletTare` (45 lb), so the tare isn't counted twice when the portal adds its own. In the file, the tare sits in one labeled cell on Notes and the formulas reference it.
+  - ⚠ The parked builder script still divides the gross weight: change its pallet formula to `=ROUND((F{r}-Notes!$B$tare)/E{r},2)` before running it.
 
 ### Step A: the combined file (data, no code)
 - Build `Unit weights <date>.xlsx` with the rules above:
@@ -65,10 +66,15 @@ Verify, Shipments, View load and the manager pop-up show truck weight as unit we
   - Manager-only guard on both actions.
   - The overlay falls back to NetSuite.
 
-### Open for Jack
-- (a) Are the "pallet weight" numbers in both files gross (with the wooden pallet) or product only?
-- (b) Should the floor see weights, or only the manager? Today the floor Verify shows weight.
-- (c) Should a ⚠ show on Verify when the truck is over a weight limit (e.g. 44,000 lb)? If yes, what limit?
+### Jack's answers (2026-10-19)
+- (a) **Pallet weights: assume gross**, i.e. they include the wooden pallet. Subtract the 45 lb tare before dividing (see above).
+- (b) **The floor sees weights too.** Keep them on the floor's Verify, Shipments and View load, plus the manager screens.
+- (c) **Overweight warning at 45,000 lb.**
+  - New Settings key `maxTruckLb` (default 45000).
+  - When the truck total (unit weights + tare) is over it, Verify / Shipments / View load show an amber banner "⚠ Over 45,000 lb: <total> lb", on both floor and manager.
+  - It's a warning, not a block: Send for docs and Approve still work, and the Approve card repeats the warning.
+  - SKUs without a weight make the total a minimum, so the banner says "at least <total> lb" when any SKU is missing a weight.
+  - Tests: under/at/over the limit, the missing-weight "at least" wording, and that the Settings key overrides the default.
 
 ---
 
