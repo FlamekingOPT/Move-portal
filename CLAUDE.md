@@ -86,7 +86,11 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
     - Prod Move Settings: `palletTare` 45→**35**, `maxTruckLb` **45000**, `bolName` **"YSN IMPORTS"**, `defaultCarrier` "Armstrong Group"→**"ArcBest"**. writeMode is still **off**; everything else is unchanged.
     - Before the upload, prod had one truck, Trailer 537224 (load 1), in `loading`, and none departing.
     - Smoke check (Administrator): dashboard / report (off) / weights_list (0) / trailers_list (7) answer. truck_get on load 1 shows max 45000. The floor reads ArcBest, and bol_data on the floor says "Managers only". No console errors.
-    - ⏳ Still open: upload the weights workbook once Jack approves it (until then truck weights show only the tare and the BOL prints Type "?" / a blank weight); then the off-mode walk and writeMode `on`.
+    - **✅ Weights uploaded to prod 2026-10-19 2:05 pm** (Jack approved the workbook) through Labels → Unit weights: **239 SKUs** (67 CYL), by Jack Kessler.
+      - 21 workbook SKUs aren't in NetSuite and were skipped (old/renamed price-sheet names): AB228, FK-SSPT-18INX2, GH10-RBH, GH10-RBH-10LB, GH10-SSH-10LB, GH3-RBH, GH3-RBH-3LB, GH5-RBH, GH5-RBH-5LB, GH5-SSH-5LBG, LID 420-W, RV-COMBO1, VSCFL, YSN-CHS10, YSN-CHS20, YSN-RGB2, YSN100ASME, YSNAX1-019, YSNBBQ-136, YSNBM-264, YSNVT-301.
+      - Spot checks via item search: YSN201 18 CYL, YSN201-AG 18 CYL, YSN301 25 CYL, YSN401 34 CYL, KT12ACR-2 2.6 PCS, VOPD20 1 PCS.
+      - On-hand SKUs still without a weight are on the workbook's Missing sheet. Add them with a re-upload (the upload replaces the whole table, so re-upload the full list).
+    - ⏭ Next: the off-mode walk, then writeMode `on`.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
