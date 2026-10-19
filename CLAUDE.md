@@ -58,7 +58,17 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
     - (4) **Trailers editor** on the Labels tab.
     - (5) **Default carrier ArcBest** (code fallback).
   - **Weights workbook:** `weights/Unit weights 2026-10-19.xlsx` (git-ignored; built by `tools/build_unit_weights.py`). 223 of 370 on-hand SKUs, 89% of pieces. ⏳ Jack is reviewing the Type column and the Missing sheet.
-  - Beta click-through passed (see ledger). **Not in the sandbox or prod yet.**
+  - Beta click-through passed (see ledger).
+  - **✅ Uploaded to the SANDBOX 2026-10-19** (code `2c70b1e`), Administrator via Chrome. LF copies from git went over the same ids: core 2055084, verify 2055190, data 2055085, tx 2055087, label_template 2055086, ui 2055088, sl 2055089 (all sizes match). Script 893 was recompiled with no errors. **Not in prod.**
+    - Smoke check: Report / weights_list / trailers_list answer.
+    - **Real BFO BOL PDF** for Truck 9 (Truck 1 · 10/19, TO8725 · IF53842, trailer 487491, seal 12567) renders on one Letter page, with Ship From from location 35 (6677 Box Springs Blvd, Riverside, CA 92507).
+    - The sandbox Tippecanoe (42) has no address, so Ship To is blank.
+    - With no weights, the BOL prints a blank weight, Type "?" and both footnotes.
+    - After `weights_save` YSN201 = 18 CYL (a test row left in the sandbox Settings, by "Claude smoke"), the BOL prints 5,464 lb = 288×18 + 8×35, CYL, H.M. X.
+    - The Labels tab shows the Unit weights and Trailers cards with no console errors.
+    - The floor (deploy 2) loads, and bol_data / truck_delete there say "Managers only".
+    - ⚠ The sandbox Move Settings still has `defaultCarrier` "Armstrong Group" saved (it overrides the ArcBest fallback), so the BOL shows Armstrong until that setting changes. The PDF tab title reads "report.pdf" (cosmetic).
+    - Not yet tested in the sandbox: auto-open after a real Approve in Chrome, a REV 2 re-approve, Delete with a live IF.
   - ⏭ **Rollout (each upload with Jack's OK):**
     1. Sandbox: upload core, verify, data, tx, label_template, ui, sl over the same ids. Recompile 893. Print one real BFO BOL; check the auto-open in real Chrome.
     2. Prod: upload over core 3050378, verify 3050380, data 3050483, tx 3050484, label_template 3050485, ui 3050486, sl 3050487. Recompile 1166.
