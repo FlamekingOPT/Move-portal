@@ -15,6 +15,7 @@ All four are manager-side and share the same files (`move_data`, `move_verify`, 
 - `palletTare` 45 → **35**
 - new `maxTruckLb` **45000**
 - new `bolName` "YSN IMPORTS"
+- `defaultCarrier` "Armstrong Group" → **"ArcBest"** (Jack 10/19: change it with this version, not before). Also change the code fallback `'Armstrong Group'` in `sl_move_portal.js` (213, 711, 1380), `move_ui.js` 822 and the tests/beta seed.
 - new `unitWeights` (filled by the upload)
 
 ---
@@ -108,6 +109,7 @@ The full design is in `docs/superpowers/specs/2026-10-18-move-portal-bol-design.
 
 ### What it does (from the spec, unchanged)
 - **Who and when:** the manager prints at **Approve docs** (🖨 Print BOL). It's also on the At-the-dock card, the pickup cards and the View load pop-up.
+- **How it prints (Jack confirmed 10/19):** the BOL is **never drawn on the Approvals screen**. After Approve docs, the success message ("Docs written: TO… · IF…") opens the BOL **PDF in a new browser tab** (the print preview), and the manager prints from there (Ctrl+P). The 🖨 Print BOL button reopens it. A re-approve opens REV n the same way. Mockup shown in chat 10/19 (sample: ArcBest, trailer 537224, 32 pallets, 36,746 lb).
 - **Header:**
   - Ship From / To: `bolName` + the NetSuite Location address.
   - BOL # = TO #, Date = the docs-approval day, Carrier / Trailer.
