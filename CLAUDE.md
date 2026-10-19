@@ -44,7 +44,10 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
   3. Walk one truck plan-only.
   4. Release the manager deployment so the other managers can open it.
   5. Set writeMode `on` for the first real truck while watching. (No seal/trailer field check is needed; prod already has `custbody7` / `custbody_rsm_container_no`.)
-- **Follow-up (after launch, Jack's choice):** a manager Trailers editor (add/remove trailer numbers in the portal). Until then the floor uses "Other…" for a new trailer.
+- **Next version: PLAN ONLY, NOT BUILT (Jack 10/19: "hold off on building").** `docs/superpowers/plans/2026-10-19-move-portal-next-version.md`:
+  - (1) **Unit weights upload**: portal-only, Settings `unitWeights` by item id, overlays the blank NetSuite item weights; variants inherit the base SKU. The source is Jack's Products Main + Product Matrix files, ≈85% of pieces covered, plus variants. The builder script is parked at `docs/superpowers/drafts/2026-10-19-build-unit-weights.py`.
+  - (2) **Manager Trailers editor.** Until it ships, the floor uses "Other…" for a new trailer.
+  - Prod items have no weight today, so truck weights show only the tare.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
