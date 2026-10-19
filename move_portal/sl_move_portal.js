@@ -2445,6 +2445,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     });
 
     // ── entry points ─────────────────────────────────────────────────────
+    // Manager decisions that change a truck, a pallet or NetSuite (blocked for Settings noApprove).
+    const APPROVAL_ACTIONS = ['ship_confirm', 'ship_sendback', 'pickup_confirm', 'pickup_reject', 'dock_sendback', 'picked_up_force', 'dock_resync', 'truck_correct',
+        'truck_drop_if', 'depart_retry', 'depart_release', 'truck_delete', 'pallet_accept', 'pallet_reject', 'receipt_approve'];
     function runAction(action, a, mgr) {
         const def = A[action];
         if (!def) throw userErr('Unknown action: ' + action);
@@ -2456,6 +2459,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const u = runtime.getCurrentUser();
         const c = { mgr: !!mgr, S: settings(), now: nowInfo(), user: { id: String(u.id), name: u.name },
             actor: String(body.actor || '').trim().slice(0, 60) || runtime.getCurrentUser().name };
+        // Settings noApprove (employee ids, Jack 10/19): that manager keeps the manager screens but makes no approval decision.
+        if (APPROVAL_ACTIONS.indexOf(action) !== -1 && (c.S.noApprove || []).map(String).indexOf(c.user.id) !== -1)
+            throw userErr('Approvals are turned off for you in the Move Portal. Ask another manager to approve.');
         return def.fn(body, c) || {};
     }
 

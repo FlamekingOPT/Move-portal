@@ -4088,3 +4088,20 @@ test('delete: the floor\'s next scan on a deleted truck is refused', () => {
     assert.throws(() => ctx.run('truck_remove', { truckId: t.id, palletId: t.ps[0].id }, false), /This truck was deleted/);
     assert.throws(() => ctx.run('ship_mark', { truckId: t.id }, false), /This truck was deleted/);
 });
+
+// Jack 10/19: a manager on Settings noApprove (employee ids) keeps the manager screens but makes no approval decision.
+test('noApprove: a listed manager is refused every approval decision; reads and labels still work', () => {
+    const ctx = scanSetup();
+    const t = docsScan(ctx, 1);
+    ctx.data.db.settings.noApprove = ['5'];
+    ['ship_confirm', 'ship_sendback', 'pickup_confirm', 'pickup_reject', 'dock_sendback', 'picked_up_force', 'dock_resync', 'truck_correct', 'truck_drop_if',
+        'depart_retry', 'depart_release', 'truck_delete', 'pallet_accept', 'pallet_reject', 'receipt_approve'].forEach(act =>
+        assert.throws(() => ctx.run(act, { truckId: t.id, note: 'x', reason: 'x' }), /Approvals are turned off for you/, act));
+    assert.equal(ctx.data.getLoad(t.id).status, 'ship_pending');
+    assert.equal(ctx.run('approvals').ok === undefined, true);
+    assert.ok(ctx.run('weights_list'));
+    assert.ok(ctx.run('truck_get', { truckId: t.id }).view);
+    ctx.data.db.settings.noApprove = ['999'];
+    ctx.run('ship_confirm', { truckId: t.id });
+    assert.equal(ctx.data.getLoad(t.id).status, 'at_dock');
+});
