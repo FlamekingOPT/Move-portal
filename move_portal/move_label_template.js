@@ -81,6 +81,8 @@ define([], function () {
     // VICS standard straight bill of lading, one letter page (spec 2026-10-18). b = the server's bolData():
     // { date, bolNo, rev, planOnly, from {name, addr, csz}, to {…}, carrier, trailer, seal, ifNums [], plan { lines, units, pcs, lbs, missing } }.
     // Blank seal / weight boxes stay empty for the driver or office to write in.
+    // Carrier lines: the commodity description leads with the SKU # (Jack 10/19); no H.M. column for now.
+    function commodity(l) { const d = String(l.desc || '').trim(); return !d || d === l.sku ? String(l.sku || '') : l.sku + ' · ' + d; }
     function bolXml(b) {
         const B = 'border:0.6pt solid #000;', bar = t => '<td colspan="2" style="' + B + 'background-color:#000;color:#fff;font-weight:bold;font-size:8pt;padding:1pt 4pt" align="center">' + t + '</td>';
         const kv = (k, v) => '<tr><td style="width:1.05in;font-size:8pt;padding:1pt 3pt">' + k + '</td><td style="font-size:9.5pt;padding:1pt 3pt">' + esc(v) + '</td></tr>';
@@ -99,13 +101,13 @@ define([], function () {
             '<tr>' + td(esc(bolNo)) + td(w(p.units), ' align="right"') + td(w(p.lbs), ' align="right"') + td('<b>Y</b>', ' align="center"') + td('N', ' align="center"') + td(esc(ifs.map(n => '#' + n).join(', '))) + '</tr>' +
             '<tr>' + td('') + td('') + td('') + td('Y', ' align="center"') + td('N', ' align="center"') + td(esc(p.lines.map(l => l.sku).join(', '))) + '</tr>' +
             '<tr>' + td('<b>GRAND TOTAL</b>') + td('<b>' + w(p.units) + '</b>', ' align="right"') + td('<b>' + w(p.lbs) + '</b>', ' align="right"') + td('', ' colspan="3"') + '</tr></table>';
-        const carrier = '<table width="100%" style="' + B + 'margin-top:2pt"><tr><td colspan="9" style="' + B + 'background-color:#000;color:#fff;font-weight:bold;font-size:8pt" align="center">CARRIER INFORMATION</td></tr>' +
-            '<tr>' + th('HANDLING UNIT', ' colspan="2"') + th('PACKAGE', ' colspan="2"') + th('WEIGHT') + th('H.M. (X)') + th('COMMODITY DESCRIPTION') + th('NMFC #') + th('CLASS') + '</tr>' +
-            '<tr>' + th('QTY') + th('TYPE') + th('QTY') + th('TYPE') + th('') + th('') + th('') + th('') + th('') + '</tr>' +
+        const carrier = '<table width="100%" style="' + B + 'margin-top:2pt"><tr><td colspan="8" style="' + B + 'background-color:#000;color:#fff;font-weight:bold;font-size:8pt" align="center">CARRIER INFORMATION</td></tr>' +
+            '<tr>' + th('HANDLING UNIT', ' colspan="2"') + th('PACKAGE', ' colspan="2"') + th('WEIGHT') + th('COMMODITY DESCRIPTION') + th('NMFC #') + th('CLASS') + '</tr>' +
+            '<tr>' + th('QTY') + th('TYPE') + th('QTY') + th('TYPE') + th('') + th('') + th('') + th('') + '</tr>' +
             p.lines.map(l => '<tr>' + td(w(l.units), ' align="right"') + td('PLT') + td(w(l.pcs), ' align="right"') + td(l.type) + td(w(l.lbs), ' align="right"') +
-                td(l.hm ? 'X' : '', ' align="center"') + td(esc(l.desc)) + td('') + td('') + '</tr>').join('') +
+                td(esc(commodity(l))) + td('') + td('') + '</tr>').join('') +
             '<tr>' + td('<b>' + w(p.units) + '</b>', ' align="right"') + td('') + td('<b>' + w(p.pcs) + '</b>', ' align="right"') + td('') + td('<b>' + w(p.lbs) + '</b>', ' align="right"') +
-            td('') + td('<b>GRAND TOTAL</b>', ' align="center"') + td('', ' colspan="2"') + '</tr></table>';
+            td('<b>GRAND TOTAL</b>', ' align="center"') + td('', ' colspan="2"') + '</tr></table>';
         const sign = '<table width="100%" style="' + B + 'margin-top:2pt"><tr>' +
             '<td style="' + B + 'font-size:7pt;padding:3pt;width:34%"><b>SHIPPER SIGNATURE / DATE</b><br/>This is to certify that the above named materials are properly classified, described, packaged, marked and labeled, and are in proper condition for transportation according to the applicable regulations of the U.S. DOT.<br/><br/><br/>______________________________</td>' +
             '<td style="' + B + 'font-size:7pt;padding:3pt;width:14%"><b>Trailer Loaded:</b><br/>[ ] By Shipper<br/>[ ] By Driver</td>' +
@@ -130,7 +132,7 @@ define([], function () {
         return HEAD + '<pdf><head><style>p { margin: 0; } td { vertical-align: middle; }</style></head>' +
             '<body size="Letter" padding="0.35in" font-family="Helvetica"><p style="font-size:7pt">VICS Standard BOL</p>' + top + body + order + carrier + terms + sign +
             (p.missing && p.missing.length ? '<p style="font-size:7pt;margin-top:3pt">No unit weight for: ' + esc(p.missing.join(', ')) + '</p>' : '') +
-            (p.unknownType && p.unknownType.length ? '<p style="font-size:7pt;margin-top:3pt">Type unknown, check H.M.: ' + esc(p.unknownType.join(', ')) + '</p>' : '') + '</body></pdf>';
+            (p.unknownType && p.unknownType.length ? '<p style="font-size:7pt;margin-top:3pt">Type unknown: ' + esc(p.unknownType.join(', ')) + '</p>' : '') + '</body></pdf>';
     }
 
     return { esc: esc, skuSize: skuSize, labelsXml: labelsXml, bolXml: bolXml };

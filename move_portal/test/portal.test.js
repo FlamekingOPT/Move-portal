@@ -3939,6 +3939,14 @@ test('bol: data for an at-dock truck', () => {
     const l = b.plan.lines[0];
     assert.deepEqual([l.sku, l.units, l.pcs, l.type, l.hm, l.lbs], ['YSN201', 2, 240, 'CYL', true, 240 * 18 + 70]);
 });
+test('bol: Ship To is the Tippecanoe address; a stray trailing comma in the street is dropped', () => {
+    const ctx = scanSetup();
+    ctx.data.db.locations = { '46': { name: 'CA - Tippecanoe', addr: '752 N Tippecanoe Ave, ', city: 'San Bernardino', state: 'CA', zip: '92410' } };
+    ctx.data.db.settings.locTo = '46';
+    const t = atDock(ctx, 1);
+    const b = ctx.run('bol_data', { truckId: t.id }).bol;
+    assert.deepEqual(b.to, { name: 'YSN IMPORTS', addr: '752 N Tippecanoe Ave', csz: 'San Bernardino, CA 92410' });
+});
 test('bol: refused before Approve docs and for the floor', () => {
     const ctx = scanSetup();
     const t = scanTruck(ctx, 1);

@@ -17,11 +17,12 @@ function bolHtml(b) {
         '<tr>' + td(esc(bolNo)) + td(w(p.units), R) + td(w(p.lbs), R) + td('<b>Y</b>', C) + td('N', C) + td(esc(ifs.map(n => '#' + n).join(', '))) + '</tr>' +
         '<tr>' + td('') + td('') + td('') + td('Y', C) + td('N', C) + td(esc(p.lines.map(l => l.sku).join(', '))) + '</tr>' +
         '<tr>' + td('<b>GRAND TOTAL</b>') + td('<b>' + w(p.units) + '</b>', R) + td('<b>' + w(p.lbs) + '</b>', R) + td('', ' colspan="3"') + '</tr></table>';
-    const carrier = '<table>' + bar('CARRIER INFORMATION', 9) +
-        '<tr><th colspan="2">HANDLING UNIT</th><th colspan="2">PACKAGE</th><th>WEIGHT</th><th>H.M. (X)</th><th>COMMODITY DESCRIPTION</th><th>NMFC #</th><th>CLASS</th></tr>' +
-        '<tr><th>QTY</th><th>TYPE</th><th>QTY</th><th>TYPE</th><th></th><th></th><th></th><th></th><th></th></tr>' +
-        p.lines.map(l => '<tr>' + td(w(l.units), R) + td('PLT') + td(w(l.pcs), R) + td(esc(l.type)) + td(w(l.lbs), R) + td(l.hm ? 'X' : '', C) + td(esc(l.desc)) + td('') + td('') + '</tr>').join('') +
-        '<tr>' + td('<b>' + w(p.units) + '</b>', R) + td('') + td('<b>' + w(p.pcs) + '</b>', R) + td('') + td('<b>' + w(p.lbs) + '</b>', R) + td('') + td('<b>GRAND TOTAL</b>', C) + td('', ' colspan="2"') + '</tr></table>';
+    const commodity = l => { const d = String(l.desc || '').trim(); return !d || d === l.sku ? String(l.sku || '') : l.sku + ' · ' + d; };
+    const carrier = '<table>' + bar('CARRIER INFORMATION', 8) +
+        '<tr><th colspan="2">HANDLING UNIT</th><th colspan="2">PACKAGE</th><th>WEIGHT</th><th>COMMODITY DESCRIPTION</th><th>NMFC #</th><th>CLASS</th></tr>' +
+        '<tr><th>QTY</th><th>TYPE</th><th>QTY</th><th>TYPE</th><th></th><th></th><th></th><th></th></tr>' +
+        p.lines.map(l => '<tr>' + td(w(l.units), R) + td('PLT') + td(w(l.pcs), R) + td(esc(l.type)) + td(w(l.lbs), R) + td(esc(commodity(l))) + td('') + td('') + '</tr>').join('') +
+        '<tr>' + td('<b>' + w(p.units) + '</b>', R) + td('') + td('<b>' + w(p.pcs) + '</b>', R) + td('') + td('<b>' + w(p.lbs) + '</b>', R) + td('<b>GRAND TOTAL</b>', C) + td('', ' colspan="2"') + '</tr></table>';
     const sign = '<table><tr><td class="sm"><b>SHIPPER SIGNATURE / DATE</b><br>This is to certify that the above named materials are properly classified, described, packaged, marked and labeled, and are in proper condition for transportation according to the applicable regulations of the U.S. DOT.<br><br>______________________________</td>' +
         '<td class="sm"><b>Trailer Loaded:</b><br>[ ] By Shipper<br>[ ] By Driver</td>' +
         '<td class="sm"><b>Freight Counted:</b><br>[ ] By Shipper<br>[ ] By Driver/pallets said to contain<br>[ ] By Driver/Pieces</td>' +
@@ -45,7 +46,7 @@ function bolHtml(b) {
         (b.planOnly ? '<p style="font-size:9pt;font-weight:bold;text-align:center">PLAN ONLY: no TO in NetSuite (writes are off)</p>' : '') +
         '<div class="cols"><div>' + left + '</div><div>' + right + '</div></div>' + order + carrier + terms + sign +
         (p.missing && p.missing.length ? '<p style="font-size:7pt">No unit weight for: ' + esc(p.missing.join(', ')) + '</p>' : '') +
-        (p.unknownType && p.unknownType.length ? '<p style="font-size:7pt">Type unknown, check H.M.: ' + esc(p.unknownType.join(', ')) + '</p>' : '') +
+        (p.unknownType && p.unknownType.length ? '<p style="font-size:7pt">Type unknown: ' + esc(p.unknownType.join(', ')) + '</p>' : '') +
         '</body></html>';
 }
 

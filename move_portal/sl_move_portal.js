@@ -1548,7 +1548,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const ps = x.status === T.AT_DOCK || x.status === T.PICKUP_PENDING ? data.palletsByLoad(x.id, [VP.LOADED]) : data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
         const items = []; ps.forEach(p => (p.lines || []).forEach(l => { if (items.indexOf(String(l.item)) === -1) items.push(String(l.item)); }));
         const addr = data.locationAddresses([c.S.locFrom, c.S.locTo]) || {}, nm = c.S.bolName || 'YSN IMPORTS';
-        const party = id => { const a = addr[String(id)] || {}; return { name: nm, addr: a.addr || '', csz: [a.city ? a.city + (a.state ? ', ' : '') : '', a.state || '', a.zip || ''].join(' ').replace(/\s+/g, ' ').trim() }; };
+        const party = id => { const a = addr[String(id)] || {}; return { name: nm, addr: String(a.addr || '').replace(/[\s,]+$/, ''), csz: [a.city ? a.city + (a.state ? ', ' : '') : '', a.state || '', a.zip || ''].join(' ').replace(/\s+/g, ' ').trim() }; };
         const ifs = []; Object.keys(d.docLines || {}).forEach(k => { const n = d.docLines[k].ifNum; if (n && ifs.indexOf(n) === -1) ifs.push(n); });
         const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dep.day || c.now.dayIso || '');
         return { date: m ? m[2] + '/' + m[3] + '/' + m[1] : '', bolNo: d.toNum || '—', rev: Number(d.bolRev) || 1, planOnly: !d.toId, from: party(c.S.locFrom), to: party(c.S.locTo),

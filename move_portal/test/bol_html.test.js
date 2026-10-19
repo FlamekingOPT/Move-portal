@@ -12,7 +12,8 @@ const bol = extra => Object.assign({
 test('bolHtml fills the boxes and escapes values', () => {
     const h = bolHtml(bol());
     ['BILL OF LADING', 'TO11702', 'ArcBest', '2,446', '#IF54012', '537224'].forEach(s => assert.ok(h.includes(s), s));
-    assert.ok(h.includes('&lt;Cylinder&gt;'));
+    assert.ok(h.includes('YSN201 · 20# LP &lt;Cylinder&gt;'));
+    assert.ok(!h.includes('H.M.'));
     assert.ok(!h.includes('<Cylinder>'));
     assert.ok(!h.includes('REV'));
     assert.ok(bolHtml(bol({ rev: 2 })).includes('REV 2'));

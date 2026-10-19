@@ -78,11 +78,22 @@ const bol = (extra) => Object.assign({
 test('bolXml footnotes SKUs whose type is unknown', () => {
     assert.ok(!tpl.bolXml(bol()).includes('Type unknown'));
     const b = bol(); b.plan = Object.assign({}, b.plan, { unknownType: ['NEW1', 'NEW2'] });
-    assert.ok(tpl.bolXml(b).includes('Type unknown, check H.M.: NEW1, NEW2'));
+    assert.ok(tpl.bolXml(b).includes('Type unknown: NEW1, NEW2'));
+});
+test('bolXml: commodity description leads with the SKU #, and there is no H.M. column (Jack 10/19)', () => {
+    const x = tpl.bolXml(bol());
+    assert.ok(x.includes('>YSN201 · 20# LP Cylinder<'));
+    assert.ok(x.includes('>YSN301 · A &amp; B<'));
+    assert.ok(!x.includes('H.M.'));
+    assert.ok(!x.includes('>X<'));
+    const b = bol(); b.plan = Object.assign({}, b.plan, { lines: [{ sku: 'NEW1', desc: 'NEW1', units: 1, pcs: 5, type: '?', hm: false, lbs: null }, { sku: 'NEW2', desc: '', units: 1, pcs: 5, type: '?', hm: false, lbs: null }] });
+    const y = tpl.bolXml(b);
+    assert.ok(y.includes('>NEW1<') && !y.includes('NEW1 · NEW1'));
+    assert.ok(y.includes('>NEW2<'));
 });
 test('bolXml fills the VICS boxes', () => {
     const x = tpl.bolXml(bol());
-    ['BILL OF LADING', 'TO11702', 'ArcBest', '537224', '#IF54012', 'CUSTOMER ORDER INFORMATION', 'CARRIER INFORMATION', 'CYL', '>X<', '3,081'].forEach(s => assert.ok(x.includes(s), s));
+    ['BILL OF LADING', 'TO11702', 'ArcBest', '537224', '#IF54012', 'CUSTOMER ORDER INFORMATION', 'CARRIER INFORMATION', 'CYL', '3,081'].forEach(s => assert.ok(x.includes(s), s));
     assert.ok(!x.includes('REV'));
     assert.ok(!x.includes('PLAN ONLY'));
     assert.ok(x.includes('A &amp; B'));
