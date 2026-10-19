@@ -19,7 +19,7 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **SDD ledger:** `docs/sdd-ledger/progress.md` (every ruling, review finding, minor and ON-MODE GATE item), with every task brief/report under `docs/sdd-ledger/v3/`, `verify-load/`, `rework/`, `dashboard/`.
 - **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
-## 🚀 PROD SET UP 2026-10-19 (code 27643a8) · writeMode `off` · ⏭ NEXT = Jack's off-mode walk, then `on`
+## 🚀 PROD LIVE 2026-10-19 · writeMode `on` · next version in prod (code d43d3a1) · ⏭ NEXT = watch the first real truck
 Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below was OK'd by Jack in chat (10/19).
 - **Custom record types** (built by hand; Copy to Account would have dragged sandbox roles into prod): settings **764**, config **765**, load **766**, pallet **767**, scan **768**, label_req **769**. All have Access = No Permissions Required, Show ID, and **Include Name Field OFF** (first set ON by mistake: Print failed with "enter value(s) for: Name"; fixed 10/19 with Jack's OK, nothing had been created). The 32 fields match the sandbox ids and types (checked on each type's Fields tab).
 - **Move Settings row 1:** start **2026-10-21**, locFrom 35, locTo 46, writeMode **off**, officeIfs false, palletTare 45, labelCode qr, the 7 trailers, trucksPerDay 8.
@@ -90,7 +90,7 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
       - 21 workbook SKUs aren't in NetSuite and were skipped (old/renamed price-sheet names): AB228, FK-SSPT-18INX2, GH10-RBH, GH10-RBH-10LB, GH10-SSH-10LB, GH3-RBH, GH3-RBH-3LB, GH5-RBH, GH5-RBH-5LB, GH5-SSH-5LBG, LID 420-W, RV-COMBO1, VSCFL, YSN-CHS10, YSN-CHS20, YSN-RGB2, YSN100ASME, YSNAX1-019, YSNBBQ-136, YSNBM-264, YSNVT-301.
       - Spot checks via item search: YSN201 18 CYL, YSN201-AG 18 CYL, YSN301 25 CYL, YSN401 34 CYL, KT12ACR-2 2.6 PCS, VOPD20 1 PCS.
       - On-hand SKUs still without a weight are on the workbook's Missing sheet. Add them with a re-upload (the upload replaces the whole table, so re-upload the full list).
-    - ✅ Off-mode walk done by Jack. The manager deployment 3712 was Released 2026-10-19, so all six manager roles can open it. ⏭ Next: writeMode `on` for the first real truck, with Jack watching.
+    - ✅ Off-mode walk done by Jack. The manager deployment 3712 was Released 2026-10-19, so all six manager roles can open it. **✅ writeMode `on` in prod since 2026-10-19 ~2:30 pm** (Jack OK; he's watching the first real truck). At the switch there were no open trucks (loads 1 and 2 were deleted tests), and all 239 weights were intact. Fallback: set writeMode `qty` or `off` in Move Settings, no redeploy needed.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
