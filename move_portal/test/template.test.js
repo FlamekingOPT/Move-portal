@@ -75,6 +75,11 @@ const bol = (extra) => Object.assign({
         { sku: 'YSN301', desc: 'A & B', units: 1, pcs: 24, type: 'CYL', hm: true, lbs: 635 }], units: 3, pcs: 156, lbs: 3081, missing: [] }
 }, extra || {});
 
+test('bolXml footnotes SKUs whose type is unknown', () => {
+    assert.ok(!tpl.bolXml(bol()).includes('Type unknown'));
+    const b = bol(); b.plan = Object.assign({}, b.plan, { unknownType: ['NEW1', 'NEW2'] });
+    assert.ok(tpl.bolXml(b).includes('Type unknown, check H.M.: NEW1, NEW2'));
+});
 test('bolXml fills the VICS boxes', () => {
     const x = tpl.bolXml(bol());
     ['BILL OF LADING', 'TO11702', 'ArcBest', '537224', '#IF54012', 'CUSTOMER ORDER INFORMATION', 'CARRIER INFORMATION', 'CYL', '>X<', '3,081'].forEach(s => assert.ok(x.includes(s), s));

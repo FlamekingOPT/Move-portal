@@ -129,7 +129,8 @@ define([], function () {
             '</td></tr></table>';
         return HEAD + '<pdf><head><style>p { margin: 0; } td { vertical-align: middle; }</style></head>' +
             '<body size="Letter" padding="0.35in" font-family="Helvetica"><p style="font-size:7pt">VICS Standard BOL</p>' + top + body + order + carrier + terms + sign +
-            (p.missing && p.missing.length ? '<p style="font-size:7pt;margin-top:3pt">No unit weight for: ' + esc(p.missing.join(', ')) + '</p>' : '') + '</body></pdf>';
+            (p.missing && p.missing.length ? '<p style="font-size:7pt;margin-top:3pt">No unit weight for: ' + esc(p.missing.join(', ')) + '</p>' : '') +
+            (p.unknownType && p.unknownType.length ? '<p style="font-size:7pt;margin-top:3pt">Type unknown, check H.M.: ' + esc(p.unknownType.join(', ')) + '</p>' : '') + '</body></pdf>';
     }
 
     return { esc: esc, skuSize: skuSize, labelsXml: labelsXml, bolXml: bolXml };

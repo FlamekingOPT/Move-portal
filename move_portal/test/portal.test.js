@@ -1876,6 +1876,8 @@ test('trailers: save trims, refuses duplicates and long numbers, and the floor l
     assert.deepEqual(ctx.run('trailers_list').trailers, ['900100', '537224']);
     assert.deepEqual(ctx.run('truck_planned', {}, false).trailers, ['900100', '537224']);
     assert.throws(() => ctx.run('trailers_save', { trailers: ['A', 'a'] }), /listed twice/);
+    assert.throws(() => ctx.run('trailers_save', { trailers: [' ', ''] }), /Keep at least one trailer/);
+    assert.deepEqual(ctx.run('trailers_list').trailers, ['900100', '537224']);
     assert.throws(() => ctx.run('trailers_save', { trailers: ['X'.repeat(21)] }), /too long/);
     assert.throws(() => ctx.run('trailers_save', { trailers: ['1'] }, false), /Managers only/);
     assert.throws(() => ctx.run('trailers_list', {}, false), /Managers only/);
@@ -3963,11 +3965,13 @@ test('bol: a re-approve that changes quantities bumps the REV', () => {
     ctx.run('ship_mark', { truckId: t.id }, false);
     const r = ctx.run('ship_confirm', { truckId: t.id });
     assert.equal(r.bolRev, 2);
+    assert.equal(r.bolChanged, true);
     assert.equal(ctx.run('bol_data', { truckId: t.id }).bol.rev, 2);
     ctx.run('dock_sendback', { truckId: t.id, note: 'check' });
     ctx.run('truck_verify', { truckId: t.id }, false);
     ctx.run('ship_mark', { truckId: t.id }, false);
-    ctx.run('ship_confirm', { truckId: t.id });
+    const r2 = ctx.run('ship_confirm', { truckId: t.id });
+    assert.equal(r2.bolChanged, false);
     assert.equal(ctx.run('bol_data', { truckId: t.id }).bol.rev, 2);
 });
 test('bol: the seal shows once saved', () => {

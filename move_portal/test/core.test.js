@@ -209,3 +209,10 @@ test('tare and max truck defaults', () => {
     assert.equal(core.maxTruckLb({}), 45000);
     assert.equal(core.maxTruckLb({ maxTruckLb: 40000 }), 40000);
 });
+
+test('buildWeightImport reports the spreadsheet row number when a sheet row is sent', () => {
+    const map = { YSN201: '11' };
+    const r = core.buildWeightImport([['SKU', 'Unit weight (lb)', 'Type', 1], ['YSN201', 'x', '', 2], ['', '', '', 3], ['YSN201', 0, '', 7]], map);
+    assert.deepEqual(r.errors.map(e => e.row), [2, 3, 7]);
+    assert.deepEqual(core.buildWeightImport([['YSN201', 'x', '']], map).errors.map(e => e.row), [1]);   // default numbering
+});

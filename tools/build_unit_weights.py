@@ -247,8 +247,8 @@ for rr in bold_rows:
     ns.cell(rr, 1).font = Font(name=F, bold=True)
 ns.column_dimensions['A'].width = 110
 ns.column_dimensions['B'].width = 12
-out.move_sheet('Notes', offset=-2)
-out.active = 1
+# Notes stays last: the portal upload picks the sheet named Unit weights, and it is the first sheet too
+out.active = 0
 out.save(out_f)
 print('rows', len(rows), 'missing', len(miss), 'out', out_f)
 print('sections', json.dumps(sections, indent=1))

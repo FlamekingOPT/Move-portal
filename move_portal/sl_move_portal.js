@@ -755,6 +755,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('trailers_list', true, (a, c) => ({ trailers: c.S.trailers || DEFAULT_TRAILERS, busy: busyTrailers() }));
     act('trailers_save', true, (a, c) => {
         const list = (Array.isArray(a.trailers) ? a.trailers : []).map(t => String(t == null ? '' : t).trim()).filter(t => t !== '');
+        if (!list.length) throw userErr('Keep at least one trailer');
         if (list.length > 100) throw userErr('Too many trailers (100 max)');
         const seen = {};
         list.forEach(t => {
@@ -1532,12 +1533,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             data.updateLoad(data.getLoad(x0.id), { data: Object.assign(base, { error: w.refused }) });
             throw userErr(w.refused + '. NetSuite is unchanged: approve again, or send it back.');
         }
-        const bolRev = Object.keys(delta).length ? (Number(d0.bolRev) || 1) + 1 : (Number(d0.bolRev) || 1);
+        const bolChanged = Object.keys(delta).length > 0, bolRev = bolChanged ? (Number(d0.bolRev) || 1) + 1 : (Number(d0.bolRev) || 1);
         data.updateLoad(data.getLoad(x0.id), { status: T.AT_DOCK, data: Object.assign(base, { error: '', shipReq: null, sentBack: null, shortNote: null, docsDepart: null, depart: dep,
             bolRev: bolRev,
             docLines: w.dl, alloc: verify.allocFromDocLines(w.dl, { toId: d0.toId, toNum: d0.toNum }), lastStep: stepOf('docs_rewritten', c) },
             w.outOfSync ? { docsSync: Object.assign(w.outOfSync, { at: c.now.stamp, by: c.actor }) } : {}) });
-        return Object.assign({ atDock: true, rewritten: true, bolRev: bolRev, view: truckView(mustTruck(x0.id), c) }, d0.toId ? { toNum: d0.toNum, ifNum: d0.ifNum } : {},
+        return Object.assign({ atDock: true, rewritten: true, bolRev: bolRev, bolChanged: bolChanged, view: truckView(mustTruck(x0.id), c) }, d0.toId ? { toNum: d0.toNum, ifNum: d0.ifNum } : {},
             w.outOfSync ? { outOfSync: true } : {});
     }
     // The printed BOL (spec 2026-10-18): built from the portal's own load, weights from the Unit weights list.
@@ -1629,7 +1630,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         pallets.forEach(p => data.updatePallet(p, { status: VP.LABELED, load: '' }));
         data.updateLoad(data.getLoad(cl.Ld.id), { status: DELETED, data: { deleted: { by: c.user, actor: c.actor, at: c.now.stamp, reason: reason, toNum: d.toNum || '', ifNums: ifNums },
             claim: '', lastStep: stepOf('deleted', c) } });
-        return { deleted: true, pallets: pallets.length };
+        const late = data.palletsByLoad(cl.Ld.id, [VP.LOADED]);   // a scan that landed between the read above and the status write
+        late.forEach(p => data.updatePallet(p, { status: VP.LABELED, load: '' }));
+        return { deleted: true, pallets: pallets.length + late.length };
     });
 
     act('depart_retry', true, (a, c) => {

@@ -45,6 +45,7 @@ function bolHtml(b) {
         (b.planOnly ? '<p style="font-size:9pt;font-weight:bold;text-align:center">PLAN ONLY: no TO in NetSuite (writes are off)</p>' : '') +
         '<div class="cols"><div>' + left + '</div><div>' + right + '</div></div>' + order + carrier + terms + sign +
         (p.missing && p.missing.length ? '<p style="font-size:7pt">No unit weight for: ' + esc(p.missing.join(', ')) + '</p>' : '') +
+        (p.unknownType && p.unknownType.length ? '<p style="font-size:7pt">Type unknown, check H.M.: ' + esc(p.unknownType.join(', ')) + '</p>' : '') +
         '</body></html>';
 }
 

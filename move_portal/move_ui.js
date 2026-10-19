@@ -954,7 +954,14 @@ h3{font-size:15px;margin:16px 0 8px}
             const reason = prompt('Reason for deleting ' + label + ' (required)');
             if (reason == null) return;
             closeNote();
-            const back = m => (SCREENS[S.tab] || SCREENS.approve)(m);
+            // Every tab shows the result: Approvals and Shipments take the message; Dashboard/Report re-render and get it on top.
+            const back = async m => {
+                if (S.tab === 'approve') return SCREENS.approve(m);
+                if (S.tab === 'ship' && $('shipbox')) return shipList(m);
+                const sc = SCREENS[S.tab];
+                if (sc) await sc();
+                if (m && $('main')) main(m + $('main').innerHTML);
+            };
             if (!reason.trim()) { tone('bad'); back(errBox('Enter a reason')); return; }
             if (!confirm('Delete ' + label + '? Its pallets go back to labeled. NetSuite is not changed.')) { back(); return; }
             busy(el, true);
@@ -1135,16 +1142,36 @@ h3{font-size:15px;margin:16px 0 8px}
             if (!col.sku || !col.pcs || !col.pallets) throw new Error('The sheet needs the columns SKU, Pcs per pallet and Pallets (Odd pallet pcs is optional)');
             return objs.map(o => ({ sku: o[col.sku], pcs: o[col.pcs], pallets: o[col.pallets], odd: col.odd ? o[col.odd] : '' }));
         }
+        // objs.rows = the 1-based file row of each object (blank rows are dropped, so the index alone is not the row).
         function csvObjs(text) {
-            const lines = String(text).split(/\r?\n/).filter(l => l.trim() !== '');
+            const nums = [];
+            const lines = String(text).split(/\r?\n/).filter((l, i) => { const keep = l.trim() !== ''; if (keep) nums.push(i + 1); return keep; });
             if (!lines.length) return [];
             const head = lines.shift().split(',').map(s => s.trim());
-            return lines.map(l => { const c = l.split(','); const o = {}; head.forEach((h, i) => { o[h] = (c[i] || '').trim(); }); return o; });
+            nums.shift();
+            const objs = lines.map(l => { const c = l.split(','); const o = {}; head.forEach((h, i) => { o[h] = (c[i] || '').trim(); }); return o; });
+            Object.defineProperty(objs, 'rows', { value: nums });   // non-enumerable: the array still compares as plain rows
+            return objs;
         }
-        async function readObjs(file) {
+        // The weights workbook has several sheets: the one named "Unit weights", else the first with SKU + Unit weight headers, else the first.
+        // Labels always read the first sheet.
+        function pickSheet(X, wb, forWeights) {
+            if (!forWeights) return wb.SheetNames[0];
+            const named = wb.SheetNames.find(n => String(n).trim().toLowerCase() === 'unit weights');
+            if (named) return named;
+            const hasCols = n => {
+                const head = (X.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })[0] || []).map(h => String(h).trim().toLowerCase().replace(/\s+/g, ' '));
+                return head.indexOf('sku') !== -1 && head.some(h => ['unit weight (lb)', 'unit weight', 'weight (lb)', 'weight', 'lb'].indexOf(h) !== -1);
+            };
+            return wb.SheetNames.find(hasCols) || wb.SheetNames[0];
+        }
+        async function readObjs(file, forWeights) {
             if (/\.csv$/i.test(file.name)) return csvObjs(await file.text());
-            const X = await loadXlsx(), wb = X.read(await file.arrayBuffer(), { type: 'array' });
-            return X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+            const X = await loadXlsx(), wb = X.read(await file.arrayBuffer(), { type: 'array' }), ws = wb.Sheets[pickSheet(X, wb, forWeights)];
+            if (!forWeights) return X.utils.sheet_to_json(ws, { defval: '' });
+            const objs = X.utils.sheet_to_json(ws, { defval: '', blankrows: true }), first = ws['!ref'] ? X.utils.decode_range(ws['!ref']).s.r + 2 : 2;
+            Object.defineProperty(objs, 'rows', { value: objs.map((o, i) => first + i) });
+            return objs;
         }
         async function readSheet(file) { return mapRows(await readObjs(file)); }
         // Unit weights: columns SKU, Unit weight (lb), Type, matched loosely; the server takes [sku, lb, type] arrays.
@@ -1154,7 +1181,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const keys = Object.keys(objs[0]), pick = names => keys.find(k => names.indexOf(norm(k)) !== -1);
             const cs = pick(['sku']), cw = pick(['unit weight (lb)', 'unit weight', 'weight (lb)', 'weight', 'lb']), ct = pick(['type']);
             if (!cs || !cw) throw new Error('The sheet needs the columns SKU and Unit weight (lb) (Type is optional)');
-            return objs.map(o => [o[cs], o[cw], ct ? o[ct] : '']);
+            return objs.map((o, i) => [o[cs], o[cw], ct ? o[ct] : '', objs.rows ? objs.rows[i] : i + 2]);
         }
         async function labelWeights(box) {
             box.innerHTML = '<div id="wt_status" class="muted">Loading…</div><div class="muted">Columns: SKU · Unit weight (lb) · Type (CYL or PCS). The upload replaces all weights.</div>' +
@@ -1175,8 +1202,8 @@ h3{font-size:15px;margin:16px 0 8px}
             const onTruck = S.trBusy || [];
             box.innerHTML = '<div class="muted">The trailers the floor can pick when starting a truck. A trailer on an open truck is hidden from the floor list until it leaves.</div>' +
                 '<div id="tr_list">' + (S.trList.length ? S.trList.map((t, i) => '<span style="display:inline-block;border:1px solid var(--line);border-radius:8px;padding:4px 8px;margin:2px">' + esc(t) + (onTruck.indexOf(String(t).trim().toUpperCase()) !== -1 ? ' (on a truck)' : '') +
-                    ' <button class="btn ghost sm" data-act="trremove" data-i="' + i + '" title="Remove">✕</button></span> ').join('') : '<span class="muted">No trailers listed</span>') + '</div>' +
-                '<div><input id="tr_new" maxlength="20" placeholder="Trailer #"> <button class="btn ghost sm" data-act="tradd">Add</button> <button class="btn pri sm" data-act="trsave">Save</button></div>' +
+                    ' <button class="btn ghost sm" data-act="trremove" data-i="' + i + '" title="Remove" style="padding:0 6px;min-height:0;width:auto;display:inline-block">✕</button></span> ').join('') : '<span class="muted">No trailers listed</span>') + '</div>' +
+                '<div><input class="inp" id="tr_new" maxlength="20" placeholder="Trailer #" style="width:auto"> <button class="btn ghost sm" data-act="tradd">Add</button> <button class="btn pri sm" data-act="trsave">Save</button></div>' +
                 '<div id="tr_msg">' + (msg || '') + '</div>';
             $('tr_new').onkeydown = e => { if (e.key === 'Enter') ACT.tradd(); };
         }
@@ -1203,7 +1230,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const f = $('wt_file').files[0], out = $('wt_out');
             if (!f) return;
             let rows;
-            try { rows = weightRows(await readObjs(f)); } catch (e) { out.innerHTML = errBox(e.message); return; }
+            try { rows = weightRows(await readObjs(f, true)); } catch (e) { out.innerHTML = errBox(e.message); return; }
             if (!rows.length) { out.innerHTML = errBox('No data rows found'); return; }
             const pv = await api('weights_preview', { rows: rows });
             if (!pv.ok) { out.innerHTML = errBox(pv.error); return; }
@@ -1518,7 +1545,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const dockList = (r.atDock || []).length ? '<h3 id="ap_dock">At the dock</h3>' + r.atDock.map(t => '<div class="card"><h4>🚚 ' + esc(t.label) + ' ' + statusPill('at_dock', true) + '</h4>' +
                 '<div class="muted">' + esc([t.toNum, t.ifNum, 'Trailer ' + t.trailer, t.seal ? 'Seal ' + t.seal : 'No seal yet', num(t.pallets) + ' pallets'].filter(Boolean).join(' · ')) + '</div>' +
                 '<div class="row2"><button class="dbtn gh" data-act="dsendback" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' +
-                '<button class="dbtn gh" data-act="opentruck" data-id="' + esc(t.id) + '">📋 View load</button></div>' + forceBtn(t.id, t.label) + '</div>').join('') : '';
+                '<button class="dbtn gh" data-act="opentruck" data-id="' + esc(t.id) + '">📋 View load</button></div><div class="row2">' + bolBtn(t.id) + '</div>' + forceBtn(t.id, t.label) + delBtn(t.id, t.label) + '</div>').join('') : '';
             const fix = (r.fixes || []).length ? '<h3 id="ap_fix">Correct the IF</h3>' + r.fixes.map(f => fixCard(f, r.writeMode)).join('') : '';
             const trk = (r.trucks || []).length ? '<h3 id="ap_trucks">Trucks waiting for an IF fix</h3>' + r.trucks.map(n => truckCard(n, r.freeIfs, r.writeMode, (r.fixes || []).some(f => String(f.truckId) === String(n.truck.id)))).join('') : '';
             // Drop trailer: an at-dock truck whose TO + IF edit failed. Scans are blocked until Retry finishes the pending edits.
@@ -1600,7 +1627,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 let bolMsg = '', bolActs = '';
                 if (r.outOfSync) dropTab();
                 else {
-                    if (w) { w.location = bolUrl(el.dataset.id); bolMsg = r.rewritten ? '🧾 BOL REV ' + (r.bolRev || '') + ' opened: throw away the old copy' : '🧾 BOL opened in a new tab'; }
+                    if (r.rewritten && !r.bolChanged) { dropTab(); bolMsg = 'Quantities unchanged: the printed BOL still applies'; }
+                    else if (w) { w.location = bolUrl(el.dataset.id); bolMsg = r.rewritten ? '🧾 BOL REV ' + (r.bolRev || '') + ' opened: throw away the old copy' : '🧾 BOL opened in a new tab'; }
                     else bolMsg = 'Pop-ups are blocked: press Print BOL';
                     bolMsg = esc(bolMsg); bolActs = bolBtn(el.dataset.id);
                 }

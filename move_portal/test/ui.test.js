@@ -298,6 +298,7 @@ test('excel upload helpers: mapRows, csvObjs, printSpecs behave', () => {
     assert.strictEqual(f.mapRows([{ SKU: 'A', 'Pcs per pallet': 72, Pallets: 4 }])[0].odd, '');
     assert.deepStrictEqual(f.csvObjs('SKU,Pallets\r\nA,4\r\n'), [{ SKU: 'A', Pallets: '4' }]);
     assert.deepStrictEqual(f.csvObjs('SKU,Pallets\r\n'), []);
+    assert.deepStrictEqual(Array.from(f.csvObjs('SKU,lb\r\nA,1\r\n\r\nB,2\r\n').rows), [2, 4]);   // sheet rows survive a blank line
     const specs = f.printSpecs({ rows: [{ status: 'ok', item: '11', sku: 'A', cfg: 'A', pcs: 72, pallets: 4, odd: 18 }, { status: 'skip', item: '9', sku: 'X', pcs: 1, pallets: 9, odd: 0 },
         { status: 'warn', item: '12', sku: 'B', cfg: '', pcs: 36, pallets: 0, odd: 5 }] });
     assert.strictEqual(specs.length, 3);
@@ -411,6 +412,18 @@ test('ui: BOL opens in a new tab from Approve and Print BOL', () => {
     assert.ok(o > -1);
     assert.ok(o < h.indexOf("await api('ship_confirm'"));
     assert.ok(h.indexOf('confirm(') < o);
+});
+
+test('ui: delete result is shown on every tab, and the dock list carries Print BOL + Delete', () => {
+    const src = ui._clientMain.toString().replace(/\r/g, '');
+    const d = src.slice(src.indexOf('ACT.deltruck'), src.indexOf('Manager escape for a trailer stuck'));
+    assert.ok(d.includes("S.tab === 'ship' && $('shipbox')) return shipList(m)"), 'ship tab gets the message');
+    assert.ok(d.includes("main(m + $('main').innerHTML)"), 'dash/report get the message on top');
+    assert.ok(d.includes('errBox(r.error)'), 'refusal text rendered');
+    const dock = src.slice(src.indexOf('<h3 id="ap_dock">'), src.indexOf('const fix ='));
+    assert.ok(dock.includes('bolBtn(t.id)') && dock.includes('delBtn(t.id, t.label)'));
+    assert.ok(src.includes("'Quantities unchanged: the printed BOL still applies'") && src.includes('r.bolChanged'));
+    assert.ok(src.includes("wb.SheetNames.find(n => String(n).trim().toLowerCase() === 'unit weights')"));
 });
 
 test('ui: delete truck button, prompt and Deleted pill', () => {

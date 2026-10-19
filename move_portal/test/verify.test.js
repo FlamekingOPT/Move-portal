@@ -675,8 +675,8 @@ test('withWts overlays the portal weight and keeps NetSuite as fallback', () => 
     const info = { 11: { sku: 'YSN201', weight: 0, wunit: '' }, 12: { sku: 'YSN301', weight: 30, wunit: 'lb' }, 13: { sku: 'X', weight: 0 } };
     const o = v.withWts(info, { YSN201: [18, 1] });
     assert.equal(o[11].weight, 18); assert.equal(o[11].wunit, 'lb'); assert.equal(o[11].cyl, true);
-    assert.equal(o[12].weight, 30); assert.equal(o[12].cyl, false);
-    assert.equal(o[13].weight, 0); assert.equal(o[13].cyl, false);
+    assert.equal(o[12].weight, 30); assert.equal(o[12].cyl, null);   // no upload row: type unknown, never assumed non-hazmat
+    assert.equal(o[13].weight, 0); assert.equal(o[13].cyl, null);
 });
 
 test('overweight', () => {
@@ -694,6 +694,16 @@ test('bolPlan: one handling unit per pallet on its first SKU; weight = pcs × lb
     assert.deepEqual([a.units, a.pcs, a.lbs, a.type, a.hm], [2, 132, 2446, 'CYL', true]);
     assert.deepEqual([b.units, b.pcs, b.lbs], [1, 24, 635]);
     assert.deepEqual([p.units, p.pcs, p.lbs, p.missing], [3, 156, 3081, []]);
+});
+
+test('bolPlan: type comes from the upload; a SKU with no upload row is "?" and listed, never non-hazmat', () => {
+    const info = v.withWts({ 11: { sku: 'YSN201', desc: 'a', weight: 0 }, 12: { sku: 'ACC1', desc: 'b', weight: 0 }, 13: { sku: 'NEW1', desc: 'c', weight: 5, wunit: 'lb' } }, { YSN201: [18, 1], ACC1: [2, 0] });
+    const p = v.bolPlan({ pallets: [{ lines: [{ item: '11', pcs: 1 }] }, { lines: [{ item: '12', pcs: 1 }] }, { lines: [{ item: '13', pcs: 1 }] }], info, tare: 0 });
+    const by = s => p.lines.find(l => l.sku === s);
+    assert.deepEqual([by('YSN201').type, by('YSN201').hm], ['CYL', true]);
+    assert.deepEqual([by('ACC1').type, by('ACC1').hm], ['PCS', false]);
+    assert.deepEqual([by('NEW1').type, by('NEW1').hm], ['?', false]);
+    assert.deepEqual(p.unknownType, ['NEW1']);
 });
 
 test('bolPlan: a SKU without a weight blanks the grand total and is listed', () => {

@@ -45,7 +45,7 @@ define([], function () {
         const out = {};
         Object.keys(info || {}).forEach(k => {
             const i = info[k], w = (wts || {})[String(i.sku || '').toUpperCase()];
-            out[k] = w ? Object.assign({}, i, { weight: w[0], wunit: 'lb', cyl: !!w[1] }) : Object.assign({}, i, { cyl: false });
+            out[k] = w ? Object.assign({}, i, { weight: w[0], wunit: 'lb', cyl: !!w[1] }) : Object.assign({}, i, { cyl: null });
         });
         return out;
     }
@@ -62,15 +62,16 @@ define([], function () {
             by[k].pcs += Number(l.pcs) || 0;
             if (i === 0) by[k].units++;
         }));
-        const missing = [];
+        const missing = [], unknownType = [];
         const lines = order.map(k => {
             const i = info[k] || {}, per = lbs(i.weight, i.wunit), r = by[k];
             if (per == null) missing.push(i.sku || k);
-            return { item: k, sku: i.sku || k, desc: i.desc || i.sku || k, units: r.units, pcs: r.pcs, type: i.cyl ? 'CYL' : 'PCS', hm: !!i.cyl,
+            if (i.cyl == null) unknownType.push(i.sku || k);   // no uploaded row: never print it as non-hazmat
+            return { item: k, sku: i.sku || k, desc: i.desc || i.sku || k, units: r.units, pcs: r.pcs, type: i.cyl == null ? '?' : i.cyl ? 'CYL' : 'PCS', hm: i.cyl == null ? false : !!i.cyl,
                 lbs: per == null ? null : Math.round(per * r.pcs + tare * r.units) };
         }).sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
         const sum = f => lines.reduce((s, l) => s + l[f], 0);
-        return { lines: lines, units: sum('units'), pcs: sum('pcs'), lbs: missing.length ? null : sum('lbs'), missing: missing };
+        return { lines: lines, units: sum('units'), pcs: sum('pcs'), lbs: missing.length ? null : sum('lbs'), missing: missing, unknownType: unknownType.sort() };
     }
     function linesPcs(tl) { const o = {}; Object.keys(tl || {}).forEach(k => { o[k] = tl[k].pcs; }); return o; }
     // info: { item: { weight, wunit } }. Line weights are rounded to the pound; the tare is palletCount × tare.

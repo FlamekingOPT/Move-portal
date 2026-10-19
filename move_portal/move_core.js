@@ -140,13 +140,13 @@ define([], function () {
         return out;
     }
 
-    // BOL unit weights (spec 2026-10-18): rows [SKU, Unit weight (lb), Type CYL/PCS, blank = PCS]. A header row is skipped.
+    // BOL unit weights (spec 2026-10-18): rows [SKU, Unit weight (lb), Type CYL/PCS, blank = PCS, optional sheet row number for error messages]. A header row is skipped.
     // Returns weights { SKU: [lb, cyl 1/0] } for the Move Settings record, plus row errors and SKUs NetSuite doesn't know.
     function buildWeightImport(rows, skuToItem) {
         const out = { weights: {}, errors: [], unknownSkus: [], count: 0 };
         const start = rows.length && /sku/i.test(String(rows[0][0] || '')) ? 1 : 0;
         for (let i = start; i < rows.length; i++) {
-            const r = rows[i], rn = i + 1, sku = String(r[0] || '').trim().toUpperCase();
+            const r = rows[i], rn = Number(r[3]) > 0 ? Number(r[3]) : i + 1, sku = String(r[0] || '').trim().toUpperCase();
             if (!sku) { out.errors.push({ row: rn, msg: 'Missing SKU' }); continue; }
             if (!skuToItem[sku]) { if (out.unknownSkus.indexOf(sku) === -1) out.unknownSkus.push(sku); continue; }
             const lb = Number(String(r[1] == null ? '' : r[1]).trim());
