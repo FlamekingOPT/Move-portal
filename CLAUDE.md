@@ -21,7 +21,7 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 
 ## 🚀 PROD SET UP 2026-10-19 (code 27643a8) · writeMode `off` · ⏭ NEXT = Jack's off-mode walk, then `on`
 Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below was OK'd by Jack in chat (10/19).
-- **Custom record types** (built by hand; Copy to Account would have dragged sandbox roles into prod): settings **764**, config **765**, load **766**, pallet **767**, scan **768**, label_req **769**. All have Access = No Permissions Required and Show ID. The 32 fields match the sandbox ids and types (checked on each type's Fields tab).
+- **Custom record types** (built by hand; Copy to Account would have dragged sandbox roles into prod): settings **764**, config **765**, load **766**, pallet **767**, scan **768**, label_req **769**. All have Access = No Permissions Required, Show ID, and **Include Name Field OFF** (first set ON by mistake: Print failed with "enter value(s) for: Name"; fixed 10/19 with Jack's OK, nothing had been created). The 32 fields match the sandbox ids and types (checked on each type's Fields tab).
 - **Move Settings row 1:** start **2026-10-21**, locFrom 35, locTo 46, writeMode **off**, officeIfs false, palletTare 45, labelCode qr, the 7 trailers, trucksPerDay 8.
 - **File Cabinet:** folder `SuiteScripts/MovePortal` **420690**. Files (LF copies from git `27643a8`):
   - core 3050378, verify 3050380, ns 3050482, data 3050483
@@ -169,7 +169,7 @@ Prod = https://8211645.app.netsuite.com. Riverside **35**, Tippecanoe **46**. Th
 
 **0. Before anything (code):** merge decision. Prod runs whatever is on `feat/v3-verification` at 77b81e4 or later. Run `node --test "move_portal/test/*.test.js"` → 291/291. Upload from the repo copy (copy files to the scratchpad first: the Chrome upload tool only reads session folders).
 
-**1. ⚠ Custom records (6 types, 32 fields, exact sandbox ids).** Fastest path: in the sandbox, use **Copy to Account** (Customization → SuiteCloud Development → Copy to Account, if the feature is on) to copy the 6 record types to prod; otherwise create by hand. All record types: **Access Type = No Permission Required**, Include Name Field ON, Show ID.
+**1. ⚠ Custom records (6 types, 32 fields, exact sandbox ids).** Fastest path: in the sandbox, use **Copy to Account** (Customization → SuiteCloud Development → Copy to Account, if the feature is on) to copy the 6 record types to prod; otherwise create by hand. All record types: **Access Type = No Permission Required**, **Include Name Field OFF** (the code sets no Name; ON makes every create fail "Please enter value(s) for: Name"), Show ID.
 - `customrecord_mv_settings`: `custrecord_mvs_data` Long Text.
 - `customrecord_mv_config`: `custrecord_mvc_item` List/Record→Item; `_mvc_code` Free-Form Text; `_mvc_pcs` Integer; `_mvc_default` Check Box; `_mvc_batch` Free-Form Text.
 - `customrecord_mv_load`: `custrecord_mvl_number` Free-Form Text; `_mvl_status` Free-Form Text; `_mvl_to` List/Record→Transaction; `_mvl_if` List/Record→Transaction; `_mvl_receipts` Free-Form Text; `_mvl_data` Long Text.
