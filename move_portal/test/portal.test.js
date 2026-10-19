@@ -3842,3 +3842,55 @@ test('2026-10-17: Send back from the dock is refused once a stamp landed or whil
     assert.throws(() => ctx.run('dock_sendback', { truckId: t.id, note: 'n' }), /out of sync/);
     assert.throws(() => ctx.run('dock_sendback', { truckId: t.id, note: 'n' }, false), /Managers only|manager/i);
 });
+// ── weights (next version, Task 2) ──
+function weightSetup() {
+    const ctx = scanSetup();
+    delete ctx.data.db.items.find(i => i.item === '11').weight;
+    delete ctx.data.db.items.find(i => i.item === '11').wunit;
+    delete ctx.data.db.settings.palletTare;   // fall back to the default tare, 35
+    return ctx;
+}
+
+test('weights: preview counts added/changed/removed and save replaces the table', () => {
+    const ctx = weightSetup();
+    const sv = ctx.run('weights_save', { rows: [['YSN201', 18, 'CYL'], ['YSN301', 25, '']] });
+    assert.equal(sv.count, 2);
+    const l = ctx.run('weights_list', {});
+    assert.deepEqual(l.rows, [{ sku: 'YSN201', lb: 18, type: 'CYL' }, { sku: 'YSN301', lb: 25, type: 'PCS' }]);
+    assert.equal(l.by, 'Miguel');
+    const pv = ctx.run('weights_preview', { rows: [['ysn201', '19', 'CYL'], ['YSN100', 70, 'CYL'], ['', '', '']] });
+    assert.deepEqual([pv.count, pv.added, pv.changed, pv.removed, pv.errors.length], [2, 1, 1, 1, 0]);
+    ctx.run('weights_save', { rows: [['YSN100', 70, 'CYL']] });
+    assert.deepEqual(ctx.run('weights_list', {}).rows.map(r => r.sku), ['YSN100']);
+});
+
+test('weights: managers only, and an all-bad file saves nothing', () => {
+    const ctx = weightSetup();
+    ['weights_preview', 'weights_save', 'weights_list'].forEach(n => assert.throws(() => ctx.run(n, { rows: [] }, false), /Managers only/));
+    ctx.run('weights_save', { rows: [['YSN201', 18, 'CYL']] });
+    assert.throws(() => ctx.run('weights_save', { rows: [['NOPE', 1, '']] }), /Nothing to save/);
+    assert.deepEqual(ctx.run('weights_list', {}).rows, [{ sku: 'YSN201', lb: 18, type: 'CYL' }]);
+    assert.throws(() => ctx.run('weights_preview', { rows: new Array(2001).fill(['YSN201', 1, '']) }), /2,000 max/);
+});
+
+test('weights: Verify uses the uploaded weight, tare 35, and warns over 45,000 lb', () => {
+    const ctx = weightSetup();
+    ctx.run('weights_save', { rows: [['YSN201', 18, 'CYL']] });
+    const t = scanTruck(ctx, 2);
+    let s = ctx.run('truck_get', { truckId: t.id }, false).view.scan;
+    assert.deepEqual([s.total, s.over, s.atLeast, s.max], [4390, false, false, 45000]);
+    ctx.data.db.settings.maxTruckLb = 4000;
+    assert.equal(ctx.run('truck_get', { truckId: t.id }, false).view.scan.over, true);
+    ctx.data.db.settings.unitWeights = {};
+    s = ctx.run('truck_get', { truckId: t.id }, false).view.scan;
+    assert.deepEqual([s.atLeast, s.total], [true, 70]);
+});
+
+test('weights: item_lookup shows the portal weight and type', () => {
+    const ctx = weightSetup();
+    ctx.run('weights_save', { rows: [['YSN201', 18, 'CYL']] });
+    const it = ctx.run('item_lookup', { q: 'YSN201' }, false).items[0];
+    assert.deepEqual([it.lb, it.type], [18, 'CYL']);
+    const o = ctx.run('item_lookup', { q: 'YSN301' }, false).items[0];
+    assert.deepEqual([o.lb, o.type], [null, '']);
+});

@@ -225,17 +225,20 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     const OPEN = [T.LOADING, T.NEEDS_FIX, T.READY];
     // Scan-built truck (spec 2026-10-14): no IFs; Approve creates its TO + IF.
     function isScan(x) { return !!(x && x.data && x.data.kind === 'scan'); }
+    // Item info with the portal's uploaded unit weights laid over NetSuite's (verify.withWts); also adds `cyl`.
+    function itemInfoW(items, c) { return verify.withWts(data.itemInfo(items), c.S.unitWeights); }
     // SKU rows for the floor's Load / Verify / Shipments: loaded pallets only, with weight and Riverside available.
     function scanRows(x, ps, c) {
         // Past loading (shipped, receiving, received...) the table is the whole load: loaded, in transit, received or missing.
         const loaded = [T.LOADING, T.NEEDS_FIX, T.READY, T.AT_DOCK, T.PICKUP_PENDING].indexOf(x.status) === -1 ? ps : ps.filter(p => p.status === VP.LOADED), tl = verify.truckLines(loaded), items = Object.keys(tl);
-        const info = data.itemInfo(items), avail = items.length ? data.locationStock(c.S.locFrom, items) : {};
+        const info = itemInfoW(items, c), avail = items.length ? data.locationStock(c.S.locFrom, items) : {};
         const w = verify.truckWeight(tl, info, core.palletTare(c.S), loaded.length);
         const rows = items.map(k => {
             const av = avail[k] ? Number(avail[k].avail) || 0 : 0;
             return { item: k, sku: info[k] ? info[k].sku : k, pallets: tl[k].pallets, pcs: tl[k].pcs, lbs: w.rows[k], avail: av, short: tl[k].pcs > av };
         }).sort((p, q) => p.sku < q.sku ? -1 : p.sku > q.sku ? 1 : 0);
-        return { rows: rows, pallets: loaded.length, pcs: rows.reduce((s, r) => s + r.pcs, 0), tare: w.tare, total: w.total, noWeight: w.noWeight, short: rows.some(r => r.short) };
+        return Object.assign({ rows: rows, pallets: loaded.length, pcs: rows.reduce((s, r) => s + r.pcs, 0), tare: w.tare, total: w.total, noWeight: w.noWeight, short: rows.some(r => r.short) },
+            verify.overweight(w.total, w.noWeight, core.maxTruckLb(c.S)));
     }
     function isOpen(x) { return OPEN.indexOf(x.status) !== -1 && !x.data.claim && !x.data.depart; }
     // After a pallet change: a fresh read, never written over a truck that closed meanwhile (the pallet update itself is
@@ -510,11 +513,13 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const q = String(a.q || '').trim();
         if (!q) return { items: [] };
         const items = data.itemLookup(q);
+        const wts = c.S.unitWeights || {};
         const stock = data.locationStock(c.S.locFrom, items.map(i => i.item));
         const cfg = data.configsByItem(c.S.activeBatch);
         const exact = i => (i.sku.toUpperCase() === q.toUpperCase() || i.upc === q ? 0 : 1);
         items.sort((x, y) => exact(x) - exact(y));
-        return { items: items.map(i => Object.assign({}, i, { onHand: stock[i.item] ? stock[i.item].onHand : 0, cfgs: cfg[i.item] || [] })) };
+        return { items: items.map(i => Object.assign({}, i, { onHand: stock[i.item] ? stock[i.item].onHand : 0, cfgs: cfg[i.item] || [],
+            lb: wts[i.sku.toUpperCase()] ? wts[i.sku.toUpperCase()][0] : null, type: wts[i.sku.toUpperCase()] ? (wts[i.sku.toUpperCase()][1] ? 'CYL' : 'PCS') : '' })) };
     });
 
     act('cfg_list', true, (a, c) => {
@@ -587,6 +592,31 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const cs = data.configsByItem(c.S.activeBatch);
         items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; const d = (cs[k] || []).find(x => x.isDefault) || (cs[k] || [])[0]; if (d) cfg[k] = d.code; });
         return verify.labelRows(rows, { skuMap: skuMap, items: info, avail: avail, labeled: data.labeledPiecesByItem([VP.LOADED]), cfg: cfg, maxPrint: Number(c.S.maxPrint) || 250 });
+    });
+
+    // Unit weights upload (next version, Task 2): rows arrive as [sku, lb, type]; the whole table is replaced on save.
+    function weightRows(a, c) {
+        const rows = (Array.isArray(a.rows) ? a.rows : []).filter(r => Array.isArray(r));
+        if (rows.length > 2000) throw userErr('Too many rows (2,000 max per file)');
+        const kept = rows.filter(r => r.some(x => String(x == null ? '' : x).trim() !== ''));   // trailing blank sheet rows are not errors
+        return core.buildWeightImport(kept, data.skuMap());
+    }
+    act('weights_preview', true, (a, c) => {
+        const imp = weightRows(a, c), old = c.S.unitWeights || {};
+        let added = 0, changed = 0, removed = 0;
+        Object.keys(imp.weights).forEach(k => { if (!old[k]) added++; else if (old[k][0] !== imp.weights[k][0] || old[k][1] !== imp.weights[k][1]) changed++; });
+        Object.keys(old).forEach(k => { if (!imp.weights[k]) removed++; });
+        return { count: imp.count, errors: imp.errors, unknownSkus: imp.unknownSkus, added: added, changed: changed, removed: removed };
+    });
+    act('weights_save', true, (a, c) => {
+        const imp = weightRows(a, c);
+        if (!imp.count) throw userErr('Nothing to save: no valid rows');
+        data.saveSettings({ unitWeights: imp.weights, unitWeightsAt: c.now.stamp, unitWeightsBy: c.actor });
+        return { count: imp.count };
+    });
+    act('weights_list', true, (a, c) => {
+        const w = c.S.unitWeights || {};
+        return { rows: Object.keys(w).sort().map(k => ({ sku: k, lb: w[k][0], type: w[k][1] ? 'CYL' : 'PCS' })), at: c.S.unitWeightsAt || '', by: c.S.unitWeightsBy || '' };
     });
 
     function pubReq(q) {
