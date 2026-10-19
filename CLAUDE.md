@@ -74,7 +74,7 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
     - **The H.M. column is removed for now.**
     - The unknown-type footnote reads "Type unknown: …".
     - Ship To/From streets have a trailing comma trimmed.
-    - Prod location 46 has 752 N Tippecanoe Ave, San Bernardino, CA 92410, so the prod Ship To fills. Sandbox location 42 has no address, so its Ship To is blank.
+    - Prod location 46 has 752 N Tippecanoe Ave, San Bernardino, CA 92410, so the prod Ship To fills. Sandbox location 42 got the same address (Jack OK, 10/19, set via N/record), so the sandbox BOL Ship To fills too.
     - Tests 469/469.
   - ⏭ **Rollout (each upload with Jack's OK):**
     1. Sandbox: upload core, verify, data, tx, label_template, ui, sl over the same ids. Recompile 893. Print one real BFO BOL; check the auto-open in real Chrome.
