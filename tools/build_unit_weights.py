@@ -20,7 +20,15 @@ if len(sys.argv) != 5:
 main_f, pm_f, oh_f, out_f = sys.argv[1:5]
 F = 'Arial'
 TARE = 35
-CYL_SECTION = ('CYLINDER', 'TANK', 'ASME', 'FORKLIFT', 'REFRIGERANT')
+CYL_SECTION = ('CYLINDER', 'TANK', 'ASME', 'FORKLIFT')
+NOT_CYL = ('VALVE', 'GAUGE', 'PART', 'ACCESSOR', 'KIT', 'REFILLABLE')
+
+
+def sec_type(name):
+    u = name.upper()
+    return 'CYL' if any(w in u for w in CYL_SECTION) and not any(w in u for w in NOT_CYL) else 'PCS'
+
+
 CYL_WORDS = re.compile(r'\b(cylinders?|tanks?)\b', re.I)
 
 
@@ -45,7 +53,8 @@ def rnd2(x):
 
 
 def mtype(sku, desc):
-    return 'CYL' if CYL_WORDS.search(sku + ' ' + (desc or '')) else 'PCS'
+    t = sku + ' ' + (desc or '')
+    return 'CYL' if CYL_WORDS.search(t) and not any(w in t.upper() for w in NOT_CYL) else 'PCS'
 
 
 # ── sources ──────────────────────────────────────────────────────────────
@@ -57,9 +66,11 @@ for r in wb['Main'].iter_rows(min_row=4, values_only=True):
     sku = g(r, 1)
     if not isinstance(sku, str) or not sku.strip():
         continue
-    if g(r, 2) is None and num(g(r, 13)) is None and num(g(r, 17)) is None and num(g(r, 25)) is None:
+    if (g(r, 2) is None and g(r, 0) is None and num(g(r, 13)) is None and num(g(r, 17)) is None
+            and num(g(r, 21)) is None and num(g(r, 25)) is None
+            and not any(isinstance(v, (int, float)) for v in r)):
         section = sku.strip()
-        sections[section] = 'CYL' if any(w in section.upper() for w in CYL_SECTION) else 'PCS'
+        sections[section] = sec_type(section)
         continue
     main.setdefault(key(sku), {'sku': sku.strip(), 'unit': num(g(r, 17)), 'pq': num(g(r, 13)), 'plb': num(g(r, 25)),
                                'desc': g(r, 2), 'type': sections.get(section, 'PCS')})
@@ -210,8 +221,8 @@ for t, bold in [
     ('4. Product Matrix, Accesories II: (Pallet Weight - tare) / Pallet Qty.', False),
     ('5. Colour/label variants on hand at Riverside (e.g. YSN201-AG, -BR, -UH) use their base SKU (Jack, 2026-10-19).', False),
     ('', False),
-    ('Type (BOL): CYL for Products Main sections whose name has CYLINDER, TANK, ASME, FORKLIFT or REFRIGERANT; everything else '
-     'PCS. Matrix-only SKUs are PCS unless the SKU or description says cylinder/tank. Variants copy the base SKU Type. '
+    ('Type (BOL): CYL for Products Main sections whose name has CYLINDER, TANK, ASME or FORKLIFT and none of VALVE, GAUGE, PART, ACCESSOR, KIT, REFILLABLE; everything else '
+     'PCS. Matrix-only SKUs are PCS unless the SKU or description says cylinder/tank (same exclusions). Variants copy the base SKU Type. '
      'Review the Type column.', False),
     ('', False),
     ('Assumptions to check:', True),
