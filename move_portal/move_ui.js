@@ -136,7 +136,7 @@ h3{font-size:15px;margin:16px 0 8px}
 
         const PILL = { loading: ['Loading', 'p-blue'], needs_fix: ['⚠ Needs IF fix', 'p-amber'], ready: ['✅ Ready to ship', 'p-green'], ship_pending: ['Shipped by floor', 'p-amber'], departing: ['Departing…', 'p-amber'],
             departed: ['In transit', 'p-blue'], receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], error: ['Needs attention', 'p-red'],
-            at_dock: ['📄 Docs ready · at dock', 'p-green'], pickup_pending: ['🚛 Picked up · waiting for manager', 'p-amber'] };
+            at_dock: ['📄 Docs ready · at dock', 'p-green'], pickup_pending: ['🚛 Picked up · waiting for manager', 'p-amber'], deleted: ['Deleted', 'p-gray'] };
         // Scan-built (drop trailer) trucks: the floor sends a verified load for docs; the manager writes them; the carrier picks it up.
         const SCAN_PILL = { ready: ['✅ Ready for docs', 'p-green'], ship_pending: ['Waiting for docs', 'p-amber'], departing: ['Writing docs…', 'p-amber'] };
         // Dashboard "Last step" labels for the dock steps; other kinds show with "_" as spaces.
@@ -927,7 +927,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<div id="d_msg_' + id + '"></div>' + viewBtn(id) + '<div class="row2"><button class="btn gh" data-act="dseal" data-id="' + id + '">Save seal</button>' +
                 '<button class="btn go" data-act="dpicked" data-id="' + id + '"' + (sync ? ' disabled' : '') + '>🚛 Picked up</button></div>' +
                 (isMgr ? '<div class="row2">' + bolBtn(t.id) + '</div>' : '') +
-                (isMgr ? '<button class="btn ghost sm" data-act="dsendback" data-id="' + id + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' + forceBtn(t.id, t.label) : '') + '</div>';
+                (isMgr ? '<button class="btn ghost sm" data-act="dsendback" data-id="' + id + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' + forceBtn(t.id, t.label) + delBtn(t.id, t.label) : '') + '</div>';
         }
         // Manager: the load is locked at the dock; to change it the trailer goes back to Load out with its docs. The next Approve docs
         // writes only the difference onto the same TO + IF.
@@ -943,6 +943,25 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, false);
             tone(r.ok ? 'ok' : 'bad');
             back(r.ok ? flash('amber', '↩ ' + esc(label) + ' sent back to Load out', esc(note.trim()), 'Approve docs again after the floor sends it: only the change is written to the same TO + IF.') : errBox(r.error));
+        };
+        // Manager: delete a truck that has not shipped. Its pallets go back to labeled; NetSuite is not changed (the server refuses while an IF/TO still exists).
+        const DEL_OK = ['loading', 'needs_fix', 'ready', 'ship_pending', 'at_dock', 'pickup_pending'];
+        function delBtn(id, label) {
+            return '<button class="btn ghost sm" data-act="deltruck" data-id="' + esc(id) + '" data-label="' + esc(label || '') + '">🗑 ' + 'Delete truck' + '</button>';
+        }
+        ACT.deltruck = async el => {
+            const label = el.dataset.label || 'this truck';
+            const reason = prompt('Reason for deleting ' + label + ' (required)');
+            if (reason == null) return;
+            closeNote();
+            const back = m => (SCREENS[S.tab] || SCREENS.approve)(m);
+            if (!reason.trim()) { tone('bad'); back(errBox('Enter a reason')); return; }
+            if (!confirm('Delete ' + label + '? Its pallets go back to labeled. NetSuite is not changed.')) { back(); return; }
+            busy(el, true);
+            const r = await api('truck_delete', { truckId: el.dataset.id, reason: reason.trim() });
+            busy(el, false);
+            tone(r.ok ? 'ok' : 'bad');
+            back(r.ok ? flash('green', '🗑 ' + esc(label) + ' deleted · ' + num(r.pallets || 0) + ' pallets back to labeled') : errBox(r.error));
         };
         // Manager escape for a trailer stuck at the dock: departs it in the portal with no NetSuite writes (the office fixes the TO/IF by hand).
         function forceBtn(id, label) {
@@ -1612,7 +1631,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const v = r.view, t = v.truck, q = t.shipReq || {}, dep = t.depart || {};
             const hdr = [v.trailer || dep.trailer ? 'Trailer ' + (v.trailer || dep.trailer) : '', dep.seal || q.seal ? 'Seal ' + (dep.seal || q.seal) : (t.scan ? 'No seal yet' : ''),
                 dep.carrier || q.carrier || '', t.toNum || '', t.ifNum || ''].filter(Boolean).join(' · ');
-            m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4>' + (hdr ? '<div class="muted">' + esc(hdr) + '</div>' : '') +
+            m.innerHTML = '<div role="dialog" aria-modal="true"><h4>' + esc(t.label) + ' ' + statusPill(t.status, t.scan) + '</h4>' + (hdr ? '<div class="muted">' + esc(hdr) + '</div>' : '') + (v.deleted ? '<div class="muted warn">' + esc('Deleted by ' + (whoName(v.deleted.by) || v.deleted.actor || v.deleted.by || '?') + ' ' + (v.deleted.at || '') + ' · ' + (v.deleted.reason || '') + [v.deleted.toNum, (v.deleted.ifNums || []).join(', ')].filter(Boolean).map(x => ' · ' + x).join('')) + '</div>' : '') +
                 '<div class="muted">' + num(v.totals.pallets) + ' pallets · ' + num(v.totals.pieces) + ' pcs' + (v.scan ? ' · ' + num(v.scan.total) + ' lb' : '') + '</div>' +
                 (v.scan && (!v.receipt || ['at_dock', 'pickup_pending'].indexOf(t.status) !== -1) ? (v.scan.rows.length ? scanTable(v.scan, { weight: true }) : '<div class="muted">No pallets loaded</div>') + palletWeights(v)
                 : v.receipt
@@ -1622,7 +1641,7 @@ h3{font-size:15px;margin:16px 0 8px}
                     : '<table class="tbl"><tr><th>IF</th><th>SKU</th><th>Scanned / expected</th></tr>' + v.lines.map(l => '<tr><td>' + esc(l.ifNum) + '</td><td>' + esc(l.sku) + '</td><td>' + num(l.scanned) + ' / ' + num(l.expected) + '</td></tr>').join('') +
                       v.extras.map(x => '<tr class="warnrow"><td>add-on</td><td>' + esc(x.sku) + '</td><td>' + num(x.scanned) + ' extra</td></tr>').join('') + '</table>') +
                 ((v.otherItems || []).length ? '<div class="muted">Other: ' + v.otherItems.map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ') + '</div>' : '') + noteHtml(v.shortNote) +
-                '<div class="row2">' + (t.scan && ['at_dock', 'pickup_pending', 'departed', 'receiving', 'received'].indexOf(t.status) !== -1 ? bolBtn(t.id) : '') + (t.scan && t.status === 'at_dock' ? '<button class="dbtn gh" data-act="dsendback" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' : '') +
+                '<div class="row2">' + (t.scan && ['at_dock', 'pickup_pending', 'departed', 'receiving', 'received'].indexOf(t.status) !== -1 ? bolBtn(t.id) : '') + (DEL_OK.indexOf(t.status) !== -1 ? delBtn(t.id, t.label) : '') + (t.scan && t.status === 'at_dock' ? '<button class="dbtn gh" data-act="dsendback" data-id="' + esc(t.id) + '" data-label="' + esc(t.label) + '">↩ Send back to Load out</button>' : '') +
                 '<button class="dbtn gh" data-act="notecancel">Close</button></div></div>';
             document.body.appendChild(m);
         };
@@ -1767,7 +1786,7 @@ h3{font-size:15px;margin:16px 0 8px}
             return s + '<line x1="' + x0 + '" x2="' + (W - 10) + '" y1="' + base + '" y2="' + base + '" stroke="#cbd5e1"/></svg>';
         }
         // ── Dashboard (spec 2026-10-06 pm §3) ───────────────────────────
-        const STAGES = ['Receipt pending', 'Waiting for manager', 'Waiting for ship confirm', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
+        const STAGES = ['Receipt pending', 'Waiting for manager', 'Waiting for ship confirm', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received', 'Deleted'];
         const HISTSORTS = [['stage', 'Sort: furthest along'], ['newest', 'Sort: newest step'], ['if', 'Sort: IF'], ['trailer', 'Sort: trailer']];
         const SORTS = [['stage', 'Sort: furthest along'], ['newest', 'Sort: newest step'], ['oldest', 'Sort: oldest step (stuck first)'], ['if', 'Sort: IF'], ['trailer', 'Sort: trailer']];
         const COLS = [['ifNum', 'Fulfillment'], ['toNum', 'TO'], ['truck', 'Truck'], ['', 'SKUs on truck'], ['pcs', 'Pallets · pcs'], ['', 'Received'], ['stage', 'Status'], ['newest', 'Last step']];

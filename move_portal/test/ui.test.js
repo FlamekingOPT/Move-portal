@@ -412,3 +412,10 @@ test('ui: BOL opens in a new tab from Approve and Print BOL', () => {
     assert.ok(o < h.indexOf("await api('ship_confirm'"));
     assert.ok(h.indexOf('confirm(') < o);
 });
+
+test('ui: delete truck button, prompt and Deleted pill', () => {
+    const src = ui._clientMain.toString().replace(/\r/g, '');
+    ["api('truck_delete'", 'ACT.deltruck', "'Delete truck'", 'pallets go back to labeled', 'deleted:', "'Deleted'"].forEach(s => assert.ok(src.includes(s), s));
+    const d = src.slice(src.indexOf('function dockCard'), src.indexOf('ACT.dsendback'));
+    assert.ok(/isMgr \? [^;]*delBtn/.test(d), 'dock card delete is manager only');
+});

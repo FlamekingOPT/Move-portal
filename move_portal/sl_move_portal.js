@@ -2256,7 +2256,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     act('approvals', true, (a, c) => approvalsView(c));
 
     // ── dashboard (spec 2026-10-06 pm §3): trucks, approvals waiting, Active loads ──
-    const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Waiting for ship confirm', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
+    const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Waiting for ship confirm', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received', 'Deleted'];
     function stageOf(x) {
         if (x.status === DELETED) return 'Deleted';
         if (x.status === T.PICKUP_PENDING) return 'Waiting for ship confirm';
