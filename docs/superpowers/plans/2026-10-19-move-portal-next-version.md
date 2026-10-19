@@ -1,4 +1,4 @@
-# Move Portal — next version plan (2026-10-19) · PLAN ONLY, NOT BUILT
+# Move Portal — next version plan (2026-10-19) · ✅ BUILT 2026-10-19 (not uploaded)
 
 > Jack, 2026-10-19: "hold off on building, just put in a plan for next version." **Don't touch the portal code until he says build.**
 > This version goes out after the prod launch of `27643a8` (CLAUDE.md "PROD SET UP 2026-10-19") has settled.

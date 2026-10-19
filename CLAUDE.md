@@ -44,12 +44,27 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
   3. Walk one truck plan-only.
   4. Release the manager deployment so the other managers can open it.
   5. Set writeMode `on` for the first real truck while watching. (No seal/trailer field check is needed; prod already has `custbody7` / `custbody_rsm_container_no`.)
-- **Next version: PLAN ONLY, NOT BUILT (Jack 10/19: "hold off on building").** `docs/superpowers/plans/2026-10-19-move-portal-next-version.md`:
-  - Four features, built in one session: (1) **Unit weights + 45k lb warning** (tare 35): portal-only, Settings `unitWeights` by item id, overlays the blank NetSuite item weights; variants inherit the base SKU. The source is Jack's Products Main + Product Matrix files, ≈85% of pieces covered, plus variants. The builder script is parked at `docs/superpowers/drafts/2026-10-19-build-unit-weights.py`.
-  - (2) **printed VICS BOL** (spec ruled 10/19)
-  - (3) **delete a truck** (any unshipped truck; refused until the office deletes the IFs and closes the TO)
-  - (4) **Manager Trailers editor.** Until it ships, the floor uses "Other…" for a new trailer.
-  - Prod items have no weight today, so truck weights show only the tare.
+- **Next version: ✅ BUILT 2026-10-19, NOT UPLOADED** (Jack: "build these updates in", subagent-driven). Code bc3fd56..090dad0, tests **467/467**.
+  - Plans: `docs/superpowers/plans/2026-10-19-move-portal-next-version.md` (rulings) and `…-next-version-impl.md` (11 tasks).
+  - SDD ledger with every ruling and deferred minor: `docs/sdd-ledger/next-version/progress.md`.
+  - **What's in it:**
+    - (1) **Unit weights:** Labels → Unit weights card (upload .xlsx/.csv with SKU · Unit weight (lb) · Type, preview, save, download). Settings `unitWeights` `{SKU:[lb,cyl]}`; the portal weight wins over the NetSuite item weight (blank in prod). Tare **35** (code default); **45,000 lb** overweight banner (Settings `maxTruckLb`) on floor + manager, warning only. Weight is also shown in item search.
+    - (2) **Printed VICS BOL:** Approve docs opens the BOL PDF in a new tab (`?action=bol&truckId=`, manager only). If pop-ups are blocked: "press Print BOL". Print BOL is on the at-dock cards, the pickup card and the View load pop-up.
+      - A re-approve that changes quantities → REV n (`data.bolRev`), same BOL # (TO #). No change → "Quantities unchanged".
+      - The seal shows once saved.
+      - A SKU without an uploaded row prints Type "?" + "Type unknown, check H.M.". A SKU without a weight blanks the total.
+      - Writes off → "PLAN ONLY", BOL # "—".
+    - (3) **Delete a truck** (manager, reason): any unshipped truck. Pallets go back to labeled; status `deleted` (outside verify.TRUCK); kept in Report history. It is refused until the office deletes the IF(s) and closes the TO in NetSuite: the portal never deletes or closes transactions.
+    - (4) **Trailers editor** on the Labels tab.
+    - (5) **Default carrier ArcBest** (code fallback).
+  - **Weights workbook:** `weights/Unit weights 2026-10-19.xlsx` (git-ignored; built by `tools/build_unit_weights.py`). 223 of 370 on-hand SKUs, 89% of pieces. ⏳ Jack is reviewing the Type column and the Missing sheet.
+  - Beta click-through passed (see ledger). **Not in the sandbox or prod yet.**
+  - ⏭ **Rollout (each upload with Jack's OK):**
+    1. Sandbox: upload core, verify, data, tx, label_template, ui, sl over the same ids. Recompile 893. Print one real BFO BOL; check the auto-open in real Chrome.
+    2. Prod: upload over core 3050378, verify 3050380, data 3050483, tx 3050484, label_template 3050485, ui 3050486, sl 3050487. Recompile 1166.
+    3. Prod Move Settings: `palletTare` 35, `maxTruckLb` 45000, `bolName` "YSN IMPORTS", **`defaultCarrier` "ArcBest"**. Do the carrier change BEFORE any truck is sent for docs: the BOL prints `depart.carrier`, stamped at Send for docs.
+    4. Upload the approved workbook.
+  - Prod items have no weight today, so until the upload, truck weights show only the tare.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
