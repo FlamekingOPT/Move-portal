@@ -100,6 +100,18 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
             .forEach(r => { out[skuOfName(r.getValue('itemid')).toUpperCase()] = String(r.id); });
         return out;
     }
+    // BOL Ship From / Ship To (spec 2026-10-18): street, city, state, zip of each location. A failed read returns {} (the BOL prints blanks).
+    function locationAddresses(ids) {
+        const out = {}, u = uniq(ids);
+        if (!u.length) return out;
+        try {
+            all(search.create({ type: search.Type.LOCATION, filters: [['internalid', 'anyof', u]],
+                columns: ['name', 'address1', 'city', 'state', 'zip'].map(n => search.createColumn({ name: n })) }))
+                .forEach(r => { out[String(r.id)] = { name: r.getValue('name') || '', addr: r.getValue('address1') || '', city: r.getValue('city') || '',
+                    state: r.getText('state') || r.getValue('state') || '', zip: r.getValue('zip') || '' }; });
+        } catch (e) { /* blanks on the BOL */ }
+        return out;
+    }
     function locationStock(locId, itemIds) {
         const f = [['inventorylocation', 'anyof', String(locId)], 'AND', ['type', 'anyof', ITEM_TYPES]];
         if (itemIds) {
@@ -308,7 +320,7 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
 
     return {
         resetCache, getSettings, saveSettings, employeeIsPortalManager,
-        itemLookup, itemInfo, skuMap, locationStock,
+        itemLookup, itemInfo, skuMap, locationStock, locationAddresses,
         configsByItem, countConfigsInBatch, createConfig, deleteConfigsNotInBatch,
         getPallet, palletsByIds, palletsByJob, palletsByStatus, palletsByLoad, countByJob, createPallet, updatePallet,
         labeledPiecesByItem, movedByDay, findPalletsWhere, countPallets, palletStatusCounts,

@@ -54,6 +54,7 @@ function makeFakeData(core) {
         itemLookup: q => db.items.filter(i => i.sku.toUpperCase().indexOf(q.toUpperCase()) !== -1 || i.upc === q).map(clone),
         itemInfo: ids => { const o = {}; ids.map(String).forEach(id => { const i = db.items.find(x => x.item === id); if (i) o[id] = clone(i); }); return o; },
         skuMap: () => { const o = {}; db.items.forEach(i => { o[i.sku.toUpperCase()] = i.item; }); return o; },
+        locationAddresses: ids => { const o = {}; (ids || []).forEach(id => { if ((db.locations || {})[String(id)]) o[String(id)] = clone(db.locations[String(id)]); }); return o; },
         locationStock: (loc, ids) => {
             const s = db.stock[loc] || {}, o = {};
             Object.keys(s).forEach(k => {

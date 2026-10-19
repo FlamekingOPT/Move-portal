@@ -66,3 +66,23 @@ test('barcode value carries code, SKU and pieces with tabs as XML char refs', ()
     assert.match(mixed, /value="PLT10&#9;YSN201&#9;120&#9;YSN301&#9;60"/);
     assert.equal(x.indexOf('\t'), -1);
 });
+
+const bol = (extra) => Object.assign({
+    date: '10/19/2026', bolNo: 'TO11702', rev: 1, planOnly: false,
+    from: { name: 'Riverside', addr: '1 A St', csz: 'X, IN 46000' }, to: { name: 'Tippecanoe', addr: '2 B St', csz: 'Y, IN 47000' },
+    carrier: 'ArcBest', trailer: '537224', seal: '1846', ifNums: ['IF54012'],
+    plan: { lines: [{ sku: 'YSN201', desc: '20# LP Cylinder', units: 2, pcs: 132, type: 'CYL', hm: true, lbs: 2446 },
+        { sku: 'YSN301', desc: 'A & B', units: 1, pcs: 24, type: 'CYL', hm: true, lbs: 635 }], units: 3, pcs: 156, lbs: 3081, missing: [] }
+}, extra || {});
+
+test('bolXml fills the VICS boxes', () => {
+    const x = tpl.bolXml(bol());
+    ['BILL OF LADING', 'TO11702', 'ArcBest', '537224', '#IF54012', 'CUSTOMER ORDER INFORMATION', 'CARRIER INFORMATION', 'CYL', '>X<', '3,081'].forEach(s => assert.ok(x.includes(s), s));
+    assert.ok(!x.includes('REV'));
+    assert.ok(!x.includes('PLAN ONLY'));
+    assert.ok(x.includes('A &amp; B'));
+    assert.ok(tpl.bolXml(bol({ rev: 2 })).includes('REV 2'));
+    const po = tpl.bolXml(bol({ planOnly: true }));
+    assert.ok(po.includes('PLAN ONLY'));
+    assert.ok(!po.includes('TO11702'));
+});

@@ -51,6 +51,27 @@ define([], function () {
     }
     // Truck weight limit check: over = total above max; atLeast = some SKUs have no weight, so the total is a floor.
     function overweight(total, noWeight, max) { return { max: max, over: total > max, atLeast: noWeight > 0 }; }
+    // VICS BOL rows (spec 2026-10-18): one carrier line per SKU. Each pallet's handling unit (and its tare) goes to its first line's SKU,
+    // so the line handling units add up to the pallet count. Weight = pcs × unit weight + handling units × tare; a SKU with no weight
+    // prints a blank weight and blanks the grand total (the office writes it in).
+    function bolPlan(o) {
+        const info = o.info || {}, tare = Number(o.tare) || 0, by = {}, order = [];
+        (o.pallets || []).forEach(p => (p.lines || []).forEach((l, i) => {
+            const k = String(l.item);
+            if (!by[k]) { by[k] = { units: 0, pcs: 0 }; order.push(k); }
+            by[k].pcs += Number(l.pcs) || 0;
+            if (i === 0) by[k].units++;
+        }));
+        const missing = [];
+        const lines = order.map(k => {
+            const i = info[k] || {}, per = lbs(i.weight, i.wunit), r = by[k];
+            if (per == null) missing.push(i.sku || k);
+            return { item: k, sku: i.sku || k, desc: i.desc || i.sku || k, units: r.units, pcs: r.pcs, type: i.cyl ? 'CYL' : 'PCS', hm: !!i.cyl,
+                lbs: per == null ? null : Math.round(per * r.pcs + tare * r.units) };
+        }).sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
+        const sum = f => lines.reduce((s, l) => s + l[f], 0);
+        return { lines: lines, units: sum('units'), pcs: sum('pcs'), lbs: missing.length ? null : sum('lbs'), missing: missing };
+    }
     function linesPcs(tl) { const o = {}; Object.keys(tl || {}).forEach(k => { o[k] = tl[k].pcs; }); return o; }
     // info: { item: { weight, wunit } }. Line weights are rounded to the pound; the tare is palletCount × tare.
     function truckWeight(tl, info, tare, palletCount) {
@@ -631,7 +652,7 @@ define([], function () {
     return { _fmt: fmt, TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps, scanTag, scanApprovePlan,
-        lbs, truckLines, linesPcs, truckWeight, withWts, overweight, stockCheck, stockText,
+        lbs, truckLines, linesPcs, truckWeight, withWts, bolPlan, overweight, stockCheck, stockText,
         classifyUnloadScan, planReceipts, labelRows, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads,
         dockOps, inverseOp, applyDelta, docLinesFromAlloc, allocFromDocLines };
 });

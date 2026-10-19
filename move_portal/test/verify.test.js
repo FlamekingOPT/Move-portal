@@ -685,3 +685,20 @@ test('overweight', () => {
     const r = v.overweight(40000, 2, 45000);
     assert.equal(r.over, false); assert.equal(r.atLeast, true);
 });
+
+test('bolPlan: one handling unit per pallet on its first SKU; weight = pcs × lb + units × 35', () => {
+    const pallets = [{ lines: [{ item: '11', pcs: 60 }] }, { lines: [{ item: '11', pcs: 60 }] }, { lines: [{ item: '12', pcs: 24 }, { item: '11', pcs: 12 }] }];
+    const info = { 11: { sku: 'YSN201', desc: '20# LP', weight: 18, wunit: 'lb', cyl: true }, 12: { sku: 'YSN301', desc: '30# LP', weight: 25, wunit: 'lb', cyl: true } };
+    const p = v.bolPlan({ pallets, info, tare: 35 });
+    const a = p.lines.find(l => l.sku === 'YSN201'), b = p.lines.find(l => l.sku === 'YSN301');
+    assert.deepEqual([a.units, a.pcs, a.lbs, a.type, a.hm], [2, 132, 2446, 'CYL', true]);
+    assert.deepEqual([b.units, b.pcs, b.lbs], [1, 24, 635]);
+    assert.deepEqual([p.units, p.pcs, p.lbs, p.missing], [3, 156, 3081, []]);
+});
+
+test('bolPlan: a SKU without a weight blanks the grand total and is listed', () => {
+    const p = v.bolPlan({ pallets: [{ lines: [{ item: '9', pcs: 10 }] }], info: { 9: { sku: 'X', desc: 'X item' } }, tare: 35 });
+    assert.equal(p.lbs, null);
+    assert.equal(p.lines[0].lbs, null);
+    assert.deepEqual(p.missing, ['X']);
+});
