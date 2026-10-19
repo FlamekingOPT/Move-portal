@@ -67,7 +67,7 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
     - After `weights_save` YSN201 = 18 CYL (a test row left in the sandbox Settings, by "Claude smoke"), the BOL prints 5,464 lb = 288×18 + 8×35, CYL, H.M. X.
     - The Labels tab shows the Unit weights and Trailers cards with no console errors.
     - The floor (deploy 2) loads, and bol_data / truck_delete there say "Managers only".
-    - ⚠ The sandbox Move Settings still has `defaultCarrier` "Armstrong Group" saved (it overrides the ArcBest fallback), so the BOL shows Armstrong until that setting changes. The PDF tab title reads "report.pdf" (cosmetic).
+    - Sandbox Move Settings `defaultCarrier` changed "Armstrong Group" → **"ArcBest"** (Jack OK, 10/19). The floor now reads ArcBest; trucks already sent for docs keep their stamped carrier. The PDF tab title reads "report.pdf" (cosmetic).
     - Not yet tested in the sandbox: auto-open after a real Approve in Chrome, a REV 2 re-approve, Delete with a live IF.
   - ⏭ **Rollout (each upload with Jack's OK):**
     1. Sandbox: upload core, verify, data, tx, label_template, ui, sl over the same ids. Recompile 893. Print one real BFO BOL; check the auto-open in real Chrome.
