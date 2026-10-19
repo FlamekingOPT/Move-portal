@@ -19,6 +19,33 @@ A NetSuite Suitelet for the **Riverside → Tippecanoe inventory move**. The tar
 - **SDD ledger:** `docs/sdd-ledger/progress.md` (every ruling, review finding, minor and ON-MODE GATE item), with every task brief/report under `docs/sdd-ledger/v3/`, `verify-load/`, `rework/`, `dashboard/`.
 - **Mockups:** `docs/mockups/2026-10-01 move portal v3 verification mockup.html` (the Claude app's file viewer doesn't run page scripts: open it in Chrome).
 
+## 🚀 PROD SET UP 2026-10-19 (code 27643a8) · writeMode `off` · ⏭ NEXT = Jack's off-mode walk, then `on`
+Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below was OK'd by Jack in chat (10/19).
+- **Custom record types** (built by hand; Copy to Account would have dragged sandbox roles into prod): settings **764**, config **765**, load **766**, pallet **767**, scan **768**, label_req **769**. All have Access = No Permissions Required and Show ID. The 32 fields match the sandbox ids and types (checked on each type's Fields tab).
+- **Move Settings row 1:** start **2026-10-21**, locFrom 35, locTo 46, writeMode **off**, officeIfs false, palletTare 45, labelCode qr, the 7 trailers, trucksPerDay 8.
+- **File Cabinet:** folder `SuiteScripts/MovePortal` **420690**. Files (LF copies from git `27643a8`):
+  - core 3050378, verify 3050380, ns 3050482, data 3050483
+  - tx 3050484, label_template 3050485, ui 3050486, sl 3050487
+  - ⚠ Gotcha: `mediaitem.nl?folder=` is ignored, so new files land in the last-used folder (they went to PickerPortal and were moved). Set the folder with `nlapiSetFieldValue('folder', …)` before you save.
+- **Script** `customscript_move_portal` id **1166**. Both deployments are **login required**, Execute As Current Role (Jack: the floor uses the picker login, not a no-login URL):
+  - **Manager** `customdeploy_move_portal` id **3712**, status **Testing** (owner only until Released). URL `https://8211645.app.netsuite.com/app/site/hosting/scriptlet.nl?script=1166&deploy=1`. Audience: Administrator 3, Warehouse Portal Manager 2536, FK Warehouse Manager 1303 / 2509 / 1403 / 2522.
+  - **Floor** `customdeploy_move_portal_floor` id **3713**, **Released**. URL `…script=1166&deploy=2`. Audience: the manager roles + **Portal Picker - Riverside 2539** (the RVS Warehouse login 10643). Keep 2539 OUT of the manager deployment: manager mode = the manager deployment + a logged-in user.
+- **Roles:**
+  - Portal Picker - Riverside (2539): + Transfer Order View, + Item Receipt View.
+  - Warehouse Portal Manager (2536): + Transfer Order Full, + Item Receipt Full.
+  - The FK Warehouse Manager roles were not changed. A manager logged in under one may hit permission errors on writes.
+- **Smoke at `off` (Administrator) passed:**
+  - Manager: Dashboard, Approvals, Labels and Report load. Report says "Write mode off".
+  - `item_lookup` YSN201 returns Riverside on hand 113,754.
+  - Floor deploy 2: Load out shows the 7 trailers + Other…, and `ship_confirm` there returns "Managers only".
+- **Still Jack's:**
+  1. Open the floor URL as 10643 on the tablet.
+  2. Print one real label and scan it.
+  3. Walk one truck plan-only.
+  4. Release the manager deployment so the other managers can open it.
+  5. Set writeMode `on` for the first real truck while watching. (No seal/trailer field check is needed; prod already has `custbody7` / `custbody_rsm_container_no`.)
+- **Follow-up (after launch, Jack's choice):** a manager Trailers editor (add/remove trailer numbers in the portal). Until then the floor uses "Other…" for a new trailer.
+
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
    - Finish Truck 1: floor Picked up (seal 1846 is already saved), then manager Confirm shipped.
