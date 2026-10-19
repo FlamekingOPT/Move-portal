@@ -69,6 +69,13 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
     - The floor (deploy 2) loads, and bol_data / truck_delete there say "Managers only".
     - Sandbox Move Settings `defaultCarrier` changed "Armstrong Group" → **"ArcBest"** (Jack OK, 10/19). The floor now reads ArcBest; trucks already sent for docs keep their stamped carrier. The PDF tab title reads "report.pdf" (cosmetic).
     - Not yet tested in the sandbox: auto-open after a real Approve in Chrome, a REV 2 re-approve, Delete with a live IF.
+  - **BOL tweaks (Jack 10/19), code `c405e71`, uploaded to the sandbox** (label_template 2055086 + sl 2055089, 893 recompiled):
+    - The commodity description leads with the SKU # ("YSN201 · 20# LP Cylinders w/OPD").
+    - **The H.M. column is removed for now.**
+    - The unknown-type footnote reads "Type unknown: …".
+    - Ship To/From streets have a trailing comma trimmed.
+    - Prod location 46 has 752 N Tippecanoe Ave, San Bernardino, CA 92410, so the prod Ship To fills. Sandbox location 42 has no address, so its Ship To is blank.
+    - Tests 469/469.
   - ⏭ **Rollout (each upload with Jack's OK):**
     1. Sandbox: upload core, verify, data, tx, label_template, ui, sl over the same ids. Recompile 893. Print one real BFO BOL; check the auto-open in real Chrome.
     2. Prod: upload over core 3050378, verify 3050380, data 3050483, tx 3050484, label_template 3050485, ui 3050486, sl 3050487. Recompile 1166.
