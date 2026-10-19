@@ -1,5 +1,11 @@
 # Move Portal — printed VICS Bill of Lading (2026-10-18) · PLAN ONLY, NOT BUILT
 
+> **2026-10-19:** the open questions are ruled and this is now part of the next version: see `docs/superpowers/plans/2026-10-19-move-portal-next-version.md` §2.
+> - YSN201 = 18 lb
+> - tare 35 lb
+> - auto-reprint as REV n after a re-approve
+> - weights come from the shared unit-weights upload (`unitWeights`, with Type CYL/PCS)
+
 **Status: planning only.** Jack (2026-10-18): don't write this into the code yet, so nothing that works now gets disturbed. A draft patch from an interrupted start is kept at `docs/superpowers/drafts/2026-10-18-bol-draft.patch`. It is reference only, is not applied, and does not include the server or UI parts.
 
 ## Goal

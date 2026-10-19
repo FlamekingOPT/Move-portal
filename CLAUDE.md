@@ -45,8 +45,10 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
   4. Release the manager deployment so the other managers can open it.
   5. Set writeMode `on` for the first real truck while watching. (No seal/trailer field check is needed; prod already has `custbody7` / `custbody_rsm_container_no`.)
 - **Next version: PLAN ONLY, NOT BUILT (Jack 10/19: "hold off on building").** `docs/superpowers/plans/2026-10-19-move-portal-next-version.md`:
-  - (1) **Unit weights upload**: portal-only, Settings `unitWeights` by item id, overlays the blank NetSuite item weights; variants inherit the base SKU. The source is Jack's Products Main + Product Matrix files, ≈85% of pieces covered, plus variants. The builder script is parked at `docs/superpowers/drafts/2026-10-19-build-unit-weights.py`.
-  - (2) **Manager Trailers editor.** Until it ships, the floor uses "Other…" for a new trailer.
+  - Four features, built in one session: (1) **Unit weights + 45k lb warning** (tare 35): portal-only, Settings `unitWeights` by item id, overlays the blank NetSuite item weights; variants inherit the base SKU. The source is Jack's Products Main + Product Matrix files, ≈85% of pieces covered, plus variants. The builder script is parked at `docs/superpowers/drafts/2026-10-19-build-unit-weights.py`.
+  - (2) **printed VICS BOL** (spec ruled 10/19)
+  - (3) **delete a truck** (any unshipped truck; refused until the office deletes the IFs and closes the TO)
+  - (4) **Manager Trailers editor.** Until it ships, the floor uses "Other…" for a new trailer.
   - Prod items have no weight today, so truck weights show only the tare.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
@@ -57,7 +59,7 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
    - Spec: `docs/superpowers/specs/2026-10-18-move-portal-bol-design.md`.
    - Parked draft (not applied): `docs/superpowers/drafts/2026-10-18-bol-draft.patch`.
    - Ruled: the manager prints at Approve docs. The commodity is the SKU description. Weight = unit weight × pcs + pallet tare. Unit weights come from a Capacity Builder CSV upload. Cylinders get H.M. X + CYL; accessories get PCS.
-   - **Open:** (a) YSN201 unit weight: Capacity Builder says 19.8 lb, the real BOL used 18 lb. (b) Pallet tare: 45 lb (the current setting) or 27 lb (what the sample implies)? (c) Reprint automatically after a re-approve, or only on Print BOL?
+   - **Ruled 2026-10-19 (now in the next-version plan §2):** (a) YSN201 = 18 lb; (b) tare = 35 lb; (c) auto-reprint as REV n after a re-approve.
 
 ## 🧭 READ FIRST — MANAGER-ONLY NETSUITE WRITES (2026-10-17) · ✅ UPLOADED TO THE SANDBOX (code 7e2c6c5)
 **Why:** On 10/17, **Save seal** on sandbox Truck 1 (TO8723 · IF53840) failed for the floor login with "You must have 'Transactions -> Fulfill Sales Orders' view permission…". Jack's rule: **the floor writes no NetSuite, only a manager does.** Spec: `docs/superpowers/specs/2026-10-17-move-portal-manager-only-writes-design.md`.
