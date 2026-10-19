@@ -824,7 +824,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (S.tab !== 'ship' || !$('shipbox')) return;
             S.shipViews = {};
             gets.forEach(g => { if (g.ok) S.shipViews[String(g.view.truck.id)] = g.view; });
-            const carrier = r.carrier || 'Armstrong Group';
+            const carrier = r.carrier || 'ArcBest';
             const showOff = r.officeIfs || off.length, showScn = !r.officeIfs || scn.length;
             $('shipbox').innerHTML = (msg || '') + (!showOff ? '' : '<h3>Ready to ship</h3>' + (ready.map(t => shipCard(t, S.shipViews[String(t.id)], carrier)).join('') ||
                     '<div class="muted">No truck is ready. Verify a load on Load out first.</div>') +

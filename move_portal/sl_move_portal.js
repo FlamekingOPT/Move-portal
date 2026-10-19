@@ -210,7 +210,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }, isScan(x) ? { toNum: d.toNum || '', ifNum: d.ifNum || '', docsSync: d.docsSync || null, docLines: d.docLines || null } : {}), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
             pallets: ps.map(p => pubPallet(p)), totals: { pallets: ps.length, pieces: ps.reduce((a, p) => a + p.pieces, 0) },
-            trailers: c.S.trailers || DEFAULT_TRAILERS, carrier: c.S.defaultCarrier || 'Armstrong Group', writeMode: writeMode(c),
+            trailers: c.S.trailers || DEFAULT_TRAILERS, carrier: c.S.defaultCarrier || 'ArcBest', writeMode: writeMode(c),
             trailer: d.trailer || '', otherItems: d.otherItems || [], shortNote: d.shortNote || null,
             receipt: d.depart ? receiptView(x, ps) : null, scan: isScan(x) ? scanRows(x, ps, c) : null };
     }
@@ -738,7 +738,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         trucks.filter(x => TRAILER_BUSY.indexOf(x.status) !== -1).forEach(x => { busy[normTrailer(x.data.trailer)] = true; });
         return { planned: core.officeIfs(c.S) ? ns.plannedIfs().filter(f => !taken[f.ifId]).map(f => pubIf(f, dp)) : [], officeIfs: core.officeIfs(c.S),
                         open: open.map(x => truckSummary(x, counts)), shippedToday: shipped.map(x => truckSummary(x, counts)), pulledAt: ns.pulledAt(),
-            trailers: (c.S.trailers || DEFAULT_TRAILERS).filter(t => !busy[normTrailer(t)]), carrier: c.S.defaultCarrier || 'Armstrong Group' };
+            trailers: (c.S.trailers || DEFAULT_TRAILERS).filter(t => !busy[normTrailer(t)]), carrier: c.S.defaultCarrier || 'ArcBest' };
     });
 
     // A trailer is on one truck at a time until it leaves.
@@ -1407,7 +1407,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const own = String(x.data.trailer || '').trim();
         // A truck with no trailer (started before the rework) takes the one entered at the mark.
         // Drop trailer (spec 2026-10-17): a scan truck's seal goes in only at the dock (Shipments), never at Send for docs.
-        const inp = { trailer: own || checkTrailer(a.trailer, x.id), seal: isScan(x) ? '' : String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'Armstrong Group' };
+        const inp = { trailer: own || checkTrailer(a.trailer, x.id), seal: isScan(x) ? '' : String(a.seal || '').trim(), carrier: String(a.carrier || '').trim() || c.S.defaultCarrier || 'ArcBest' };
         if (!inp.seal && !isScan(x)) throw userErr('Enter the seal #');
         if (inp.seal.length > 30) throw userErr('The seal # is too long (30 characters max)');
         if (inp.carrier.length > 60) throw userErr('The carrier is too long (60 characters max)');
@@ -1504,12 +1504,30 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             data.updateLoad(data.getLoad(x0.id), { data: Object.assign(base, { error: w.refused }) });
             throw userErr(w.refused + '. NetSuite is unchanged: approve again, or send it back.');
         }
+        const bolRev = Object.keys(delta).length ? (Number(d0.bolRev) || 1) + 1 : (Number(d0.bolRev) || 1);
         data.updateLoad(data.getLoad(x0.id), { status: T.AT_DOCK, data: Object.assign(base, { error: '', shipReq: null, sentBack: null, shortNote: null, docsDepart: null, depart: dep,
+            bolRev: bolRev,
             docLines: w.dl, alloc: verify.allocFromDocLines(w.dl, { toId: d0.toId, toNum: d0.toNum }), lastStep: stepOf('docs_rewritten', c) },
             w.outOfSync ? { docsSync: Object.assign(w.outOfSync, { at: c.now.stamp, by: c.actor }) } : {}) });
-        return Object.assign({ atDock: true, rewritten: true, view: truckView(mustTruck(x0.id), c) }, d0.toId ? { toNum: d0.toNum, ifNum: d0.ifNum } : {},
+        return Object.assign({ atDock: true, rewritten: true, bolRev: bolRev, view: truckView(mustTruck(x0.id), c) }, d0.toId ? { toNum: d0.toNum, ifNum: d0.ifNum } : {},
             w.outOfSync ? { outOfSync: true } : {});
     }
+    // The printed BOL (spec 2026-10-18): built from the portal's own load, weights from the Unit weights list.
+    function bolData(x, c) {
+        const d = x.data || {}, dep = d.depart || {};
+        if ([T.AT_DOCK, T.PICKUP_PENDING, T.DEPARTED, T.RECEIVING, T.RECEIVED].indexOf(x.status) === -1) throw userErr('The BOL prints after Approve docs');
+        const ps = x.status === T.AT_DOCK || x.status === T.PICKUP_PENDING ? data.palletsByLoad(x.id, [VP.LOADED]) : data.palletsByLoad(x.id, [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING]);
+        const items = []; ps.forEach(p => (p.lines || []).forEach(l => { if (items.indexOf(String(l.item)) === -1) items.push(String(l.item)); }));
+        const addr = data.locationAddresses([c.S.locFrom, c.S.locTo]) || {}, nm = c.S.bolName || 'YSN IMPORTS';
+        const party = id => { const a = addr[String(id)] || {}; return { name: nm, addr: a.addr || '', csz: [a.city ? a.city + (a.state ? ', ' : '') : '', a.state || '', a.zip || ''].join(' ').replace(/\s+/g, ' ').trim() }; };
+        const ifs = []; Object.keys(d.docLines || {}).forEach(k => { const n = d.docLines[k].ifNum; if (n && ifs.indexOf(n) === -1) ifs.push(n); });
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dep.day || c.now.dayIso || '');
+        return { date: m ? m[2] + '/' + m[3] + '/' + m[1] : '', bolNo: d.toNum || '—', rev: Number(d.bolRev) || 1, planOnly: !d.toId, from: party(c.S.locFrom), to: party(c.S.locTo),
+            carrier: dep.carrier || c.S.defaultCarrier || 'ArcBest', trailer: d.trailer || '', seal: dep.seal || '', ifNums: ifs.length ? ifs : (d.ifNum ? [d.ifNum] : []),
+            plan: verify.bolPlan({ pallets: ps, info: itemInfoW(items, c), tare: core.palletTare(c.S) }) };
+    }
+    act('bol_data', true, (a, c) => ({ bol: bolData(mustTruck(a.truckId), c) }));
+
     // Send back (manager, note required): the floor gets the truck back as loading, with the note on its screen.
     act('ship_sendback', true, (a, c) => {
         const note = String(a.note || '').trim().slice(0, 300);
@@ -2376,6 +2394,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const q = ctx.request.parameters;
         if (!q.action) return page(ctx);
         if (q.action === 'pdf') return pdf(ctx);
+        if (q.action === 'bol') return bolPdf(ctx);
         let out;
         try {
             let a = {};
@@ -2410,6 +2429,18 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const xml = tpl.labelsXml(ps.map(p => ({ code: p.code, lines: p.lines, pieces: p.pieces, edited: p.edited, printedDay: p.printedDay,
             by: p.data.printedBy || '', summary: p.summary })), { codeMode: S.labelCode, header: q.header === '1', fromName: S.fromName, toName: S.toName });
         ctx.response.writeFile({ file: render.xmlToPdf({ xmlString: xml }), isInline: true });
+    }
+
+    function bolPdf(ctx) {
+        if (onFloorDeploy() || !isManager()) { ctx.response.write('Managers only'); return; }
+        try {
+            const c = { mgr: true, S: settings(), now: nowInfo() };
+            const xml = tpl.bolXml(bolData(mustTruck(ctx.request.parameters.truckId), c));
+            ctx.response.writeFile({ file: render.xmlToPdf({ xmlString: xml }), isInline: true });
+        } catch (e) {
+            if (!e.user) log.error({ title: 'move bol', details: (e && e.stack) || String(e) });
+            ctx.response.write(e.user ? e.message : 'Error: ' + (e.message || String(e)));
+        }
     }
 
     return { onRequest: onRequest, _runAction: runAction };

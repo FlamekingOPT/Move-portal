@@ -155,7 +155,7 @@ test('floor rework: Load out default, no Void, Shipments, trailer, short note, o
 test('floor rework: tab order, shipped today, other-item remove, ship-pending unload lock', () => {
     const src = ui._clientMain.toString().replace(/\r/g, '');
     ["out: [['trucks', 'Load out'], ['ship', 'Shipments'], ['req', 'Request label']]", 'SCREENS.ship', 'r.shippedToday', 'Waiting for manager', 'Shipped today',
-        "api('truck_other_remove'", 'Armstrong Group', 'waiting for a manager to confirm shipping', 'r.trailers']
+        "api('truck_other_remove'", 'ArcBest', 'waiting for a manager to confirm shipping', 'r.trailers']
         .forEach(t => assert.ok(src.indexOf(t) !== -1, 'missing ' + t));
     assert.equal(src.indexOf('SCREENS.void'), -1, 'Void screen still there');
     assert.equal(src.indexOf('departForm('), -1, 'departure form still on the truck screen');

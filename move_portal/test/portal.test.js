@@ -21,9 +21,9 @@ function setup(opts) {
     const sl = loadAmd('sl_move_portal.js', {
         'N/runtime': { getCurrentUser: () => ({ id: rt.userId, name: 'Jack K', roleId: 'administrator', role: 3 }), getCurrentScript: () => ({ id: 's', deploymentId: rt.deploymentId }) },
         'N/log': { error() {}, debug() {}, audit() {} },
-        'N/render': {}, 'N/url': opts.url || {},
+        'N/render': opts.render || {}, 'N/url': opts.url || {},
         'N/format': { format: () => '10/14/2026 2:14:05 pm', Type: { DATETIMETZ: 'dtz' }, Timezone: { AMERICA_LOS_ANGELES: 'la' } },
-        './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': {}, './move_ui': opts.ui || {}, './move_verify': verify, './move_ns': ns
+        './move_core': core, './move_data': data, './move_tx': tx, './move_label_template': opts.tpl || {}, './move_ui': opts.ui || {}, './move_verify': verify, './move_ns': ns
     });
     const run = (action, a, mgr = true) => sl._runAction(action, Object.assign({ actor: 'Miguel' }, a || {}), mgr);
     return { data, tx, run, ns, sl, rt };
@@ -259,7 +259,7 @@ test('depart: exact match → floor departs, stamps planned only in off mode, pa
     assert.equal(r.departed, true);
     const dd = ctx.data.getLoad(t.id).data;
     assert.deepEqual([dd.depart.truckNo, dd.plan.length, dd.plan[0].op], [1, 1, 'if_stamp']);
-    assert.deepEqual([r.view.truck.status, r.view.truck.label, r.view.truck.depart.carrier], ['departed', 'Truck 1 · 10/14', 'Armstrong Group']);
+    assert.deepEqual([r.view.truck.status, r.view.truck.label, r.view.truck.depart.carrier], ['departed', 'Truck 1 · 10/14', 'ArcBest']);
     assert.equal(ctx.tx._t.ops.length, 0);
     assert.equal(ctx.data.getPallet(ps[0].id).status, 'in_transit');
     const t2 = readyTruck(ctx, 1, '9002').t;                                  // IF9001 is taken by the departed truck
@@ -1878,7 +1878,7 @@ test('truck_planned: shippedToday lists today\'s departed trucks; trailers lists
     let r = ctx.run('truck_planned', {}, false);
     assert.deepEqual(r.shippedToday, []);
     assert.equal(r.trailers.indexOf('537224'), -1, 'a trailer on an open truck is not offered');
-    assert.equal(r.carrier, 'Armstrong Group');
+    assert.equal(r.carrier, 'ArcBest');
     ctx.run('ship_mark', { truckId: t.id, seal: '5250020' }, false);
     ctx.run('ship_confirm', { truckId: t.id });
     r = ctx.run('truck_planned', {}, false);
@@ -3902,4 +3902,73 @@ test('approvals: a scan truck over the weight limit carries weight.over on its s
     const w = ctx.run('approvals').shipPending[0].weight;
     assert.equal(w.over, true);
     assert.equal(w.max, 100);
+});
+
+// ── BOL on the server + ArcBest default carrier (Task 6) ──────
+test('bol: data for an at-dock truck', () => {
+    const ctx = scanSetup();
+    delete ctx.data.db.settings.palletTare;
+    ctx.run('weights_save', { rows: [['YSN201', 18, 'CYL']] });
+    const t = atDock(ctx, 2), d = ctx.data.getLoad(t.id).data;
+    const b = ctx.run('bol_data', { truckId: t.id }).bol;
+    assert.deepEqual([b.bolNo, b.planOnly, b.rev, b.carrier, b.seal], [d.toNum, false, 1, 'ArcBest', '']);
+    assert.deepEqual(b.ifNums, [d.ifNum]);
+    const l = b.plan.lines[0];
+    assert.deepEqual([l.sku, l.units, l.pcs, l.type, l.hm, l.lbs], ['YSN201', 2, 240, 'CYL', true, 240 * 18 + 70]);
+});
+test('bol: refused before Approve docs and for the floor', () => {
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 1);
+    assert.throws(() => ctx.run('bol_data', { truckId: t.id }), /after Approve docs/);
+    const c2 = scanSetup(), t2 = atDock(c2, 1);
+    assert.throws(() => c2.run('bol_data', { truckId: t2.id }, false), /Managers only/);
+});
+test('bol: plan only when writes are off', () => {
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 1);
+    ctx.data.db.settings.writeMode = 'off';
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    ctx.run('ship_confirm', { truckId: t.id });
+    const b = ctx.run('bol_data', { truckId: t.id }).bol;
+    assert.deepEqual([b.planOnly, b.bolNo], [true, '—']);
+});
+test('bol: a re-approve that changes quantities bumps the REV', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2);
+    ctx.run('dock_sendback', { truckId: t.id, note: 'one stays' });
+    ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code, mode: 'off' }, false);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    const r = ctx.run('ship_confirm', { truckId: t.id });
+    assert.equal(r.bolRev, 2);
+    assert.equal(ctx.run('bol_data', { truckId: t.id }).bol.rev, 2);
+    ctx.run('dock_sendback', { truckId: t.id, note: 'check' });
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    ctx.run('ship_confirm', { truckId: t.id });
+    assert.equal(ctx.run('bol_data', { truckId: t.id }).bol.rev, 2);
+});
+test('bol: the seal shows once saved', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.run('dock_seal', { truckId: t.id, seal: '1846' }, false);
+    assert.equal(ctx.run('bol_data', { truckId: t.id }).bol.seal, '1846');
+});
+test('bol: the PDF route is managers only and renders the BOL xml', () => {
+    let seen = null, wrote = null;
+    const opts = { render: { xmlToPdf: o => { seen = o.xmlString; return 'PDF'; } }, tpl: { bolXml: b => 'XML ' + b.bolNo } };
+    const call = (ctx, id) => { const o = {}; ctx.sl.onRequest({ request: { parameters: { action: 'bol', truckId: id } }, response: { write: x => { o.text = x; }, writeFile: f => { o.file = f; } } }); return o; };
+    const ctx = setup(opts);
+    ctx.data.db.settings.officeIfs = false;
+    const t = atDock(ctx, 1), d = ctx.data.getLoad(t.id).data;
+    const o = call(ctx, t.id);
+    assert.deepEqual([seen, o.file.file, o.file.isInline], ['XML ' + d.toNum, 'PDF', true]);
+    assert.match(call(ctx, 'nope').text || '', /./);
+    const fl = setup(Object.assign({ deploymentId: 'customdeploy_move_portal_floor' }, opts));
+    assert.equal(call(fl, '1').text, 'Managers only');
+});
+test('carrier: the default is ArcBest', () => {
+    const ctx = scanSetup();
+    assert.equal(ctx.run('truck_planned', {}, false).carrier, 'ArcBest');
 });

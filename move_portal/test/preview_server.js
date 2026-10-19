@@ -30,7 +30,7 @@ const snap = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
 const TRAILERS = ['537224', '416460', '105488', '522051', '211659', '543804', '487491'];
 if (!data.db.settings.v3seeded) {
     Object.assign(data.db.settings, { locFrom: String(snap.locFrom || '35'), locTo: String(snap.locTo || '46'), labelCode: 'qr', writeMode: 'off', officeIfs: false,
-        defaultCarrier: 'Armstrong Group', trailers: TRAILERS.slice(), v3seeded: true });
+        defaultCarrier: 'ArcBest', trailers: TRAILERS.slice(), v3seeded: true });
 }
 data.db.settings.trailers = data.db.settings.trailers || [];
 TRAILERS.forEach(t => { if (data.db.settings.trailers.indexOf(t) < 0) data.db.settings.trailers.push(t); });
