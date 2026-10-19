@@ -670,3 +670,18 @@ test('classifyLoadScan: a pallet loaded on an at-dock truck is locked with reaso
     assert.deepEqual(v.classifyLoadScan(c), { result: 'locked', otherTruckId: '4', otherLabel: 'Trailer 9', reason: 'at_dock' });
     assert.equal(v.classifyLoadScan(ctx(pal(5, VP.LOADED, '3'))).reason, undefined);
 });
+
+test('withWts overlays the portal weight and keeps NetSuite as fallback', () => {
+    const info = { 11: { sku: 'YSN201', weight: 0, wunit: '' }, 12: { sku: 'YSN301', weight: 30, wunit: 'lb' }, 13: { sku: 'X', weight: 0 } };
+    const o = v.withWts(info, { YSN201: [18, 1] });
+    assert.equal(o[11].weight, 18); assert.equal(o[11].wunit, 'lb'); assert.equal(o[11].cyl, true);
+    assert.equal(o[12].weight, 30); assert.equal(o[12].cyl, false);
+    assert.equal(o[13].weight, 0); assert.equal(o[13].cyl, false);
+});
+
+test('overweight', () => {
+    assert.deepEqual(v.overweight(45001, 0, 45000), { max: 45000, over: true, atLeast: false });
+    assert.equal(v.overweight(45000, 0, 45000).over, false);
+    const r = v.overweight(40000, 2, 45000);
+    assert.equal(r.over, false); assert.equal(r.atLeast, true);
+});

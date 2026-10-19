@@ -180,11 +180,32 @@ test('barcodePayload lists code then SKU and pieces per line, tab-separated', ()
     assert.equal(core.barcodePayload('PLT2', [{ sku: 'YSN330', pcs: 24 }, { sku: 'YSN10LB', pcs: 40 }]), 'PLT2\tYSN330\t24\tYSN10LB\t40');
     assert.equal(core.barcodePayload('PLT3', []), 'PLT3');
 });
-test('officeIfs is on only when set true; palletTare defaults to 45', () => {
+test('officeIfs is on only when set true; palletTare defaults to 35', () => {
     assert.equal(core.officeIfs({}), false);
     assert.equal(core.officeIfs({ officeIfs: 'true' }), false);
     assert.equal(core.officeIfs({ officeIfs: true }), true);
-    assert.equal(core.palletTare({}), 45);
+    assert.equal(core.palletTare({}), 35);
     assert.equal(core.palletTare({ palletTare: 50 }), 50);
-    assert.equal(core.palletTare({ palletTare: 0 }), 45);
+    assert.equal(core.palletTare({ palletTare: 0 }), 35);
+});
+
+test('buildWeightImport normalizes cells and reports bad rows', () => {
+    const rows = [['SKU', 'Unit weight (lb)', 'Type'], [' ysn201 ', '18.0', 'cyl'], ['YSN301', 25, ''], ['NOPE', 3, ''], ['YSN301', 26, ''], ['YSN100', '0', ''], ['YSN100', 'x', '']];
+    const r = core.buildWeightImport(rows, { YSN201: '11', YSN301: '12', YSN100: '975' });
+    assert.deepEqual(r.weights, { YSN201: [18, 1], YSN301: [25, 0] });
+    assert.equal(r.count, 2);
+    assert.deepEqual(r.unknownSkus, ['NOPE']);
+    assert.deepEqual(r.errors.map(e => e.row), [5, 6, 7]);
+    assert.match(r.errors[0].msg, /YSN301: duplicate row, the first one is kept/);
+    assert.match(r.errors[1].msg, /unit weight must be a number of pounds above 0/);
+    assert.match(r.errors[2].msg, /unit weight must be a number of pounds above 0/);
+    const b = core.buildWeightImport([['YSN201', 5, 'BOX']], { YSN201: '11' });
+    assert.match(b.errors[0].msg, /type must be CYL or PCS/);
+});
+
+test('tare and max truck defaults', () => {
+    assert.equal(core.palletTare({}), 35);
+    assert.equal(core.palletTare({ palletTare: 27 }), 27);
+    assert.equal(core.maxTruckLb({}), 45000);
+    assert.equal(core.maxTruckLb({ maxTruckLb: 40000 }), 40000);
 });

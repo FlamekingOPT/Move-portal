@@ -21,7 +21,7 @@ define(['N/search', 'N/record', './move_core'], function (search, record, core) 
     const SF = { pallet: 'custrecord_mvsc_pallet', load: 'custrecord_mvsc_load', result: 'custrecord_mvsc_result', data: 'custrecord_mvsc_data' };
     const RF = { status: 'custrecord_mvr_status', requester: 'custrecord_mvr_requester', data: 'custrecord_mvr_data' };
     const DEFAULTS = { locFrom: '', locTo: '', fromName: 'Riverside', toName: 'Tippecanoe', target: '2026-11-15', start: '2026-10-01',
-        skip: [], labelCode: 'both', roster: [], maxPrint: 250, staleDays: 5, toStatus: 'B', activeBatch: '', officeIfs: false, palletTare: 45 };
+        skip: [], labelCode: 'both', roster: [], maxPrint: 250, staleDays: 5, toStatus: 'B', activeBatch: '', officeIfs: false, palletTare: 35, maxTruckLb: 45000 };
     const ITEM_TYPES = ['InvtPart', 'Assembly'];
     let cfgCache = {};
 

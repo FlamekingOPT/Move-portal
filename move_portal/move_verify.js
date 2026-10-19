@@ -40,6 +40,17 @@ define([], function () {
         });
         return out;
     }
+    // Portal unit weights from the Move settings (spec 2026-10-18) win over the NetSuite item weight: { item: info } with weight/wunit/cyl replaced.
+    function withWts(info, wts) {
+        const out = {};
+        Object.keys(info || {}).forEach(k => {
+            const i = info[k], w = (wts || {})[String(i.sku || '').toUpperCase()];
+            out[k] = w ? Object.assign({}, i, { weight: w[0], wunit: 'lb', cyl: !!w[1] }) : Object.assign({}, i, { cyl: false });
+        });
+        return out;
+    }
+    // Truck weight limit check: over = total above max; atLeast = some SKUs have no weight, so the total is a floor.
+    function overweight(total, noWeight, max) { return { max: max, over: total > max, atLeast: noWeight > 0 }; }
     function linesPcs(tl) { const o = {}; Object.keys(tl || {}).forEach(k => { o[k] = tl[k].pcs; }); return o; }
     // info: { item: { weight, wunit } }. Line weights are rounded to the pound; the tare is palletCount × tare.
     function truckWeight(tl, info, tare, palletCount) {
@@ -620,7 +631,7 @@ define([], function () {
     return { _fmt: fmt, TRUCK, VP, PLANNED_IF_STATUS, OPEN_TO_STATUS, sumLines, fillExpected, itemCapacity, fitOnTruck, classifyLoadScan, toneFor,
         _byIfOrder: byIfOrder, _ifQty: ifQty, _oldestFirst: oldestFirst, memoFor, normSeal, sealKey, sealUsed, sealHolder, truckNoForDay, planDeparture, refreshIfs, placeSurplus, reserveToLines, reservationsFromTrucks,
         verifyLoad, liveIfs, diffText, ifSuggestions, correctionOps, scanTag, scanApprovePlan,
-        lbs, truckLines, linesPcs, truckWeight, stockCheck, stockText,
+        lbs, truckLines, linesPcs, truckWeight, withWts, overweight, stockCheck, stockText,
         classifyUnloadScan, planReceipts, labelRows, opKey, opAllowed, normMode, runOps, resolveNew, shadowRows, SQL, buildReads,
         dockOps, inverseOp, applyDelta, docLinesFromAlloc, allocFromDocLines };
 });

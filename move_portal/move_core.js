@@ -140,6 +140,26 @@ define([], function () {
         return out;
     }
 
+    // BOL unit weights (spec 2026-10-18): rows [SKU, Unit weight (lb), Type CYL/PCS, blank = PCS]. A header row is skipped.
+    // Returns weights { SKU: [lb, cyl 1/0] } for the Move Settings record, plus row errors and SKUs NetSuite doesn't know.
+    function buildWeightImport(rows, skuToItem) {
+        const out = { weights: {}, errors: [], unknownSkus: [], count: 0 };
+        const start = rows.length && /sku/i.test(String(rows[0][0] || '')) ? 1 : 0;
+        for (let i = start; i < rows.length; i++) {
+            const r = rows[i], rn = i + 1, sku = String(r[0] || '').trim().toUpperCase();
+            if (!sku) { out.errors.push({ row: rn, msg: 'Missing SKU' }); continue; }
+            if (!skuToItem[sku]) { if (out.unknownSkus.indexOf(sku) === -1) out.unknownSkus.push(sku); continue; }
+            const lb = Number(String(r[1] == null ? '' : r[1]).trim());
+            if (!(lb > 0) || lb > 5000) { out.errors.push({ row: rn, msg: sku + ': unit weight must be a number of pounds above 0' }); continue; }
+            const t = String(r[2] || '').trim().toUpperCase();
+            if (t && t !== 'CYL' && t !== 'PCS') { out.errors.push({ row: rn, msg: sku + ': type must be CYL or PCS' }); continue; }
+            if (out.weights[sku]) { out.errors.push({ row: rn, msg: sku + ': duplicate row, the first one is kept' }); continue; }
+            out.weights[sku] = [Math.round(lb * 1000) / 1000, t === 'CYL' ? 1 : 0];
+            out.count++;
+        }
+        return out;
+    }
+
     // ── calendar (ISO YYYY-MM-DD strings, computed in UTC to avoid DST) ──
     const DAY_MS = 86400000;
     function pad2(n) { return String(n).padStart(2, '0'); }
@@ -233,12 +253,13 @@ define([], function () {
 
     // Settings switches for the scan-built flow (spec 2026-10-14). officeIfs: only an explicit true turns the office-IF screens on.
     function officeIfs(S) { return !!S && S.officeIfs === true; }
-    function palletTare(S) { const n = Number(S && S.palletTare); return n > 0 ? n : 45; }
+    function palletTare(S) { const n = Number(S && S.palletTare); return n > 0 ? n : 35; }
+    function maxTruckLb(S) { const n = Number(S && S.maxTruckLb); return n > 0 ? n : 45000; }
 
     return {
         PALLET, palletCode, parseScan, barcodePayload, totalPieces, summarize, headline,
-        isEdited, validateLines, pcsMap, defaultPcs, parseCsv, buildConfigImport,
+        isEdited, validateLines, pcsMap, defaultPcs, parseCsv, buildConfigImport, buildWeightImport,
         isoAddDays, moveDays, nthMoveDayFrom, parseNsStamp, estimateRemaining, trackerMetrics, suggestPlan,
-        officeIfs, palletTare
+        officeIfs, palletTare, maxTruckLb
     };
 });
