@@ -3894,3 +3894,12 @@ test('weights: item_lookup shows the portal weight and type', () => {
     const o = ctx.run('item_lookup', { q: 'YSN301' }, false).items[0];
     assert.deepEqual([o.lb, o.type], [null, '']);
 });
+
+test('approvals: a scan truck over the weight limit carries weight.over on its ship card', () => {
+    const ctx = scanSetup();
+    ctx.data.db.settings.maxTruckLb = 100;
+    docsScan(ctx, 2);
+    const w = ctx.run('approvals').shipPending[0].weight;
+    assert.equal(w.over, true);
+    assert.equal(w.max, 100);
+});

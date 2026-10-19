@@ -1160,14 +1160,14 @@ h3{font-size:15px;margin:16px 0 8px}
             busy(el, true);
             const r = await api('weights_save', { rows: S.wtRows });
             busy(el, false);
-            if (!r.ok) { $('wt_msg').innerHTML = errBox(r.error); return; }
+            if (!r.ok) { if ($('wt_msg')) $('wt_msg').innerHTML = errBox(r.error); return; }
             S.wtRows = null;
             $('wt_out').innerHTML = flash('green', '✅ ' + num(r.count) + ' weights saved');
             labelWeights($('lb_weights'));
         };
         ACT.wtdownload = async () => {
             const r = await api('weights_list');
-            if (!r.ok) { alert(r.error); return; }
+            if (!r.ok) { if ($('wt_out')) $('wt_out').innerHTML = errBox(r.error); return; }
             const q = v => (/[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v));
             const csv = ['SKU,Unit weight (lb),Type'].concat(r.rows.map(x => [x.sku, x.lb, x.type].map(q).join(','))).join('\n');
             const a = document.createElement('a');
@@ -1373,7 +1373,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 const id = esc(x.truck.id), lab = esc(x.truck.label);
                 return '<div class="card bl"><h4>🚚 ' + lab + '</h4><div class="muted">' + esc([x.seal ? 'Seal ' + x.seal : 'No seal yet', 'sent ' + (x.markedAt || '') + ' by ' + (x.markedBy || '?')].join(' · ')) + '</div>' +
                     '<div class="muted">' + esc(x.lines.map(l => l.sku + ' × ' + num(l.pcs)).join(' · ')) + ' · ' + num(x.pallets) + ' pallets' + (x.lbs != null ? ' · ' + num(x.lbs) + ' lb' : '') + '</div>' +
-                    (x.scan && x.scan.over ? weightBanner(x.scan) : '') +
+                    (x.weight && x.weight.over ? weightBanner(x.weight) : '') +
                     (x.error ? '<div class="muted">⚠ ' + esc(x.error) + '</div>' : '') +
                     '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '" data-scan="1">✅ Approve</button>' +
                     '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Reject</button>' +

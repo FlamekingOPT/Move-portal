@@ -396,3 +396,8 @@ test('ui: weights card, overweight banner and weight in item search exist', () =
     const src = ui._clientMain.toString().replace(/\r/g, '');
     ["api('weights_preview'", "api('weights_save'", "api('weights_list'", "'Unit weights'", "'⚠ Over '", "'at least '", 'Download current weights'].forEach(s => assert.ok(src.indexOf(s) !== -1, 'missing ' + s));
 });
+
+test('ui: ship-confirm card banner reads x.weight', () => {
+    const src = ui._clientMain.toString().replace(/\r/g, '');
+    assert.ok(src.indexOf('x.weight && x.weight.over ? weightBanner(x.weight)') !== -1);
+});

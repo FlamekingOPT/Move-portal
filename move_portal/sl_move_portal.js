@@ -2146,7 +2146,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                     err = 'Could not read this truck: ' + (e.message || e);
                 }
             }
-            return Object.assign({ scan: isScan(x), lines: sr ? sr.rows.map(r => ({ sku: r.sku, pcs: r.pcs })) : [], lbs: sr ? sr.total : null }, err ? { error: err } : {}, { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
+            return Object.assign({ scan: isScan(x), lines: sr ? sr.rows.map(r => ({ sku: r.sku, pcs: r.pcs })) : [], lbs: sr ? sr.total : null }, sr ? { weight: { total: sr.total, max: sr.max, over: sr.over, atLeast: sr.atLeast, noWeight: sr.noWeight } } : {}, err ? { error: err } : {}, { truck: sum(x), trailer: x.data.trailer || q.trailer || '', seal: q.seal, carrier: q.carrier,
                 ifs: verify.liveIfs(x.data.ifs).map(f => ({ ifNum: f.ifNum, lines: f.lines })), pallets: cnt(counts, x.id, VP.LOADED), pcs: pcsOf(counts, x.id, [VP.LOADED]),
                 otherItems: x.data.otherItems || [], markedBy: whoName(q.by), markedAt: q.at || '', ageMin: minutesSince(q.at, c) },
                 x.data.docsDepart ? { redo: { toNum: x.data.toNum || '', ifNum: x.data.ifNum || '' } } : {});   // sent back from the dock: Approve updates the same TO + IF
