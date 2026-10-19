@@ -163,6 +163,11 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         for (let i = 0; i < n; i++) if (to.getSublistValue({ sublistId: 'item', fieldId: 'isclosed', line: i }) !== true) return false;
         return n > 0;
     }
+    // Delete-truck guard: is the IF still in NetSuite? A deleted IF is not found. "no rec" is the test fake's not-found message.
+    function ifExists(ifId) {
+        try { record.load({ type: record.Type.ITEM_FULFILLMENT, id: ifId }); return true; }
+        catch (e) { const m = String((e && (e.name || '')) + ' ' + (e && e.message || '')); if (/RCRD_DSNT_EXIST|no rec/.test(m)) return false; throw e; }
+    }
     // Drop trailer at the dock (spec 2026-10-16 4): one TO line to an exact qty. 0 closes the line (no removeLine on a TO with an IF).
     function setToLine(op) {
         const to = record.load({ type: record.Type.TRANSFER_ORDER, id: op.toId, isDynamic: true });
@@ -267,5 +272,5 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
     function findTo(token) { const f = findByToken(token, 'TrnfrOrd'); return f ? String(f) : null; }
     // A Shipped IF on this TO tagged with the token (a scan-built truck's or late pallet's).
     function findIf(token, toId, statuses) { return findByToken(token, 'ItemShip', ['AND', ['createdfrom', 'anyof', String(toId)], 'AND', ['status', 'anyof', statuses || ['ItemShip:C']]]); }
-    return { apply, tranIds, toClosed, findTo, findIf };
+    return { apply, tranIds, toClosed, ifExists, findTo, findIf };
 });

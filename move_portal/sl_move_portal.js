@@ -135,10 +135,16 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // ── actions ──────────────────────────────────────────────────────────
     // ── v3 trucks (spec 2026-10-01) ──────────────────────────────────────
     const T = verify.TRUCK;
+    const DELETED = 'deleted';     // a manager-deleted truck: kept for history, in no list (not in verify.TRUCK, so allTrucks() never loads it)
     const DEFAULT_TRAILERS = ['537224', '416460', '105488', '522051', '211659', '543804', '487491'];   // the rotation when settings list none
     function writeMode(c) { return verify.normMode(c.S.writeMode); }
     function allTrucks() { return data.loadsByStatus(Object.values(T)).filter(x => x.data && x.data.v3); }
-    function mustTruck(id) { const x = data.getLoad(id); if (!x || !x.data || !x.data.v3) throw userErr('Truck not found'); return x; }
+    // readOnly: truck_get may open a deleted truck; every other action refuses it.
+    function mustTruck(id, readOnly) {
+        const x = data.getLoad(id); if (!x || !x.data || !x.data.v3) throw userErr('Truck not found');
+        if (x.status === DELETED && !readOnly) throw userErr('This truck was deleted');
+        return x;
+    }
     function truckLabel(x) {
         const d = x.data || {};
         if (d.depart) return verify.memoFor(d.depart.truckNo, d.depart.day);
@@ -205,7 +211,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             scanned: fill.alloc[f.ifId] ? fill.alloc[f.ifId][l.item] || 0 : 0, estPallets: dp[l.item] ? Math.ceil(l.qty / dp[l.item]) : null })));
         const extraIds = Object.keys(fill.left).filter(k => fill.left[k] > 0), sk = skuNames(extraIds);
         const vd = d.verify ? pubDiffs(d.verify.diffs || [], ps.filter(p => p.status === VP.LOADED)) : null;
-        return { stage: x.status, verify: d.verify ? Object.assign({}, d.verify, { diffs: vd }) : null,
+        return { stage: x.status, deleted: d.deleted || null, verify: d.verify ? Object.assign({}, d.verify, { diffs: vd }) : null,
             suggestions: x.status === T.NEEDS_FIX && d.verify ? suggestionsFor(x, d.ifs, d.verify.diffs || [], dp, (opt || {}).trucks, (opt || {}).planned) : [],   // only needs_fix reads NetSuite here
             truck: Object.assign(truckSummary(x, countsFromPallets(x.id, ps)), { bol: d.bol || null }, isScan(x) ? { toNum: d.toNum || '', ifNum: d.ifNum || '', docsSync: d.docsSync || null, docLines: d.docLines || null } : {}), lines: lines,
             extras: extraIds.map(k => ({ item: k, sku: sk[k], scanned: fill.left[k] })),
@@ -788,7 +794,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return { view: truckView(mustTruck(x.id), c) };
     });
 
-    act('truck_get', false, (a, c) => ({ view: truckView(mustTruck(a.truckId), c) }));
+    act('truck_get', false, (a, c) => ({ view: truckView(mustTruck(a.truckId, true), c) }));
 
     // Take off: only a pallet loaded on this truck goes back to labeled. No capacity check is needed.
     function takeOff(x, s, p, c) {
@@ -1572,6 +1578,38 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         return verifyOut(verifyTruck(cl.Ld.id, c), c);
     });
 
+    // Delete a truck (manager, reason required): pallets go back to labeled, the record stays for history. Writes nothing to NetSuite:
+    // a truck with docs waits until the office deleted its IF(s) and closed its TO there.
+    act('truck_delete', true, (a, c) => {
+        const reason = String(a.reason || '').trim();
+        if (!reason || reason.length > 300) throw userErr('Enter a reason (300 characters max)');
+        const deleteGuard = cur => {
+            if (cur.status === T.DEPARTING) throw userErr('Docs are being written: Release it first');
+            if ([T.LOADING, T.NEEDS_FIX, T.READY, T.SHIP_PENDING, T.AT_DOCK, T.PICKUP_PENDING].indexOf(cur.status) === -1) throw userErr('Already shipped: it can\'t be deleted');
+            if (pickupHalfDone(cur)) throw userErr('Pickup is half done: finish it or mark it picked up without NetSuite');
+            if (cur.data.claim && !stale(cur)) throw userErr((cur.number || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
+            const d = cur.data;
+            if (isScan(cur) && d.toId) {
+                const names = {}, ids = [];
+                const addIf = (id, num) => { if (id && !names[String(id)]) { names[String(id)] = num || 'IF ' + id; ids.push(String(id)); } };
+                addIf(d.ifId, d.ifNum);
+                Object.keys(d.docLines || {}).forEach(k => addIf(d.docLines[k].ifId, d.docLines[k].ifNum));
+                const there = ids.filter(id => tx.ifExists(id)).map(id => names[id]), toOpen = !tx.toClosed(d.toId), toNum = d.toNum || 'TO ' + d.toId;
+                if (there.length || toOpen) throw userErr(there.length ? 'Delete ' + there.join(', ') + (toOpen ? ' and close ' + toNum : '') + ' in NetSuite first, then press Delete again.'
+                    : 'Close ' + toNum + ' in NetSuite first, then press Delete again.');
+            }
+        };
+        const x0 = mustTruck(a.truckId);
+        deleteGuard(x0);
+        const cl = claimLoad(x0, null, 'delete', deleteGuard);
+        const d = cl.Ld.data, ifNums = [], pallets = data.palletsByLoad(cl.Ld.id, [VP.LOADED]);
+        [d.ifNum].concat(Object.keys(d.docLines || {}).map(k => d.docLines[k].ifNum)).forEach(n => { if (n && ifNums.indexOf(n) === -1) ifNums.push(n); });
+        pallets.forEach(p => data.updatePallet(p, { status: VP.LABELED, load: '' }));
+        data.updateLoad(data.getLoad(cl.Ld.id), { status: DELETED, data: { deleted: { by: c.user, actor: c.actor, at: c.now.stamp, reason: reason, toNum: d.toNum || '', ifNums: ifNums },
+            claim: '', lastStep: stepOf('deleted', c) } });
+        return { deleted: true, pallets: pallets.length };
+    });
+
     act('depart_retry', true, (a, c) => {
         const x = mustTruck(a.truckId);
         if (x.status !== T.DEPARTING || !x.data.depart) throw userErr('Nothing to retry on this truck');
@@ -2220,6 +2258,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // ── dashboard (spec 2026-10-06 pm §3): trucks, approvals waiting, Active loads ──
     const STAGE_ORDER = ['Receipt pending', 'Waiting for manager', 'Waiting for ship confirm', 'Waiting for docs', 'At dock', 'Ready for docs', 'Ready to ship', 'Needs IF fix', 'Loading', 'In transit', 'Unloading', 'Received'];
     function stageOf(x) {
+        if (x.status === DELETED) return 'Deleted';
         if (x.status === T.PICKUP_PENDING) return 'Waiting for ship confirm';
         if (x.status === T.AT_DOCK) return 'At dock';
         if (isScan(x) && (x.status === T.SHIP_PENDING || x.status === T.DEPARTING)) return 'Waiting for docs';
@@ -2372,6 +2411,11 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
                 irs: dep ? irsOf(x).map(r => r.irNum + (r.pcs != null ? ' (' + verify._fmt(r.pcs) + ')' : '')) : [],
                 corrections: (d.corrections || []).map(corrText) };
         });
+        // Deleted trucks are in no other list: read them here for the history only.
+        data.loadsByStatus([DELETED]).filter(x => x.data && x.data.v3).forEach(x => history.push(Object.assign({ truckId: x.id, day: dayOfStamp((x.data.deleted || {}).at || x.data.startedAt), truck: truckLabel(x), truckNo: null, trailer: x.data.trailer || '',
+            seal: '', ifs: [], pallets: 0, pcs: 0, status: x.status, stage: 'Deleted', startedBy: whoName(x.data.startedBy), startedAt: x.data.startedAt || '', markedBy: '', markedAt: '', confirmedBy: '', confirmedAt: '',
+            receivedAt: '', irs: [], corrections: [], deleted: x.data.deleted || null })));
+        history.sort((p, q) => Number(q.truckId) - Number(p.truckId));
         return { rows: rows, days: Object.values(days).sort((p, q) => (p.day < q.day ? 1 : -1)), history: history, pulledAt: ns.pulledAt(), writeMode: writeMode(c) };
     });
 

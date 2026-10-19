@@ -3972,3 +3972,86 @@ test('carrier: the default is ArcBest', () => {
     const ctx = scanSetup();
     assert.equal(ctx.run('truck_planned', {}, false).carrier, 'ArcBest');
 });
+
+// ── delete a truck (manager; pallets back, record kept, NetSuite cleanup guard) ──
+test('delete: a loading truck: pallets back to labeled, hidden from lists, kept in history', () => {
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 2), trailer = ctx.data.getLoad(t.id).data.trailer;
+    const r = ctx.run('truck_delete', { truckId: t.id, reason: '  wrong trailer  ' });
+    assert.deepEqual([r.deleted, r.pallets], [true, 2]);
+    t.ps.forEach(p => { const q = ctx.data.getPallet(p.id); assert.deepEqual([q.status, q.loadId], ['labeled', '']); });
+    assert.equal(ctx.run('truck_planned', {}, false).open.some(x => String(x.id) === String(t.id)), false);
+    assert.doesNotThrow(() => ctx.run('truck_start', { trailer: trailer }, false));            // the trailer is free again
+    assert.equal(ctx.run('dashboard').rows.some(x => x.truckId === t.id), false);
+    const h = ctx.run('report').history.find(x => x.truckId === t.id);
+    assert.deepEqual([h.stage, h.status, h.deleted.reason, h.deleted.by], ['Deleted', 'deleted', 'wrong trailer', ctx.data.getLoad(t.id).data.deleted.by]);
+    assert.equal(ctx.run('truck_get', { truckId: t.id }, false).view.deleted.reason, 'wrong trailer');
+});
+
+test('delete: reason required and managers only', () => {
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 1);
+    assert.throws(() => ctx.run('truck_delete', { truckId: t.id, reason: '  ' }), /Enter a reason/);
+    assert.throws(() => ctx.run('truck_delete', { truckId: t.id, reason: 'x'.repeat(301) }), /Enter a reason/);
+    assert.throws(() => ctx.run('truck_delete', { truckId: t.id, reason: 'x' }, false), /Managers only/);
+    assert.equal(ctx.data.getLoad(t.id).status, 'loading');
+});
+
+test('delete: refused while docs are writing and after shipping', () => {
+    const ctx = scanSetup();
+    const a = scanTruck(ctx, 1);
+    ctx.data.updateLoad(ctx.data.getLoad(a.id), { status: 'departing', data: { depart: { seal: 'Z' }, error: 'x' } });
+    assert.throws(() => ctx.run('truck_delete', { truckId: a.id, reason: 'r' }), /Release it first/);
+    const ctx2 = scanSetup();
+    const b = atDock(ctx2, 1);
+    pickUp(ctx2, { truckId: b.id, seal: '5249331' });
+    assert.equal(ctx2.data.getLoad(b.id).status, 'departed');
+    assert.throws(() => ctx2.run('truck_delete', { truckId: b.id, reason: 'r' }), /Already shipped/);
+});
+
+test('delete: a half-done pickup and a live claim are refused', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 1);
+    ctx.data.updateLoad(ctx.data.getLoad(t.id), { data: { writes: Object.assign({}, ctx.data.getLoad(t.id).data.writes, { ['if_stamp:' + ctx.data.getLoad(t.id).data.ifId]: '1' }) } });
+    assert.throws(() => ctx.run('truck_delete', { truckId: t.id, reason: 'r' }), /Pickup is half done/);
+    const ctx2 = scanSetup();
+    const u = scanTruck(ctx2, 1);
+    ctx2.data.updateLoad(ctx2.data.getLoad(u.id), { data: { claim: 'live', workingAt: Date.now() } });
+    assert.throws(() => ctx2.run('truck_delete', { truckId: u.id, reason: 'r' }), /already being processed/);
+});
+
+test('delete: at the dock it waits for the office to delete the IF and close the TO', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2), d = ctx.data.getLoad(t.id).data;
+    assert.throws(() => ctx.run('truck_delete', { truckId: t.id, reason: 'r' }), /Delete IF.* and close TO.* in NetSuite first/);
+    ctx.tx._t.deletedIfs[String(d.ifId)] = true;
+    assert.throws(() => ctx.run('truck_delete', { truckId: t.id, reason: 'r' }), /^(?!.*Delete IF).*Close TO.* in NetSuite first/);
+    assert.equal(ctx.data.getLoad(t.id).status, 'at_dock');
+    assert.equal(ctx.data.getLoad(t.id).data.claim || '', '');
+    ctx.tx._t.closed[String(d.toId)] = true;
+    const r = ctx.run('truck_delete', { truckId: t.id, reason: 'r' });
+    assert.equal(r.pallets, 2);
+    assert.equal(ctx.data.getLoad(t.id).data.deleted.toNum, d.toNum);
+    assert.deepEqual(ctx.tx._t.ops, []);
+});
+
+test('delete: a plan-only at-dock truck (writes off, no TO) deletes at once', () => {
+    const ctx = scanSetup();
+    ctx.data.db.settings.writeMode = 'off';
+    const t = scanTruck(ctx, 1);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    ctx.run('ship_confirm', { truckId: t.id });
+    assert.equal(ctx.data.getLoad(t.id).status, 'at_dock');
+    assert.equal(ctx.data.getLoad(t.id).data.toId || '', '');
+    assert.equal(ctx.run('truck_delete', { truckId: t.id, reason: 'r' }).deleted, true);
+});
+
+test('delete: the floor\'s next scan on a deleted truck is refused', () => {
+    const ctx = scanSetup();
+    const t = scanTruck(ctx, 2);
+    ctx.run('truck_delete', { truckId: t.id, reason: 'r' });
+    assert.throws(() => ctx.run('truck_scan', { truckId: t.id, raw: t.ps[0].code }, false), /This truck was deleted/);
+    assert.throws(() => ctx.run('truck_remove', { truckId: t.id, palletId: t.ps[0].id }, false), /This truck was deleted/);
+    assert.throws(() => ctx.run('ship_mark', { truckId: t.id }, false), /This truck was deleted/);
+});

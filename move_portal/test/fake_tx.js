@@ -4,7 +4,7 @@ const { loadAmd } = require('./amd');
 const verify = loadAmd('move_verify.js', {});
 
 function makeFakeTx() {
-    const t = { seq: 900, ops: [], failOn: null, closed: {}, tags: {}, ifTags: {} };
+    const t = { seq: 900, ops: [], failOn: null, closed: {}, deletedIfs: {}, tags: {}, ifTags: {} };
     return {
         _t: t,
         apply: op => {
@@ -17,6 +17,7 @@ function makeFakeTx() {
         },
         findTo: tok => t.tags[tok] || null,
         findIf: (tok, toId, statuses) => t.ifTags[tok + '|' + toId] || null,
+        ifExists: id => !t.deletedIfs[String(id)],
         toClosed: id => !!t.closed[String(id)],
         tranIds: (ids, kind) => { const o = {}; (ids || []).forEach(id => { o[String(id)] = (kind === 'to' ? 'TO' : kind === 'if' ? 'IF' : 'IR') + id; }); return o; }
     };
