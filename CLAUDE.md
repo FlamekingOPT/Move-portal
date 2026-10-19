@@ -44,7 +44,7 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
   3. Walk one truck plan-only.
   4. Release the manager deployment so the other managers can open it.
   5. Set writeMode `on` for the first real truck while watching. (No seal/trailer field check is needed; prod already has `custbody7` / `custbody_rsm_container_no`.)
-- **Next version: ✅ BUILT 2026-10-19, NOT UPLOADED** (Jack: "build these updates in", subagent-driven). Code bc3fd56..090dad0, tests **467/467**.
+- **Next version: ✅ IN PROD 2026-10-19** (Jack: "it works, push it to production"). See the prod upload line at the end of this block. (Jack: "build these updates in", subagent-driven). Code bc3fd56..090dad0, tests **467/467**.
   - Plans: `docs/superpowers/plans/2026-10-19-move-portal-next-version.md` (rulings) and `…-next-version-impl.md` (11 tasks).
   - SDD ledger with every ruling and deferred minor: `docs/sdd-ledger/next-version/progress.md`.
   - **What's in it:**
@@ -82,6 +82,11 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
     3. Prod Move Settings: `palletTare` 35, `maxTruckLb` 45000, `bolName` "YSN IMPORTS", **`defaultCarrier` "ArcBest"**. Do the carrier change BEFORE any truck is sent for docs: the BOL prints `depart.carrier`, stamped at Send for docs.
     4. Upload the approved workbook.
   - Prod items have no weight today, so until the upload, truck weights show only the tare.
+  - **✅ PROD UPLOAD 2026-10-19 ~2 pm** (code `d43d3a1`, tests 469/469), LF copies over the same ids: core 3050378, verify 3050380, data 3050483, tx 3050484, label_template 3050485, ui 3050486, sl 3050487 (all sizes match). Script 1166 recompiled.
+    - Prod Move Settings: `palletTare` 45→**35**, `maxTruckLb` **45000**, `bolName` **"YSN IMPORTS"**, `defaultCarrier` "Armstrong Group"→**"ArcBest"**. writeMode is still **off**; everything else is unchanged.
+    - Before the upload, prod had one truck, Trailer 537224 (load 1), in `loading`, and none departing.
+    - Smoke check (Administrator): dashboard / report (off) / weights_list (0) / trailers_list (7) answer. truck_get on load 1 shows max 45000. The floor reads ArcBest, and bol_data on the floor says "Managers only". No console errors.
+    - ⏳ Still open: upload the weights workbook once Jack approves it (until then truck weights show only the tare and the BOL prints Type "?" / a blank weight); then the off-mode walk and writeMode `on`.
 
 ## 🧭 PAUSED 2026-10-18 — WHERE TO PICK UP
 1. **Mon 2026-10-19 sandbox test** of the manager-only flow (section below).
