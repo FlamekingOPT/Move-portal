@@ -407,7 +407,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     // Departure leaves only from Ready, with no claim and no depart yet.
     function notReady(x) {
         if (x.status === T.LOADING || x.status === T.NEEDS_FIX) return userErr('Verify the load first');
-        if (x.status === T.SHIP_PENDING) return userErr('This truck is already marked shipped');
+        if (x.status === T.SHIP_PENDING) return userErr('This truck is already marked packed');
         return userErr('This truck is already ' + (x.status === T.READY ? T.DEPARTING : x.status));
     }
     function mustReady(x) { if (x.status !== T.READY || x.data.claim || x.data.depart) throw notReady(x); }
@@ -2303,7 +2303,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function dayOfStamp(stamp) { const p = core.parseNsStamp(stamp); return p ? p.dayIso : ''; }
     function firstText(q, ap, c) {
-        if (q === 'ship') { const s = ap.shipPending[0]; return s.truck.label + ' · marked shipped ' + (s.ageMin == null ? '' : s.ageMin + ' min ago'); }
+        if (q === 'ship') { const s = ap.shipPending[0]; return s.truck.label + ' · marked packed ' + (s.ageMin == null ? '' : s.ageMin + ' min ago'); }
         if (q === 'fix') return ap.fixes[0].text;
         if (q === 'trucks') return ap.trucks[0].truck.label;
         if (q === 'flagged') { const f = ap.flagged[0]; return f.code + ' on ' + f.truckLabel + ' · never loaded'; }

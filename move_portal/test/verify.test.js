@@ -184,6 +184,17 @@ test('shadowRows compares plan vs NetSuite and leaves not-yet-done checks as nul
     assert.equal(pick('IF9100', 'Receipt qty YSN100').ok, null);               // portal hasn't approved that receipt yet
 });
 
+test('shadowRows: a truck at the dock checks its IF is Packed (B), not Shipped', () => {
+    const truck = { status: 'at_dock', data: { depart: { truckNo: 1, day: '2026-10-21', seal: '', trailer: '53279' },
+        alloc: [{ ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', lines: { 975: 24 } }] } };
+    const run = st => v.shadowRows({ trucks: [truck], sku: { 975: 'YSN100' }, ifsByTo: {}, receipts: {},
+        ifInfo: { 9001: { ifNum: 'IF9001', status: st, toId: '500', lines: [{ item: '975', qty: 24 }] } } });
+    let rows = run('B');
+    assert.deepEqual(rows.map(r => [r.check, r.portal, r.netsuite, r.ok]), [['IF qty YSN100', '24', '24', true], ['Packed', 'yes', 'yes', true]]);
+    rows = run('A');
+    assert.deepEqual(rows.map(r => [r.check, r.netsuite, r.ok]), [['IF qty YSN100', '24', null], ['Packed', 'A', null]]);
+});
+
 test('shadowRows compares seals by digits, not by typed format', () => {
     const mk = seal => ({ id: '1', data: { depart: { truckNo: 3, day: '2026-10-05', trailer: '537224', seal: '5249330' },
         alloc: [{ ifId: '9001', ifNum: 'IF9001', toId: '500', toNum: 'TO500', lines: { 975: 504 }, addOn: false },

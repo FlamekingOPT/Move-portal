@@ -134,13 +134,13 @@ h3{font-size:15px;margin:16px 0 8px}
         }
         function errBox(msg) { return flash('red', '❌ ' + esc(msg)); }
 
-        const PILL = { loading: ['Loading', 'p-blue'], needs_fix: ['⚠ Needs IF fix', 'p-amber'], ready: ['✅ Ready to ship', 'p-green'], ship_pending: ['Shipped by floor', 'p-amber'], departing: ['Departing…', 'p-amber'],
+        const PILL = { loading: ['Loading', 'p-blue'], needs_fix: ['⚠ Needs IF fix', 'p-amber'], ready: ['✅ Ready to ship', 'p-green'], ship_pending: ['Packed by floor', 'p-amber'], departing: ['Departing…', 'p-amber'],
             departed: ['In transit', 'p-blue'], receiving: ['Unloading', 'p-blue'], approving: ['Receiving…', 'p-amber'], received: ['Received', 'p-green'], error: ['Needs attention', 'p-red'],
             at_dock: ['📄 Docs ready · at dock', 'p-green'], pickup_pending: ['🚛 Picked up · waiting for manager', 'p-amber'], deleted: ['Deleted', 'p-gray'] };
         // Scan-built (drop trailer) trucks: the floor sends a verified load for docs; the manager writes them; the carrier picks it up.
         const SCAN_PILL = { ready: ['✅ Ready for docs', 'p-green'], ship_pending: ['Waiting for docs', 'p-amber'], departing: ['Writing docs…', 'p-amber'] };
         // Dashboard "Last step" labels for the dock steps; other kinds show with "_" as spaces.
-        const STEP_LABEL = { docs_written: 'Docs written', picked_up: 'Picked up', dock_edit: 'Changed at the dock', docs_resynced: 'Docs re-synced', dock_seal: 'Seal added',
+        const STEP_LABEL = { marked_shipped: 'marked packed', docs_written: 'Docs written', picked_up: 'Picked up', dock_edit: 'Changed at the dock', docs_resynced: 'Docs re-synced', dock_seal: 'Seal added',
             picked_up_forced: 'Picked up (no NetSuite)' };
         function stepText(k) { return STEP_LABEL[k] || String(k || '').replace(/_/g, ' '); }
         // What Correct the IF does under each write mode (confirm text and card notes).
@@ -634,7 +634,7 @@ h3{font-size:15px;margin:16px 0 8px}
             if (v.scan && st === 'pickup_pending') return err + flash('amber', '🚛 Picked up: waiting for a manager to confirm it shipped', (t.pickupReq || {}).seal ? esc('Seal ' + t.pickupReq.seal) : '');
             if (v.scan && st === 'ship_pending') return flash('amber', '📄 Waiting for docs: a manager approves them in Approvals', (t.shipReq || {}).seal ? esc('Seal ' + t.shipReq.seal) : 'No seal yet');
             if (v.scan && st === 'departing') return flash('amber', 'Writing docs…', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals');
-            if (st === 'ship_pending') return flash('amber', '🚚 Marked shipped: waiting for a manager to confirm', esc('Seal ' + ((t.shipReq || {}).seal || '')));
+            if (st === 'ship_pending') return flash('amber', '🚚 Marked packed: waiting for a manager to confirm', esc('Seal ' + ((t.shipReq || {}).seal || '')));
             if (st === 'departing') return flash('amber', 'Departing… a NetSuite write is pending', t.error ? esc(t.error) : '', 'A manager can press Retry in Approvals');
             if (t.depart && t.status === 'departed') return err + flash('green', '🚚 ' + esc(t.label) + ' left', esc('Seal ' + t.depart.seal),
                 v.scan ? (t.toNum ? esc(t.toNum + ' + ' + t.ifNum) : '') :
@@ -786,7 +786,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 case 'dup': return flash('amber', '🟡 Already on this truck', line, 'No change.');
                 case 'other_truck': return flash('amber', '🟡 On ' + esc(r.otherLabel), line, '', '<button data-act="tmovehere" data-id="' + esc(p.id) + '">Move here</button><button data-act="clearres">Leave it</button>');
                 case 'locked': return r.reason === 'at_dock' ? flash('red', '❌ On ' + esc(r.otherLabel) + ', at the dock waiting for pickup', line, 'That trailer has its paperwork. Leave this pallet on it.')
-                    : flash('red', '❌ On ' + esc(r.otherLabel) + (r.reason === 'ship_pending' ? ', marked shipped' : ', departing'), line, 'Check with the supervisor.');
+                    : flash('red', '❌ On ' + esc(r.otherLabel) + (r.reason === 'ship_pending' ? ', marked packed' : ', departing'), line, 'Check with the supervisor.');
                 case 'shipped': return flash('red', '❌ Already left', line, 'This pallet is on a truck that departed.');
                 case 'void': return flash('red', '❌ Label cancelled', line, 'Request a new label.');
                 case 'flagged_tippecanoe': return flash('red', '❌ Flagged at Tippecanoe', line, 'A manager is deciding this pallet in Approvals. Set it aside.');
@@ -834,7 +834,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 '<h3>Waiting for manager</h3>' + (wait.map(t => {
                     const q = t.shipReq || {};
                     return '<div class="card"><h4>' + esc(t.label) + ' ' + statusPill(t.status) + '</h4><div class="muted">' + esc(['Seal ' + (q.seal || ''), q.carrier, t.pallets + ' pallets'].filter(Boolean).join(' · ')) +
-                        '</div><div class="muted">Marked shipped by ' + esc(whoName(q.by) || '?') + ' · ' + esc(q.at || '') + '</div>' + viewBtn(t.id) + '</div>';
+                        '</div><div class="muted">Marked packed by ' + esc(whoName(q.by) || '?') + ' · ' + esc(q.at || '') + '</div>' + viewBtn(t.id) + '</div>';
                 }).join('') || '<div class="muted">None</div>')) +
                 (!showScn ? '' : '<h3>Ready for docs</h3>' + (sReady.map(t => shipCard(t, S.shipViews[String(t.id)], carrier)).join('') ||
                     '<div class="muted">No trailer is ready. Finish loading on Load out first.</div>') +
@@ -911,7 +911,7 @@ h3{font-size:15px;margin:16px 0 8px}
             tone('ok');
             if (seal) seal.removeAttribute('data-keep');
             if (scan) { shipList(flash('green', '📄 ' + esc(r.view.truck.label) + ' sent for docs', '', 'A manager approves the docs in Approvals. The seal goes in at the dock.')); return; }
-            shipList(flash('green', '🚚 ' + esc(r.view.truck.label) + ' marked shipped', esc('Seal ' + sv), 'A manager confirms it in Approvals.'));
+            shipList(flash('green', '🚚 ' + esc(r.view.truck.label) + ' marked packed', esc('Seal ' + sv), 'A manager confirms it in Approvals.'));
         };
         // Drop trailer, at the dock: the docs are written (TO + Packed IF) and the load is locked. The floor saves the seal (portal only) and taps
         // Picked up; a manager confirms it shipped. A manager can send the trailer back to Load out to change the load.
@@ -1469,11 +1469,11 @@ h3{font-size:15px;margin:16px 0 8px}
             }
             const t = x.truck, id = esc(t.id), lab = esc(t.label), late = x.ageMin != null && x.ageMin >= LATE_MIN;
             const oth = (x.otherItems || []).map(o => esc(o.desc) + ' × ' + num(o.qty)).join(', ');
-            return '<div class="card ' + (late ? 'amberc' : 'bl') + '"><h4>🚚 ' + lab + ' · marked shipped' + (late ? ' <span class="pill p-amber">waiting ' + x.ageMin + ' min</span>' : '') + '</h4>' +
+            return '<div class="card ' + (late ? 'amberc' : 'bl') + '"><h4>🚚 ' + lab + ' · marked packed' + (late ? ' <span class="pill p-amber">waiting ' + x.ageMin + ' min</span>' : '') + '</h4>' +
                 '<div class="muted">' + esc(['Trailer ' + x.trailer, 'Seal ' + x.seal, x.carrier].filter(Boolean).join(' · ')) + '</div>' +
                 '<div class="diffs">' + (x.ifs || []).map(f => '<div><b>' + esc(f.ifNum) + '</b> · ' + esc((f.lines || []).map(l => l.sku + ' × ' + num(l.qty)).join(', ')) + '</div>').join('') + '</div>' +
                 '<div class="muted">' + num(x.pallets) + ' pallets · ' + num(x.pcs) + ' pcs' + (oth ? ' · Other: ' + oth : '') + '</div>' +
-                '<div class="muted">Marked shipped by ' + esc(x.markedBy || '?') + ' at ' + esc(x.markedAt) + (x.ageMin != null ? ' · ' + x.ageMin + ' min ago' : '') + '</div>' +
+                '<div class="muted">Marked packed by ' + esc(x.markedBy || '?') + ' at ' + esc(x.markedAt) + (x.ageMin != null ? ' · ' + x.ageMin + ' min ago' : '') + '</div>' +
                 '<div class="row2"><button class="dbtn go" data-act="apconfirm" data-id="' + id + '" data-label="' + lab + '">✅ Confirm shipped</button>' +
                 '<button class="dbtn gh" data-act="apsendback" data-id="' + id + '" data-label="' + lab + '">↩ Send back</button>' +
                 '<button class="dbtn gh" data-act="opentruck" data-id="' + id + '">📋 View load</button></div></div>';
@@ -1799,7 +1799,7 @@ h3{font-size:15px;margin:16px 0 8px}
 
         // ── Manager: shadow report (v3) ──────────────────────────────────
         function histTable(rows) {
-            const cols = ['Day', 'Truck', 'Trailer · seal', 'IFs', 'Pallets · pcs', 'Status', 'Started', 'Shipped', 'Confirmed', 'Received', 'Corrections'];
+            const cols = ['Day', 'Truck', 'Trailer · seal', 'IFs', 'Pallets · pcs', 'Status', 'Started', 'Packed', 'Confirmed', 'Received', 'Corrections'];
             return '<div style="overflow-x:auto"><table class="tbl"><tr>' + cols.map(c => '<th>' + c + '</th>').join('') + '</tr>' + (rows.map(x => '<tr data-act="dashrow" data-id="' + esc(x.truckId) + '" style="cursor:pointer">' +
                 '<td>' + esc(x.day) + '</td><td><b>' + esc(x.truck) + '</b></td><td>' + esc([x.trailer, x.seal].filter(Boolean).join(' · ')) + '</td><td>' + esc((x.ifs || []).join(', ')) + '</td><td>' + num(x.pallets) + ' · ' + num(x.pcs) + '</td>' +
                 '<td>' + statusPill(x.status) + '</td><td class="muted">' + esc([x.startedBy, x.startedAt].filter(Boolean).join(' ')) + '</td><td class="muted">' + esc([x.markedBy, x.markedAt].filter(Boolean).join(' ')) + '</td>' +

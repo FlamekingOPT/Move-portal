@@ -1804,7 +1804,7 @@ test('ship_pending: holds its seal, is listed as open, refuses edits; a re-mark 
     assert.ok(ctx.run('truck_planned', {}, false).open.some(x => x.id === a.id && x.status === 'ship_pending'));
     assert.throws(() => ctx.run('truck_other_add', { truckId: a.id, desc: 'Desk', qty: 1 }, false), /waiting for a manager/);
     assert.throws(() => ctx.run('truck_correct', { truckId: a.id }), /waiting for a manager/);
-    assert.throws(() => ctx.run('ship_mark', { truckId: a.id, seal: '5250011' }, false), /already marked shipped/);
+    assert.throws(() => ctx.run('ship_mark', { truckId: a.id, seal: '5250011' }, false), /already marked packed/);
     assert.deepEqual(ctx.run('trucks_recheck', {}, false).ready.map(x => x.id), [b.id]);
     const ap = ctx.run('approvals').shipPending[0];
     assert.deepEqual([ap.trailer, ap.pallets, ap.pcs, ap.markedBy, ap.ifs.map(f => f.ifNum)], [ctx.data.getLoad(a.id).data.trailer, 42, 504, 'Miguel', ['IF9001']]);

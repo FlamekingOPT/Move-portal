@@ -414,11 +414,14 @@ define([], function () {
                 const info = realId ? (o.ifInfo || {})[realId] : null;
                 const ifNum = info ? info.ifNum : a.ifNum;
                 if (!info) return;
+                // At the dock the IF is Packed (B) until pickup stamps it Shipped (C).
+                const atDock = t.status === TRUCK.AT_DOCK || t.status === TRUCK.PICKUP_PENDING;
+                const done = info.status === 'C' || (atDock && info.status === 'B');
                 Object.keys(a.lines).forEach(k => {
                     const ns = (info.lines || []).filter(l => String(l.item) === k).reduce((s, l) => s + Number(l.qty || 0), 0);
-                    row(ifNum, 'IF qty ' + (sku[k] || k), a.lines[k], ns, info.status === 'C' ? Number(ns) === Number(a.lines[k]) : null);
+                    row(ifNum, 'IF qty ' + (sku[k] || k), a.lines[k], ns, done ? Number(ns) === Number(a.lines[k]) : null);
                 });
-                row(ifNum, 'Shipped', 'yes', info.status === 'C' ? 'yes' : info.status, info.status === 'C' ? true : null);
+                row(ifNum, atDock ? 'Packed' : 'Shipped', 'yes', done ? 'yes' : info.status, done ? true : null);
                 const rs = (o.receipts || {})[realId] || [];
                 if (!rs.length) return;
                 row(ifNum, 'Trailer', dep.trailer, rs.map(r => r.trailer).join(', '), rs.every(r => normSeal(r.trailer) === normSeal(dep.trailer)));
