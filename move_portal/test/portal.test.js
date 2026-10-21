@@ -3187,6 +3187,16 @@ function atDock(ctx, n) {
 }
 
 // ── drop trailer: seal at the dock + Picked up (spec 2026-10-16 §3) ──────
+test('dashboard: a truck at the dock counts as loaded, not shipped, until it is picked up', () => {
+    const ctx = scanSetup();
+    const t = atDock(ctx, 2);
+    let r = ctx.run('dashboard');
+    assert.deepEqual([r.tiles.today, r.tiles.total, r.days[r.days.length - 1].n], [0, 0, 0]);
+    pickUp(ctx, { truckId: t.id, seal: '5249331' });
+    r = ctx.run('dashboard');
+    assert.deepEqual([r.tiles.today, r.tiles.total, r.days[r.days.length - 1].n], [1, 1, 1]);
+});
+
 test('picked up: refused without a seal; with one, each IF is stamped Shipped and the truck leaves', () => {
     const ctx = scanSetup();
     const t = atDock(ctx, 2);

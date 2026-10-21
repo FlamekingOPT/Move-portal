@@ -2317,9 +2317,10 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             ['flagged', 'Flagged pallets', ap.flagged], ['retry', 'Retry / Release', ap.retries], ['receipts', 'Receipts', ap.receipts]];
         const waiting = queues.filter(q => q[2].length).map(q => ({ queue: q[0], title: q[1], count: q[2].length, first: firstText(q[0], ap, c),
             late: q[0] === 'ship' && ap.shipPending.some(s => s.ageMin != null && s.ageMin >= 30) }));
-        // Trucks per move day: a truck counts on the day the manager confirmed it shipped (depart.day).
+        // Trucks per move day: a truck counts once it has left the dock, on its pickup day (shippedDay), else the departure day.
+        // A truck at the dock (docs written, not picked up) is loaded, not shipped.
         const byDay = {};
-        trucks.filter(x => x.data.depart).forEach(x => { byDay[x.data.depart.day] = (byDay[x.data.depart.day] || 0) + 1; });
+        trucks.filter(x => x.data.depart && !isDock(x)).forEach(x => { const day = x.data.depart.shippedDay || x.data.depart.day; byDay[day] = (byDay[day] || 0) + 1; });
         const todayDone = (byDay[c.now.dayIso] || 0) > 0 && c.now.hour >= 15;
         const m = core.trackerMetrics({ todayIso: c.now.dayIso, targetIso: c.S.target, startIso: c.S.start, skipDates: c.S.skip || [], remaining: 0, movedByDay: byDay, todayDone: todayDone });
         const end = c.now.dayIso < c.S.target ? c.now.dayIso : c.S.target;
