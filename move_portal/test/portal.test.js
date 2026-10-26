@@ -191,6 +191,10 @@ test('dashboard: trucks per day, waiting queues (non-zero only), one Active load
     assert.deepEqual([rows[1].pallets, rows[1].pcs, rows[1].received, rows[1].lastKind, rows[1].lastBy], [2, 24, null, 'marked_shipped', 'Miguel']);
     assert.deepEqual([r.exc.neverLoaded, r.exc.missing], [1, 0]);
     assert.equal(r.m, undefined, 'pallet tracker maths gone');
+    const ping = ctx.run('approvals_ping');                                           // the manager page alert poll: one item per decision
+    assert.deepEqual(ping.items.map(i => i.key.split(':')[0]), ['ship', 'flag']);
+    assert.equal(ping.items[0].text.indexOf('Ship confirmation · Trailer'), 0);
+    assert.throws(() => ctx.run('approvals_ping', {}, false), /Managers only/);
     ctx.data.db.settings.trucksPerDay = 6;
     assert.equal(ctx.run('dashboard').tiles.plan, 6);
     assert.throws(() => ctx.run('dashboard', {}, false), /Managers only/);
@@ -3786,7 +3790,11 @@ test('2026-10-17: floor Picked up writes nothing and waits for the manager; Conf
     const ap = ctx.run('approvals');
     assert.deepEqual(ap.pickups.map(q => [String(q.truck.id), q.seal, q.pallets]), [[String(t.id), 'Q1', 2]]);
     assert.equal(ctx.run('dashboard').rows.find(q => String(q.truckId) === String(t.id)).stage, 'Waiting for ship confirm');
+    const dw = ctx.run('dashboard').waiting.find(w => w.queue === 'pick');
+    assert.deepEqual([dw.count, dw.first.indexOf('picked up') > 0], [1, true]);
+    assert.deepEqual(ctx.run('approvals_ping').items.map(i => i.key.split(':').slice(0, 2).join(':')), ['pick:' + t.id]);
     ctx.run('pickup_confirm', { truckId: t.id });
+    assert.equal(ctx.run('approvals_ping').count, 0);
     x = ctx.data.getLoad(t.id);
     assert.deepEqual(ctx.tx._t.ops.map(o => [o.op, o.seal]), [['if_stamp', 'Q1']]);
     assert.deepEqual([x.status, x.data.depart.pickedUpBy, x.data.pickupReq], ['departed', 'Miguel', null]);

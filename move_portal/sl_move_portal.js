@@ -2304,6 +2304,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     function dayOfStamp(stamp) { const p = core.parseNsStamp(stamp); return p ? p.dayIso : ''; }
     function firstText(q, ap, c) {
         if (q === 'ship') { const s = ap.shipPending[0]; return s.truck.label + ' · marked packed ' + (s.ageMin == null ? '' : s.ageMin + ' min ago'); }
+        if (q === 'pick') { const p = ap.pickups[0]; return p.truck.label + ' · picked up ' + (p.ageMin == null ? '' : p.ageMin + ' min ago'); }
         if (q === 'fix') return ap.fixes[0].text;
         if (q === 'trucks') return ap.trucks[0].truck.label;
         if (q === 'flagged') { const f = ap.flagged[0]; return f.code + ' on ' + f.truckLabel + ' · never loaded'; }
@@ -2313,7 +2314,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     act('dashboard', true, (a, c) => {
         const ap = approvalsView(c), trucks = allTrucks();
-        const queues = [['ship', 'Ship confirmations', ap.shipPending], ['fix', 'Correct the IF', ap.fixes], ['trucks', 'Trucks waiting for an IF fix', ap.trucks],
+        const queues = [['ship', 'Ship confirmations', ap.shipPending], ['pick', 'Picked up · confirm shipped', ap.pickups], ['fix', 'Correct the IF', ap.fixes], ['trucks', 'Trucks waiting for an IF fix', ap.trucks],
             ['flagged', 'Flagged pallets', ap.flagged], ['retry', 'Retry / Release', ap.retries], ['receipts', 'Receipts', ap.receipts]];
         const waiting = queues.filter(q => q[2].length).map(q => ({ queue: q[0], title: q[1], count: q[2].length, first: firstText(q[0], ap, c),
             late: q[0] === 'ship' && ap.shipPending.some(s => s.ageMin != null && s.ageMin >= 30) }));
@@ -2383,6 +2384,23 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             tiles: { today: m.movedToday, plan: Number(c.S.trucksPerDay) > 0 ? Number(c.S.trucksPerDay) : 8, avg7: m.avg7, avgAll: m.avgAll, total: m.moved,
                 received: trucks.filter(x => x.status === T.RECEIVED).length, inTransitTrucks: transit.length,
                 inTransitPallets: data.countPallets({ status: [VP.IN_TRANSIT, VP.MISSING] }), missing: exc.missing } };
+    });
+
+    // Manager page alert poll: what is waiting for a manager decision, from the truck records only (no NetSuite reads, no settling).
+    // One key per item, so the page alerts only on keys it has not seen. A close cousin of the Approvals queues, not an exact match.
+    act('approvals_ping', true, () => {
+        const trucks = allTrucks(), items = [], add = (key, text) => items.push({ key: key, text: text });
+        trucks.forEach(x => {
+            const d = x.data, lab = truckLabel(x);
+            if (x.status === T.SHIP_PENDING && d.shipReq) add('ship:' + x.id + ':' + (d.shipReq.at || ''), (isScan(x) ? 'Approve docs · ' : 'Ship confirmation · ') + lab);
+            if (x.status === T.PICKUP_PENDING) add('pick:' + x.id + ':' + ((d.pickupReq || {}).at || ''), 'Picked up · confirm shipped · ' + lab);
+            if (x.status === T.NEEDS_FIX) add('fix:' + x.id + ':' + ((d.verify || {}).at || ''), 'Needs IF fix · ' + lab);
+            if (x.status === T.DEPARTING && (d.error || stale(x))) add('retry:' + x.id, 'Retry / Release · ' + lab);
+            if (x.status === T.AT_DOCK && d.docsSync) add('sync:' + x.id + ':' + (d.docsSync.at || ''), 'Docs out of sync · ' + lab);
+            if ((x.status === T.RECEIVING && d.recvRequested) || (x.status === T.APPROVING && (d.error || stale(x)))) add('rec:' + x.id + ':' + ((d.recvRequested || {}).at || ''), 'Receipt · ' + lab);
+        });
+        stillFlagged([].concat.apply([], trucks.map(x => x.data.flagged || []))).forEach(p => add('flag:' + p.id, 'Flagged pallet · ' + p.code));
+        return { count: items.length, items: items };
     });
 
     act('report', true, (a, c) => {

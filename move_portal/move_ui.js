@@ -169,7 +169,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 : B.roster.length
                     ? '<select id="who"><option value="">— pick —</option>' + B.roster.map(n => '<option' + (n === S.who ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
                     : '<input id="who" value="' + esc(S.who) + '" placeholder="your name">';
-            document.body.innerHTML = '<div class="top"><div class="ttl"><b>Move Portal</b><span>' + esc(B.me) + (isMgr ? ' · manager' : '') + '</span></div>' +
+            document.body.innerHTML = '<div class="top"><div class="ttl"><b>Move Portal</b><span>' + esc(B.me) + (isMgr ? ' · manager <button class="dbtn gh" id="bell" data-act="bell" style="padding:4px 10px;margin-left:8px"></button>' : '') + '</span></div>' +
                 (isMgr ? '</div>' : '<div class="who">I am ' + whoCtl + '</div>' +
                 '<div class="toggle"><button data-act="side" data-v="out" class="' + (S.side === 'out' ? 'on out' : '') + '">📤 Outbound · ' + esc(B.fromName) + '</button>' +
                 '<button data-act="side" data-v="in" class="' + (S.side === 'in' ? 'on in' : '') + '">📥 Inbound · ' + esc(B.toName) + '</button></div></div>') +
@@ -177,13 +177,15 @@ h3{font-size:15px;margin:16px 0 8px}
             const w = $('who');
             if (w) w.onchange = w.oninput = () => { S.who = w.value.trim(); put('mv_who', S.who); };
             paintBanner();
+            paintBell();
             renderNav();
         }
 
         function paintNav() {
             const nav = $('subnav');
             if (nav) nav.innerHTML = TABS[S.side].map(t => '<div data-act="tab" data-v="' + t[0] + '" class="' + (t[0] === S.tab ? 'on' : '') + '">' + esc(t[1]) +
-                (t[0] === 'approve' && S.lateShips ? ' <span class="pill p-amber" title="Ship confirmations waiting 30+ min">' + S.lateShips + '</span>' : '') + '</div>').join('');
+                (t[0] === 'approve' && S.lateShips ? ' <span class="pill p-amber" title="Ship confirmations waiting 30+ min">' + S.lateShips + '</span>'
+                    : t[0] === 'approve' && S.waitN ? ' <span class="pill p-gray" title="Waiting for approval">' + S.waitN + '</span>' : '') + '</div>').join('');
         }
         function renderNav() {
             const tabs = TABS[S.side];
@@ -192,6 +194,7 @@ h3{font-size:15px;margin:16px 0 8px}
             closeNote();
             clearInterval(S.poll);
             S.poll = null;
+            if (isMgr && S.waitSeen) ping();      // a tab switch refreshes the count (decisions just made drop off)
             SCREENS[S.tab]();
         }
 
@@ -199,6 +202,7 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.printbol = el => window.open(bolUrl(el.dataset.id), '_blank');
         const SCREENS = {};
         document.addEventListener('click', e => {
+            unlockAudio();
             const el = e.target.closest('[data-act]');
             if (el && ACT[el.dataset.act]) { e.preventDefault(); ACT[el.dataset.act](el); }
             setTimeout(refocusScan, 60);
@@ -213,6 +217,51 @@ h3{font-size:15px;margin:16px 0 8px}
         ACT.tab = el => { S.tab = el.dataset.v; S.truckId = null; S.unloadId = null; S.lastIn = null; renderNav(); };
         ACT.clearres = () => { const r = $('scanres'); if (r) r.innerHTML = ''; };
         ACT.typecode = el => { const i = $(el.dataset.v); if (i) { i.setAttribute('inputmode', 'text'); i.focus(); } };
+
+        // ── manager: alert when something new waits for approval (tab title count, chime, desktop notification) ──
+        // Polls every 60 s, also in a background tab. The first poll after load is the baseline: it counts but never chimes.
+        S.alertsOn = get('mv_alerts') !== 'off';
+        S.waitN = 0;
+        S.waitSeen = null;
+        function unlockAudio() {     // browsers start audio suspended until a click; the chime needs one click on the page first
+            try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { /* no audio */ }
+        }
+        function paintBell() {
+            const b = $('bell');
+            if (b) b.textContent = S.alertsOn ? '🔔 Alerts on' : '🔕 Alerts off';
+            if (b) b.title = S.alertsOn ? 'Chime and desktop notice when something new waits for approval. Click to turn off on this computer.' : 'Click to turn approval alerts on for this computer';
+        }
+        function paintTitle() { document.title = (S.waitN ? '(' + S.waitN + ') ' : '') + 'Move Portal'; }
+        ACT.bell = () => {
+            S.alertsOn = !S.alertsOn;
+            put('mv_alerts', S.alertsOn ? 'on' : 'off');
+            if (S.alertsOn && window.Notification && Notification.permission === 'default') Notification.requestPermission();
+            if (S.alertsOn) tone('ready');
+            paintBell();
+        };
+        async function ping() {
+            if (S.pingBusy) return;
+            S.pingBusy = true;
+            try {
+                const r = await api('approvals_ping');
+                if (!r.ok) return;
+                const fresh = S.waitSeen ? r.items.filter(x => !S.waitSeen[x.key]) : [];
+                S.waitSeen = {};
+                r.items.forEach(x => { S.waitSeen[x.key] = true; });
+                if (S.waitN !== r.count) { S.waitN = r.count; paintNav(); }
+                paintTitle();
+                if (!fresh.length || !S.alertsOn) return;
+                tone('ready');
+                if (window.Notification && Notification.permission === 'granted') {
+                    try {
+                        const n = new Notification('Move Portal · ' + (fresh.length === 1 ? 'new approval waiting' : fresh.length + ' new approvals waiting'),
+                            { body: fresh.slice(0, 4).map(x => x.text).join('\n') + (fresh.length > 4 ? '\n…' : ''), tag: 'mv-approvals' });
+                        n.onclick = () => { window.focus(); n.close(); S.tab = 'approve'; renderNav(); };
+                    } catch (e) { /* notifications blocked */ }
+                }
+            } finally { S.pingBusy = false; }
+        }
+        if (isMgr) { setInterval(ping, 60000); ping(); }
 
         // ── floor: re-check needs_fix trucks every 30 s; alert once per truck per device when one turns ready ──
         S.banner = [];
@@ -1914,7 +1963,7 @@ h3{font-size:15px;margin:16px 0 8px}
             const k = (label, big, sub, cls) => '<div class="kpi ' + (cls || '') + '"><small>' + esc(label) + '</small><b>' + big + '</b><span>' + sub + '</span></div>';
             const w = r.waiting || [];
             const waiting = '<div class="card ' + (w.length ? 'amberc' : '') + '"><h4>Waiting for approval' + (w.length ? ' <span class="pill p-amber">' + w.reduce((s, x) => s + x.count, 0) + '</span>' : '') + '</h4>' +
-                (w.length ? w.map(x => '<div class="warnrow" data-act="goapprove" data-v="ap_' + ({ ship: 'ship', fix: 'fix', trucks: 'trucks', flagged: 'flag', retry: 'retry', receipts: 'rec' })[x.queue] + '" style="cursor:pointer">' +
+                (w.length ? w.map(x => '<div class="warnrow" data-act="goapprove" data-v="ap_' + ({ ship: 'ship', pick: 'pick', fix: 'fix', trucks: 'trucks', flagged: 'flag', retry: 'retry', receipts: 'rec' })[x.queue] + '" style="cursor:pointer">' +
                     '<span><a href="#" class="linkbtn">' + esc(x.title) + '</a> <span class="muted">' + esc(x.first) + '</span></span><span class="pill ' + (x.late ? 'p-amber' : 'p-gray') + '">' + x.count + (x.late ? ' · over 30 min' : '') + '</span></div>').join('')
                     : '<div class="muted">Nothing waiting for approval</div>') + '</div>';
             const t = r.tiles;
