@@ -147,7 +147,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
     }
     function truckLabel(x) {
         const d = x.data || {};
-        if (d.depart) return verify.memoFor(d.depart.truckNo, d.depart.day);
+        if (d.depart) return verify.memoFor(d.depart.truckNo, d.depart.shippedDay || d.depart.day);   // real ship day wins once known
         if (d.trailer) return 'Trailer ' + d.trailer;
         return (d.ifs || []).length ? d.ifs.map(f => f.ifNum).join(' + ') : 'No IFs: add one';     // gone IFs keep their number until dropped
     }
@@ -1462,19 +1462,37 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         const at = (x.data.shipReq || {}).at || c.now.stamp, p = core.parseNsStamp(at);
         return Object.assign({}, c, { now: { stamp: at, dayIso: p ? p.dayIso : c.now.dayIso, hour: p ? p.hour : c.now.hour } });
     }
+    // A stock short blocks Approve. Settings stockOverride (employee ids, Jack 10/27) may approve anyway with a typed reason
+    // (NetSuite's count is behind SellerCloud); NetSuite may still refuse the IF, and the usual undo / Retry handles that.
+    function stockGate(lines, a, c, ov) {
+        const items = Object.keys(lines), st = data.locationStock(c.S.locFrom, items), avail = {};
+        items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; });
+        const shorts = verify.stockCheck(lines, avail);
+        if (!shorts.length) return;
+        const text = verify.stockText(shorts, skuNames(items)), reason = String(a.override || '').trim().slice(0, 300);
+        const can = (c.S.stockOverride || []).map(String).indexOf(c.user.id) !== -1;
+        if (can && reason) { ov.push({ by: c.user.name, byId: c.user.id, at: c.now.stamp, reason: reason, short: text }); return; }
+        const e = userErr('Can\'t approve: ' + text + '. Send it back to take pallets off, or fix stock in NetSuite and approve again.');
+        e.stockShort = true; e.canOverride = can;
+        throw e;
+    }
+    function noteOverride(id, ov, r) {
+        if (!ov.length || (r && r.needsFix)) return r;
+        const L = data.getLoad(id);
+        data.updateLoad(L, { data: { overrides: (L.data.overrides || []).concat(ov) } });
+        return r;
+    }
     act('ship_confirm', true, (a, c) => {
         const x0 = mustTruck(a.truckId);
         mustPending(x0);
-        const inp = shipInput(x0), mc = markCtx(x0, c);
+        const inp = shipInput(x0), mc = markCtx(x0, c), ov = [];
         if (inp.seal) sealTaken(inp.seal, x0.id);
-        if (isScan(x0) && x0.data.docsDepart) return reApproveDocs(x0, c);   // sent back from the dock: its TO + IF exist
-        if (isScan(x0)) {                                // spec 2026-10-14 S4: blocked before anything is claimed or written
-            const tl = verify.linesPcs(verify.truckLines(data.palletsByLoad(x0.id, [VP.LOADED]))), items = Object.keys(tl);
-            const st = data.locationStock(c.S.locFrom, items), avail = {};
-            items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; });
-            const shorts = verify.stockCheck(tl, avail);
-            if (shorts.length) throw userErr('Can\'t approve: ' + verify.stockText(shorts, skuNames(items)) + '. Send it back to take pallets off, or fix stock in NetSuite and approve again.');
-        }
+        if (isScan(x0) && x0.data.docsDepart) return noteOverride(x0.id, ov, reApproveDocs(x0, c, a, ov));   // sent back from the dock: its TO + IF exist
+        if (isScan(x0))                                  // spec 2026-10-14 S4: blocked before anything is claimed or written
+            stockGate(verify.linesPcs(verify.truckLines(data.palletsByLoad(x0.id, [VP.LOADED]))), a, c, ov);
+        return noteOverride(x0.id, ov, approveDocs(x0, c, inp, mc));
+    });
+    function approveDocs(x0, c, inp, mc) {
         let d = null, cl;
         try {
             // Re-verified from the guarded copy, and the plan is written with the claim.
@@ -1492,12 +1510,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
             data.updateLoad(data.getLoad(x0.id), { data: departData(again, inp, mc) });
         }
         return finishDepart(mustTruck(x0.id), c, cl.claim);
-    });
+    }
 
     // Approve docs again after a Send back from the dock (spec 2026-10-17): only the difference between the load and the docs is written
     // onto the same TO + IF (writeDocsDelta: undo on failure, out of sync + Retry if the undo fails), then the trailer parks at the dock again.
     // The stock check covers the increase only (the TO already holds the rest). No docs (off / qty): plan only, like at the dock.
-    function reApproveDocs(x0, c) {
+    function reApproveDocs(x0, c, a, ov) {
         const ps = data.palletsByLoad(x0.id, [VP.LOADED]);
         if (!ps.length) throw userErr('Nothing is loaded on this truck');
         const tl = verify.linesPcs(verify.truckLines(ps)), dl = x0.data.docLines || {}, delta = {}, up = {};
@@ -1508,12 +1526,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         });
         const solo = addOnEmptied(x0.data, delta);
         if (solo.length) throw userErr(skuNames(solo)[solo[0]] + ' is on its own add-on IF ' + dl[solo[0]].ifNum + ': ask the office to remove it, then approve again.');
-        if (Object.keys(up).length) {
-            const items = Object.keys(up), st = data.locationStock(c.S.locFrom, items), avail = {};
-            items.forEach(k => { avail[k] = st[k] ? Number(st[k].avail) || 0 : 0; });
-            const shorts = verify.stockCheck(up, avail);
-            if (shorts.length) throw userErr('Can\'t approve: ' + verify.stockText(shorts, skuNames(items)) + '. Send it back to take pallets off, or fix stock in NetSuite and approve again.');
-        }
+        if (Object.keys(up).length) stockGate(up, a, c, ov);
         const cl = claimLoad(x0, null, 'redocs', cur => {
             if (cur.status !== T.SHIP_PENDING || !cur.data.shipReq || cur.data.depart || (cur.data.claim && !stale(cur)))
                 throw userErr((truckLabel(cur) || 'This truck') + ' is already being processed by someone else. Refresh in a minute.');
@@ -2429,8 +2442,9 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         }
         const days = {}, diffsBy = {};
         rows.forEach(r => { if (r.ok === false) diffsBy[r.truck] = (diffsBy[r.truck] || 0) + 1; });
-        trucks.forEach(x => {
-            const dd = days[x.data.depart.day] = days[x.data.depart.day] || { day: x.data.depart.day, trucks: 0, pallets: 0, pieces: 0, diffs: 0 };
+        trucks.filter(x => !isDock(x)).forEach(x => {   // a truck at the dock (docs written, not picked up) hasn't shipped yet — same rule as the Dashboard
+            const shipDay = x.data.depart.shippedDay || x.data.depart.day;   // real ship date wins (dock-confirm date is stale for a dropped-trailer truck)
+            const dd = days[shipDay] = days[shipDay] || { day: shipDay, trucks: 0, pallets: 0, pieces: 0, diffs: 0 };
             const sts = [VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING];
             dd.trucks++; dd.pallets += sts.reduce((s, st) => s + cnt(counts, x.id, st), 0); dd.pieces += pcsOf(counts, x.id, sts);
             dd.diffs += diffsBy[truckLabel(x)] || 0;
@@ -2448,12 +2462,12 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         };
         const history = every.slice().sort((p, q) => Number(q.id) - Number(p.id)).map(x => {
             const d = x.data, dep = d.depart || null, q = d.shipReq || {}, sts = [VP.LOADED, VP.IN_TRANSIT, VP.RECEIVED, VP.MISSING];
-            return { truckId: x.id, day: dep ? dep.day : dayOfStamp(d.startedAt), truck: truckLabel(x), truckNo: dep ? dep.truckNo : null, trailer: dep ? dep.trailer : (d.trailer || ''),
+            return { truckId: x.id, day: dep ? (dep.shippedDay || dep.day) : dayOfStamp(d.startedAt), truck: truckLabel(x), truckNo: dep ? dep.truckNo : null, trailer: dep ? dep.trailer : (d.trailer || ''),
                 seal: dep ? dep.seal : (q.seal || ''), ifs: verify.liveIfs(d.ifs).map(f => f.ifNum), pallets: sts.reduce((s, st) => s + cnt(counts, x.id, st), 0), pcs: pcsOf(counts, x.id, sts),
                 status: x.status, stage: stageOf(x), startedBy: whoName(d.startedBy), startedAt: d.startedAt || '', markedBy: whoName(q.by), markedAt: q.at || (dep && dep.markedBy ? dep.at : ''),
                 confirmedBy: dep ? whoName(dep.approvedBy) || dep.approvedByRoster || '' : '', confirmedAt: dep ? dep.at : '', receivedAt: d.recvApprovedAt || '',
                 irs: dep ? irsOf(x).map(r => r.irNum + (r.pcs != null ? ' (' + verify._fmt(r.pcs) + ')' : '')) : [],
-                corrections: (d.corrections || []).map(corrText) };
+                corrections: (d.overrides || []).map(o => '⚠ Approved short by ' + o.by + ' · ' + o.at + ': ' + o.reason + ' (' + o.short + ')').concat((d.corrections || []).map(corrText)) };
         });
         // Deleted trucks are in no other list: read them here for the history only.
         data.loadsByStatus([DELETED]).filter(x => x.data && x.data.v3).forEach(x => history.push(Object.assign({ truckId: x.id, day: dayOfStamp((x.data.deleted || {}).at || x.data.startedAt), truck: truckLabel(x), truckNo: null, trailer: x.data.trailer || '',
@@ -2497,6 +2511,7 @@ function (runtime, log, render, url, format, core, data, tx, tpl, ui, verify, ns
         } catch (e) {
             if (!e.user) log.error({ title: 'move ' + q.action, details: (e && e.stack) || String(e) });
             out = { ok: false, error: e.user ? e.message : 'Error: ' + (e.message || e.name || String(e)) };
+            if (e.stockShort) Object.assign(out, { stockShort: true, canOverride: !!e.canOverride });
         }
         ctx.response.setHeader({ name: 'Content-Type', value: 'application/json' });
         ctx.response.write(JSON.stringify(out));

@@ -2884,6 +2884,46 @@ test('scan-built Approve is blocked on a stock short and writes nothing', () => 
     assert.equal(ctx.data.getLoad(t.id).status, 'ship_pending');
 });
 
+// Jack 10/27: Settings stockOverride (employee ids) may approve a stock short with a typed reason (NetSuite's count is behind SellerCloud).
+test('stockOverride: a listed manager approves a short with a reason; it is saved and shown in history; others stay blocked', () => {
+    const ctx = scanSetup();
+    const t = shipScan(ctx, 2);
+    ctx.data.db.stock['35']['11'].avail = 100;
+    let e = null;
+    try { ctx.run('ship_confirm', { truckId: t.id, override: 'SC shows 400' }); } catch (x) { e = x; }
+    assert.match(e.message, /Can't approve/);
+    assert.deepEqual([e.stockShort, e.canOverride, ctx.tx._t.ops.length], [true, false, 0]);
+    ctx.data.db.settings.stockOverride = ['5'];
+    e = null;
+    try { ctx.run('ship_confirm', { truckId: t.id }); } catch (x) { e = x; }
+    assert.deepEqual([e.stockShort, e.canOverride, ctx.tx._t.ops.length], [true, true, 0]);   // no reason: still blocked
+    ctx.run('ship_confirm', { truckId: t.id, override: '  SC shows 400  ' });
+    const x = ctx.data.getLoad(t.id);
+    assert.equal(x.status, 'at_dock');
+    assert.deepEqual(ctx.tx._t.ops.map(o => o.op), ['to_create', 'if_create']);
+    assert.equal(x.data.overrides.length, 1);
+    assert.deepEqual([x.data.overrides[0].reason, x.data.overrides[0].byId], ['SC shows 400', '5']);
+    assert.match(x.data.overrides[0].short, /YSN201 on truck 240, available 100/);
+    const h = ctx.run('report').history.find(r => String(r.truckId) === String(t.id));
+    assert.ok(h.corrections.some(s => /Approved short/.test(s) && /SC shows 400/.test(s)));
+});
+
+test('stockOverride also covers a re-approve after a Send back', () => {
+    const ctx = scanSetup();
+    ctx.data.db.settings.stockOverride = ['5'];
+    const t = atDock(ctx, 1);
+    ctx.run('dock_sendback', { truckId: t.id, note: 'add one' });
+    const p = printLabels(ctx, 1, 'Jov2')[0];
+    ctx.run('truck_scan', { truckId: t.id, raw: p.code }, false);
+    ctx.run('truck_verify', { truckId: t.id }, false);
+    ctx.run('ship_mark', { truckId: t.id }, false);
+    ctx.data.db.stock['35']['11'].avail = 100;
+    assert.throws(() => ctx.run('ship_confirm', { truckId: t.id }), /Can't approve/);
+    ctx.run('ship_confirm', { truckId: t.id, override: 'count behind' });
+    const x = ctx.data.getLoad(t.id);
+    assert.deepEqual([x.status, x.data.docLines['11'].qty, x.data.overrides[0].reason], ['at_dock', 240, 'count behind']);
+});
+
 test('scan-built Approve in off / qty: plan only, the truck parks at the dock in the portal, no TO', () => {
     ['off', 'qty'].forEach(m => {
         const ctx = scanSetup();

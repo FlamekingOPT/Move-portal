@@ -402,7 +402,7 @@ define([], function () {
         (o.trucks || []).forEach(t => {
             const d = t.data || {}, dep = d.depart;
             if (!dep) return;
-            const label = memoFor(dep.truckNo, dep.day), sealK = sealKey(dep.seal);
+            const label = memoFor(dep.truckNo, dep.shippedDay || dep.day), sealK = sealKey(dep.seal);   // real ship day wins once known (dock-confirm day is stale for a dropped-trailer truck)
             const row = (ifNum, check, portal, netsuite, ok) => rows.push({ truck: label, seal: dep.seal, ifNum: ifNum, check: check, portal: String(portal), netsuite: netsuite == null ? '—' : String(netsuite), ok: ok });
             (d.alloc || []).forEach(a => {
                 let realId = a.addOn ? null : a.ifId;

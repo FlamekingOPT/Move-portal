@@ -1667,7 +1667,11 @@ h3{font-size:15px;margin:16px 0 8px}
             // A pop-up opened after an await is blocked, so the blank tab opens now (the user's click) and is closed again unless docs were written.
             const w = el.dataset.scan ? window.open('', '_blank') : null;
             const dropTab = () => { if (w) { try { w.close(); } catch (e) { /* already closed */ } } };
-            const r = await api('ship_confirm', { truckId: el.dataset.id });
+            let r = await api('ship_confirm', { truckId: el.dataset.id });
+            if (!r.ok && r.stockShort && r.canOverride) {     // Settings stockOverride (Jack 10/27): approve a short anyway, with a reason
+                const why = prompt(r.error + '\n\nApprove anyway? Type the reason, e.g. "SellerCloud shows 400, NetSuite count behind" (required):');
+                if (why && why.trim()) r = await api('ship_confirm', { truckId: el.dataset.id, override: why.trim() });
+            }
             tone(r.ok && !r.needsFix ? 'ok' : 'bad');
             if (!r.ok) { dropTab(); SCREENS.approve(errBox(r.error)); return; }
             if (r.needsFix) { dropTab(); SCREENS.approve(flash('red', '❌ ' + esc(label) + ' no longer matches its IFs: back to Needs IF fix', '', (r.diffs || []).map(d => esc(d.text)).join('<br>'))); return; }
