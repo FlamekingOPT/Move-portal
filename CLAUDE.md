@@ -37,6 +37,11 @@ Jack: sandbox S1–S10 all passed, ship as is. Every prod config change below wa
       - The Dashboard "Waiting for approval" card now lists Picked up trucks.
       - Uploads: sl 3050487 and ui 3050486, LF copies from the commit (the working copy's uncommitted shippedDay edits were NOT uploaded). 1166 recompiled. The live page showed "(4) Move Portal" with no console errors. Floor deploy 2 answers "Managers only".
     - **Roster (2026-10-26):** Miguel Trejo, Santiago Chumil, Enrique Castillo, Douglas Reyes, Daimer Cerquera (Jack edited Move Settings). Trailers now 53279, 53232, 53292, 53293, 53266, 53200.
+    - **Jack-only stock override + Jorge approve back on, prod 2026-10-28** (Jack OK in chat), code `ba19674` on `feat/v3-verification`, tests 474/474:
+      - Settings (server-side read-modify-write via in-page `N/record`, unitWeights untouched): `noApprove` → `[]` (Jorge 1629 can approve again), `stockOverride` → `["9927"]` (only Jack 9927 forces past an over-available block on Approve / re-approve by typing a reason; saved to load `overrides[]`, shown in Report history; everyone else stays hard-blocked). Confirmed via SuiteQL.
+      - Uploads (LF copies via Chrome File Cabinet edit, served content verified): sl 3050487 (`stockGate` / `stockOverride` / `canOverride` / `noteOverride` present), ui 3050486 (client reason prompt). Script 1166 recompiled; portal loads clean as manager. move_verify 3050380 already had the shippedDay fix in prod (served `memoFor(dep.truckNo, dep.shippedDay || dep.day)`) — re-upload was a no-op.
+      - Not exercised: no live over-available truck to click the real override prompt through (logic is test-covered + served). Branch not merged to `main`.
+      - Chrome gotcha this session: the File Cabinet Save button's CDP input dispatch froze repeatedly; `document.getElementById('btn_multibutton_submitter').click()` (after `file_upload` sets the input) submits reliably.
     - Open: one `SSS_INVALID_HEADER` at `sl_move_portal.js:2483` (`setHeader` Content-Type, scriptnote 767611) logged on 10/22 (no timestamp readable; the no-login recheck did not repeat it); cause unknown.
 - **Roles:**
   - Portal Picker - Riverside (2539): + Transfer Order View, + Item Receipt View.
