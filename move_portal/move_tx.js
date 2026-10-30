@@ -134,6 +134,15 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         const s = f && f.subsidiary;
         return Array.isArray(s) && s.length ? s[0].value : null;
     }
+    // Set the TO orderstatus, tolerating the dynamic-mode sourcing race for the account
+    // default (B = Pending Fulfillment). See the call site in createTransferOrder.
+    function setOrderStatus(to, val) {
+        try { to.setValue({ fieldId: 'orderstatus', value: val }); }
+        catch (e) {
+            if (val === 'B' && /invalid field value/i.test(String((e && e.message) || ''))) return;
+            throw e;
+        }
+    }
     // Scan-built truck (spec 2026-10-14 §3.1): an approved TO from Riverside to Tippecanoe, one line per item.
     function createTransferOrder(op) {
         const found = findByToken(op.token, 'TrnfrOrd');
@@ -143,7 +152,6 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
         if (sub) to.setValue({ fieldId: 'subsidiary', value: sub });
         to.setValue({ fieldId: 'location', value: op.fromLoc });
         to.setValue({ fieldId: 'transferlocation', value: op.toLoc });
-        to.setValue({ fieldId: 'orderstatus', value: op.orderStatus || 'B' });
         to.setValue({ fieldId: 'memo', value: op.memo });
         Object.keys(op.lines).forEach(item => {
             to.selectNewLine({ sublistId: 'item' });
@@ -151,6 +159,13 @@ define(['N/record', 'N/search', './move_verify'], function (record, search, veri
             to.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: op.lines[item] });
             to.commitLine({ sublistId: 'item' });
         });
+        // orderstatus is set LAST, after transferlocation sourcing has settled. In dynamic
+        // mode that sourcing can briefly re-source the orderstatus option list, so setting it
+        // right after transferlocation intermittently threw "Invalid Field Value B for orderstatus"
+        // and stalled the depart (Retry then worked). For B (Pending Fulfillment) — the account
+        // default — a transient reject is tolerated: we leave the default, which IS B. Any other
+        // target value rethrows so a real config error still surfaces.
+        setOrderStatus(to, op.orderStatus || 'B');
         return String(to.save({ enableSourcing: true, ignoreMandatoryFields: true }));
     }
     // Release check: a TO the manager closed (or deleted) in NetSuite. "no rec" is the test fake's not-found message.
