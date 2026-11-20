@@ -1665,10 +1665,12 @@ h3{font-size:15px;margin:16px 0 8px}
                 : 'Confirm ' + label + ' shipped? It gets its Truck # and its IFs are stamped/shipped in NetSuite (as the write mode allows).')) return;
             busy(el, true);
             // A pop-up opened after an await is blocked, so the blank tab opens now (the user's click) and is closed again unless docs were written.
-            const w = el.dataset.scan ? window.open('', '_blank') : null;
-            const dropTab = () => { if (w) { try { w.close(); } catch (e) { /* already closed */ } } };
+            let w = el.dataset.scan ? window.open('', '_blank') : null, overrode = false;
+            const dropTab = () => { if (w) { try { w.close(); } catch (e) { /* already closed */ } } w = null; };
             let r = await api('ship_confirm', { truckId: el.dataset.id });
             if (!r.ok && r.stockShort && r.canOverride) {     // Settings stockOverride (Jack 10/27): approve a short anyway, with a reason
+                // Close the blank BOL tab first: Chrome dismisses a prompt from a background tab (it returned null and the override never ran).
+                dropTab(); overrode = true;
                 const why = prompt(r.error + '\n\nApprove anyway? Type the reason, e.g. "SellerCloud shows 400, NetSuite count behind" (required):');
                 if (why && why.trim()) r = await api('ship_confirm', { truckId: el.dataset.id, override: why.trim() });
             }
@@ -1682,7 +1684,7 @@ h3{font-size:15px;margin:16px 0 8px}
                 else {
                     if (r.rewritten && !r.bolChanged) { dropTab(); bolMsg = 'Quantities unchanged: the printed BOL still applies'; }
                     else if (w) { w.location = bolUrl(el.dataset.id); bolMsg = r.rewritten ? '🧾 BOL REV ' + (r.bolRev || '') + ' opened: throw away the old copy' : '🧾 BOL opened in a new tab'; }
-                    else bolMsg = 'Pop-ups are blocked: press Print BOL';
+                    else bolMsg = overrode ? 'Press Print BOL to print it' : 'Pop-ups are blocked: press Print BOL';
                     bolMsg = esc(bolMsg); bolActs = bolBtn(el.dataset.id);
                 }
                 SCREENS.approve(flash('green', !r.toNum ? '✅ ' + esc(t.label) + ' · Plan saved (writes are off)'
