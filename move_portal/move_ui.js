@@ -1665,15 +1665,33 @@ h3{font-size:15px;margin:16px 0 8px}
                 : 'Confirm ' + label + ' shipped? It gets its Truck # and its IFs are stamped/shipped in NetSuite (as the write mode allows).')) return;
             busy(el, true);
             // A pop-up opened after an await is blocked, so the blank tab opens now (the user's click) and is closed again unless docs were written.
-            let w = el.dataset.scan ? window.open('', '_blank') : null, overrode = false;
-            const dropTab = () => { if (w) { try { w.close(); } catch (e) { /* already closed */ } } w = null; };
-            let r = await api('ship_confirm', { truckId: el.dataset.id });
-            if (!r.ok && r.stockShort && r.canOverride) {     // Settings stockOverride (Jack 10/27): approve a short anyway, with a reason
-                // Close the blank BOL tab first: Chrome dismisses a prompt from a background tab (it returned null and the override never ran).
-                dropTab(); overrode = true;
-                const why = prompt(r.error + '\n\nApprove anyway? Type the reason, e.g. "SellerCloud shows 400, NetSuite count behind" (required):');
-                if (why && why.trim()) r = await api('ship_confirm', { truckId: el.dataset.id, override: why.trim() });
+            const w = el.dataset.scan ? window.open('', '_blank') : null;
+            const r = await api('ship_confirm', { truckId: el.dataset.id });
+            if (!r.ok && r.stockShort) {                 // Settings stockOverride (Jack 10/27): approve a short anyway, with a reason
+                // In-page reason box, not prompt(): Chrome dismissed the prompt from the portal tab once the blank BOL tab had focus.
+                if (w) { try { w.close(); } catch (e) { /* already closed */ } }
+                tone('bad');
+                const id = el.dataset.id;
+                SCREENS.approve(r.canOverride
+                    ? flash('red', '❌ ' + esc(r.error), 'Approve anyway? Type the reason (required):',
+                        '<input id="ovwhy-' + esc(id) + '" maxlength="300" style="width:100%;padding:10px;font-size:15px;border-radius:8px;border:1px solid #ccc" placeholder="e.g. SellerCloud shows 400, NetSuite count behind">',
+                        '<button class="dbtn go" data-act="apoverride" data-id="' + esc(id) + '" data-label="' + esc(label) + '"' + (el.dataset.scan ? ' data-scan="1"' : '') + '>⚠ Approve anyway</button>')
+                    : flash('red', '❌ ' + esc(r.error), '', 'Your login is not on the stock override list (Move Settings stockOverride).'));
+                return;
             }
+            shipDone(el, label, r, w, false);
+        };
+        ACT.apoverride = async el => {
+            const label = el.dataset.label || 'this truck', box = document.getElementById('ovwhy-' + el.dataset.id);
+            const why = box ? box.value.trim() : '';
+            if (!why) { tone('bad'); if (box) { box.focus(); box.style.borderColor = '#dc2626'; } return; }
+            busy(el, true);
+            const w = el.dataset.scan ? window.open('', '_blank') : null;   // this click is the user gesture, so the BOL tab can still open
+            shipDone(el, label, await api('ship_confirm', { truckId: el.dataset.id, override: why }), w, true);
+        };
+        function shipDone(el, label, r, w0, overrode) {
+            let w = w0;
+            const dropTab = () => { if (w) { try { w.close(); } catch (e) { /* already closed */ } } w = null; };
             tone(r.ok && !r.needsFix ? 'ok' : 'bad');
             if (!r.ok) { dropTab(); SCREENS.approve(errBox(r.error)); return; }
             if (r.needsFix) { dropTab(); SCREENS.approve(flash('red', '❌ ' + esc(label) + ' no longer matches its IFs: back to Needs IF fix', '', (r.diffs || []).map(d => esc(d.text)).join('<br>'))); return; }
@@ -1684,7 +1702,8 @@ h3{font-size:15px;margin:16px 0 8px}
                 else {
                     if (r.rewritten && !r.bolChanged) { dropTab(); bolMsg = 'Quantities unchanged: the printed BOL still applies'; }
                     else if (w) { w.location = bolUrl(el.dataset.id); bolMsg = r.rewritten ? '🧾 BOL REV ' + (r.bolRev || '') + ' opened: throw away the old copy' : '🧾 BOL opened in a new tab'; }
-                    else bolMsg = overrode ? 'Press Print BOL to print it' : 'Pop-ups are blocked: press Print BOL';
+                    else bolMsg = 'Pop-ups are blocked: press Print BOL';
+                    if (overrode) bolMsg = '⚠ Approved short: reason saved. ' + bolMsg;
                     bolMsg = esc(bolMsg); bolActs = bolBtn(el.dataset.id);
                 }
                 SCREENS.approve(flash('green', !r.toNum ? '✅ ' + esc(t.label) + ' · Plan saved (writes are off)'
@@ -1701,7 +1720,7 @@ h3{font-size:15px;margin:16px 0 8px}
             }
             SCREENS.approve(flash('green', '✅ ' + esc(t.label) + ' shipped', esc('Seal ' + ((t.depart || {}).seal || '')),
                 t.bol && t.bol.changed ? '<b>Reprint BOL REV 2</b> · BOL # ' + esc(t.bol.number) + ' · IFs ' + esc(t.bol.ifNums.join(', ')) : 'BOL unchanged'));
-        };
+        }
         // Drop trailer: finish the TO + IF edits that failed at the dock, then the floor can scan again.
         ACT.dresync = async el => {
             const label = el.dataset.label || 'this truck';
